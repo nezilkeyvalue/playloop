@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "id": "catch",
+  "name": "Catch",
+  "summary": "Products fall; the player moves a basket to catch them.",
+
+  "roles": [
+    {
+      "id": "collectible",
+      "purpose": "Falling items the player catches",
+      "count": { "min": 4, "ideal": 8, "max": 12 },
+      "requires": {
+        "subjectTypeIn": ["product"],
+        "isolatable": true,
+        "minShortEdge": 300,
+        "aspectRange": [0.5, 2.0],
+        "maxTextDensity": 0.15,
+        "maxSubjectCount": 1
+      },
+      "prefers": {
+        "distinctPhash": true,
+        "coverageRange": [0.25, 0.85],
+        "uniformScale": true,
+        "contrastAgainst": "stage.background"
+      },
+      "transforms": ["cutout", "trim", "padSquare", "resize", "outline", "shadow"],
+      "fallback": "none"
+    },
+    {
+      "id": "catcher",
+      "purpose": "The basket or container the player controls",
+      "count": { "min": 1, "ideal": 1, "max": 1 },
+      "requires": { "subjectTypeIn": ["product", "logo", "shape"] },
+      "prefers": { "aspectRange": [1.2, 2.5] },
+      "transforms": ["cutout", "trim", "resize", "tint"],
+      "fallback": "generatedShape"
+    },
+    {
+      "id": "hazard",
+      "purpose": "Optional items that cost points",
+      "count": { "min": 0, "ideal": 2, "max": 4 },
+      "requires": { "isolatable": true },
+      "transforms": ["cutout", "trim", "padSquare", "desaturate"],
+      "fallback": "generatedShape",
+      "optional": true
+    },
+    {
+      "id": "stageBackground",
+      "purpose": "Play area backdrop",
+      "count": { "min": 0, "ideal": 1, "max": 1 },
+      "requires": { "subjectTypeIn": ["lifestyle", "pattern"] },
+      "transforms": ["cropAspect", "blur", "darken", "resize"],
+      "fallback": "brandGradient",
+      "optional": true
+    }
+  ],
+
+  "data": {
+    "required": [],
+    "optional": ["name", "priceMinor"]
+  },
+
+  "placements": {
+    "section": { "minWidth": 320, "minHeight": 420, "preferredAspect": 0.75 },
+    "fullpage": { "minWidth": 320, "minHeight": 480, "preferredAspect": 0.6 },
+    "modal": { "minWidth": 300, "minHeight": 400, "preferredAspect": 0.75 },
+    "ad": { "sizes": ["300x250", "320x480", "300x600"], "excluded": ["728x90"] }
+  },
+
+  "tuning": {
+    "spawnRateHz": { "min": 0.5, "default": 1.2, "max": 3.0 },
+    "fallSpeed": { "min": 80, "default": 160, "max": 400 },
+    "durationSec": { "min": 20, "default": 40, "max": 60 },
+    "hazardRatio": { "min": 0, "default": 0.2, "max": 0.4 }
+  },
+
+  "scoring": {
+    "maxRealistic": 1400,
+    "rewardTierHint": [0.3, 0.65]
+  },
+
+  "cost": { "buildMs": 400, "runtimeKb": 34 }
+}

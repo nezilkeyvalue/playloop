@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "id": "guess_price",
+  "name": "Guess the Price",
+  "summary": "A product is shown; the player drags a slider to guess its price and scores on closeness.",
+
+  "roles": [
+    {
+      "id": "hero",
+      "purpose": "The product shown each round",
+      "count": { "min": 1, "ideal": 6, "max": 12 },
+      "requires": {
+        "subjectTypeIn": ["product"],
+        "isolatable": true,
+        "minShortEdge": 300,
+        "aspectRange": [0.5, 2.0],
+        "maxTextDensity": 0.15,
+        "maxSubjectCount": 1
+      },
+      "prefers": {
+        "distinctPhash": true,
+        "coverageRange": [0.25, 0.85],
+        "uniformScale": true
+      },
+      "transforms": ["cutout", "trim", "padSquare", "resize", "shadow"],
+      "fallback": "none"
+    },
+    {
+      "id": "stageBackground",
+      "purpose": "Play area backdrop",
+      "count": { "min": 0, "ideal": 1, "max": 1 },
+      "requires": { "subjectTypeIn": ["lifestyle", "pattern"] },
+      "transforms": ["cropAspect", "blur", "darken", "resize"],
+      "fallback": "brandGradient",
+      "optional": true
+    }
+  ],
+
+  "data": {
+    "required": ["priceMinor"],
+    "optional": ["name"]
+  },
+
+  "placements": {
+    "section": { "minWidth": 300, "minHeight": 360, "preferredAspect": 0.85 },
+    "fullpage": { "minWidth": 320, "minHeight": 480, "preferredAspect": 0.6 },
+    "modal": { "minWidth": 300, "minHeight": 380, "preferredAspect": 0.85 },
+    "ad": { "sizes": ["300x250", "320x480", "300x600"], "excluded": ["728x90"] }
+  },
+
+  "tuning": {
+    "roundCount": { "min": 3, "default": 6, "max": 10 },
+    "roundSeconds": { "min": 4, "default": 7, "max": 12 },
+    "durationSec": { "min": 20, "default": 40, "max": 60 },
+    "tolerancePercent": { "min": 5, "default": 15, "max": 30 }
+  },
+
+  "scoring": {
+    "maxRealistic": 1500,
+    "rewardTierHint": [0.3, 0.65]
+  },
+
+  "cost": { "buildMs": 250, "runtimeKb": 28 }
+}

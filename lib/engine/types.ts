@@ -1,0 +1,374 @@
+// lib/engine/types.ts
+//
+// The shared contract. GameSpec is the keystone: auto mode produces it,
+// manual mode produces it, the editor mutates it, the runtime renders it,
+// and the future ad exporter will compile it. Everything else in this repo
+// is a boundary around this file — change it deliberately, and in one PR
+// that updates every consumer (matcher, compose, runtime, api routes).
+//
+// Source: PlayLoop build spec §5 (Core schemas) + PlayLoop capability
+// schema doc §1-4 (AssetInventory, GameCapability, MatchReport).
+
+// ---------------------------------------------------------------------------
+// 5.1 GameSpec
+// ---------------------------------------------------------------------------
+
+export type Placement = "section" | "fullpage" | "modal" | "ad";
+export type TemplateId = "catch" | "guess_price" | "match" | "stack";
+
+export interface ProcessedAsset {
+  id: string;
+  spriteUrl: string; // square, transparent, trimmed
+  width: number;
+  height: number;
+  coverage: number; // 0..1 non-transparent fill
+  phash: string;
+  score: number; // 0..1 quality gate confidence
+  flags: string[];
+  data?: { name?: string; priceMinor?: number; currency?: string };
+}
+
+export interface BrandKit {
+  name?: string;
+  logoUrl?: string;
+  accent: string; // hex
+  background: string;
+  foreground: string; // contrast-forced against background
+  fontFamily: string; // mapped Google Font
+  palette: string[];
+}
+
+export interface GameCopy {
+  headline: string;
+  subhead: string;
+  ctaStart: string;
+  ctaReplay: string;
+  rewardIntro: string;
+  emailPrompt: string;
+}
+
+export interface RewardTier {
+  minScore: number;
+  label: string;
+  percentOff: number | null;
+  code?: string; // placeholder until Horizon 2 coupon APIs
+}
+
+export interface GameSpec {
+  id: string;
+  version: 1;
+  template: TemplateId;
+  placements: Placement[];
+  brand: BrandKit;
+  copy: GameCopy;
+  assets: ProcessedAsset[];
+  roles: Record<string, string[] | { fallback: string }>; // role -> asset ids
+  rewards: RewardTier[];
+  durationSeconds: number;
+  tuning: Record<string, number>; // clamped to capability ranges
+  meta: {
+    sourceUrl?: string;
+    mode: "auto" | "manual";
+    generatedAt: string;
+    warnings: string[];
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Capability schema §1 — AssetInventory
+// What we actually have, after extraction and the quality gate.
+// ---------------------------------------------------------------------------
+
+export type AssetOrigin = "products_json" | "jsonld" | "og" | "dom" | "upload";
+export type SubjectType =
+  | "product"
+  | "lifestyle"
+  | "logo"
+  | "text_graphic"
+  | "person"
+  | "pattern"
+  | "unknown";
+
+/** A candidate asset before it has been transformed into a ProcessedAsset. */
+export interface RawAsset {
+  id: string;
+  url: string;
+  origin: AssetOrigin;
+
+  pixels: { width: number; height: number; aspect: number };
+  alpha: { has: boolean; coverage: number | null };
+  background: { uniformity: number; dominant: string; isolatable: boolean };
+  colour: { dominant: string[]; meanLuminance: number; saturation: number };
+  content: { subjectType: SubjectType; textDensity: number; subjectCount: number };
+  phash: string;
+
+  data?: {
+    name?: string;
+    priceMinor?: number;
+    category?: string;
+    sku?: string;
+  };
+
+  quality: { score: number; flags: string[] };
+
+  /** Populated once sprites.ts has produced a transformed sprite for this asset. */
+  processed?: ProcessedAsset;
+}
+
+export interface AssetInventory {
+  version: 1;
+  source: { mode: "auto" | "manual"; url?: string; platform?: string };
+  currency: string;
+  assets: RawAsset[];
+  brand: {
+    logo?: { assetId: string; confidence: number };
+    palette: string[];
+    fontStack: string;
+  };
+  dataCoverage: { withName: number; withPrice: number; withCategory: number };
+}
+
+// ---------------------------------------------------------------------------
+// Capability schema §2 — GameCapability
+// One per template. Declares what a template needs in terms of roles, not
+// files. `requires` is a hard gate; `prefers` feeds the fit score.
+// ---------------------------------------------------------------------------
+
+export interface RoleRequirements {
+  subjectTypeIn?: SubjectType[];
+  isolatable?: boolean;
+  minShortEdge?: number;
+  aspectRange?: [number, number];
+  maxTextDensity?: number;
+  maxSubjectCount?: number;
+}
+
+export interface RolePreferences {
+  distinctPhash?: boolean;
+  coverageRange?: [number, number];
+  uniformScale?: boolean;
+  contrastAgainst?: string;
+  aspectRange?: [number, number];
+}
+
+export type FallbackKind =
+  | "none"
+  | "generatedShape"
+  | "brandGradient"
+  | "logo"
+  | "solid";
+
+export type TransformId =
+  | "cutout"
+  | "trim"
+  | "padSquare"
+  | "resize"
+  | "cropAspect"
+  | "outline"
+  | "shadow"
+  | "tint"
+  | "desaturate"
+  | "blur"
+  | "darken";
+
+export interface CapabilityRole {
+  id: string;
+  purpose: string;
+  count: { min: number; ideal: number; max: number };
+  requires: RoleRequirements;
+  prefers?: RolePreferences;
+  transforms: TransformId[];
+  fallback: FallbackKind;
+  optional?: boolean;
+}
+
+export interface PlacementConstraint {
+  minWidth?: number;
+  minHeight?: number;
+  preferredAspect?: number;
+  sizes?: string[];
+  excluded?: string[];
+}
+
+export interface GameCapability {
+  version: 1;
+  id: TemplateId;
+  name: string;
+  summary: string;
+  roles: CapabilityRole[];
+  data: { required: string[]; optional: string[] };
+  placements: Partial<Record<Placement, PlacementConstraint>>;
+  tuning: Record<string, { min: number; default: number; max: number }>;
+  scoring: { maxRealistic: number; rewardTierHint: [number, number] };
+  cost: { buildMs: number; runtimeKb: number };
+}
+
+// ---------------------------------------------------------------------------
+// Transform catalogue (capability schema §3) — shared vocabulary so the
+// matcher can plan a route from raw asset to filled role.
+// ---------------------------------------------------------------------------
+
+export interface TransformMode {
+  id: string;
+  requires: Record<string, string>;
+  ms: number;
+  qualityDelta: number;
+}
+
+export interface TransformSpec {
+  modes?: TransformMode[];
+  requires: Record<string, string>;
+  ms: number;
+  qualityDelta: number;
+  produces?: Record<string, unknown>;
+  note?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Capability schema §4 — MatchReport
+// ---------------------------------------------------------------------------
+
+export interface RoleAssignmentPlanStep {
+  assetId: string;
+  role: string;
+  steps: string[];
+  estimatedMs: number;
+  confidence: number;
+}
+
+export interface MatchGap {
+  role: string;
+  need: number;
+  have: number;
+  reason: string;
+}
+
+export interface TemplateMatch {
+  template: TemplateId;
+  eligible: boolean;
+  score: number;
+  assignments?: Record<string, string[] | { fallback: string } | string>;
+  plan?: RoleAssignmentPlanStep[];
+  gaps?: MatchGap[];
+  warnings: string[];
+  estimatedBuildMs?: number;
+}
+
+export interface MatchReport {
+  version: 1;
+  inventoryId: string;
+  results: TemplateMatch[];
+  recommended: TemplateId[];
+  fallbackMode: "manual" | null;
+}
+
+// ---------------------------------------------------------------------------
+// AI layer contract (build spec §11)
+// ---------------------------------------------------------------------------
+
+export interface BrainRequest {
+  business: { name?: string; description?: string; category: string | null };
+  eligible: { template: TemplateId; score: number; assetCount: number; hasPrices: boolean }[];
+  sampleAssets: { id: string; name?: string; priceMinor?: number }[];
+  brand: { palette: string[]; fontStack: string };
+}
+
+export interface BrainResponse {
+  category: string;
+  template: TemplateId;
+  reason: string;
+  usableAssetIds?: string[];
+  logoAssetId?: string;
+  copy: GameCopy;
+  rewards: { minScore: number; label: string; percentOff: number }[];
+  tuning: Record<string, number>;
+}
+
+// ---------------------------------------------------------------------------
+// Job (generation pipeline) — build spec §6, §12, data model
+// ---------------------------------------------------------------------------
+
+export type JobStage =
+  | "queued"
+  | "fetching"
+  | "extracting"
+  | "downloading"
+  | "processing"
+  | "quality"
+  | "matching"
+  | "thinking"
+  | "composing"
+  | "done"
+  | "error";
+
+export interface Job {
+  id: string;
+  accountId: string | null;
+  mode: "auto" | "manual";
+  sourceUrl: string | null;
+  stage: JobStage;
+  percent: number;
+  message: string | null;
+  inventory: AssetInventory | null;
+  match: MatchReport | null;
+  spec: GameSpec | null;
+  gameId: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Game record (data model §4)
+// ---------------------------------------------------------------------------
+
+export type GameStatus = "draft" | "published" | "archived";
+
+export interface GameRecord {
+  id: string;
+  accountId: string | null;
+  slug: string | null;
+  name: string;
+  spec: GameSpec;
+  placement: Placement;
+  status: GameStatus;
+  allowedHosts: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Plays / leads (data model §4, analytics §16)
+// ---------------------------------------------------------------------------
+
+export type AnalyticsEvent =
+  | "impression"
+  | "start"
+  | "complete"
+  | "replay"
+  | "reward_revealed"
+  | "lead_captured";
+
+export interface PlayRecord {
+  id: string;
+  gameId: string;
+  session: string;
+  startedAt: string;
+  finishedAt: string | null;
+  score: number | null;
+  tierIndex: number | null;
+  replayOf: string | null;
+  referrer: string | null;
+  device: "mobile" | "desktop" | null;
+  country: string | null;
+}
+
+export interface LeadRecord {
+  id: string;
+  gameId: string;
+  playId: string | null;
+  email: string | null;
+  phone: string | null;
+  consent: boolean;
+  createdAt: string;
+}
