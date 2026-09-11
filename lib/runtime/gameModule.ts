@@ -1,0 +1,72 @@
+// lib/runtime/gameModule.ts
+//
+// Runtime-only contract between mount.ts and each game template. This is
+// deliberately NOT part of lib/engine/types.ts — that file is the
+// cross-track contract (GameSpec etc.); this is internal to the runtime
+// track and only lib/runtime/** needs to agree on it.
+//
+// Build spec §13 (Game runtime) defines the shape of GameModule verbatim;
+// RuntimeContext is the object mount.ts hands to init() so a game module
+// never has to touch the DOM, telemetry, or role-resolution itself.
+
+import type {
+  BrandKit,
+  FallbackKind,
+  GameCopy,
+  GameSpec,
+  TemplateId,
+} from "@/lib/engine/types";
+import type { InputState } from "@/lib/runtime/input";
+
+/** One asset, resolved to a loaded (or failed-to-load) image element. */
+export interface LoadedAsset {
+  id: string;
+  image: HTMLImageElement | null; // null if the sprite never loaded — degrade, don't crash
+  width: number;
+  height: number;
+  data?: { name?: string; priceMinor?: number; currency?: string };
+}
+
+/**
+ * A role after `spec.roles` has been resolved against `spec.assets`.
+ * Exactly one of `assets.length > 0` or `fallback` is the "real" answer;
+ * both can be inspected because a role can be an empty optional role with
+ * no fallback declared either (e.g. hazards nobody assigned).
+ */
+export interface ResolvedRole {
+  assets: LoadedAsset[];
+  fallback?: FallbackKind;
+}
+
+export interface RuntimeContext {
+  spec: GameSpec;
+  /** spec.tuning, defensively re-clamped against the capability's declared ranges. */
+  tuning: Record<string, number>;
+  roles: Record<string, ResolvedRole>;
+  brand: BrandKit;
+  copy: GameCopy;
+  /** Logical (CSS-pixel, not device-pixel) stage size. Query fresh each frame if needed. */
+  stage: { width: number; height: number };
+  input: InputState;
+  random: () => number;
+  addScore(delta: number): void;
+  getScore(): number;
+  /** Game module calls this the instant it knows the round/session is over. */
+  complete(): void;
+}
+
+export interface GameModule {
+  id: TemplateId;
+  init(ctx: RuntimeContext): void;
+  update(dt: number): void;
+  render(c: CanvasRenderingContext2D): void;
+  teardown(): void;
+  /**
+   * A ceiling on the achievable score for the given tuning — used server-side
+   * (a different track) to reject forged scores. Must stay in the same order
+   * of magnitude as the achievable score under normal play; see comments in
+   * each game module for how the constant was chosen against the capability's
+   * declared `scoring.maxRealistic`.
+   */
+  maxRealisticScore(tuning: Record<string, number>): number;
+}

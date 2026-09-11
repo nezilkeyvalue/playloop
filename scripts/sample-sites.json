@@ -1,0 +1,22 @@
+[
+  { "url": "https://www.gymshark.com", "expectedMinAssets": 6, "note": "Shopify Plus" },
+  { "url": "https://www.allbirds.com", "expectedMinAssets": 6, "note": "Shopify Plus" },
+  { "url": "https://www.mvmt.com", "expectedMinAssets": 6, "note": "Shopify Plus" },
+  { "url": "https://www.kyliecosmetics.com", "expectedMinAssets": 6, "note": "Shopify Plus" },
+  { "url": "https://www.fashionnova.com", "expectedMinAssets": 6, "note": "Shopify Plus" },
+  { "url": "https://bombas.com", "expectedMinAssets": 6, "note": "Shopify Plus" },
+  { "url": "https://www.chubbiesshorts.com", "expectedMinAssets": 6, "note": "Shopify" },
+  { "url": "https://www.brooklinen.com", "expectedMinAssets": 6, "note": "Shopify Plus" },
+  { "url": "https://www.deathwishcoffee.com", "expectedMinAssets": 4, "note": "Shopify" },
+  { "url": "https://www.taylorstitch.com", "expectedMinAssets": 6, "note": "Shopify Plus" },
+  { "url": "https://www.rothys.com", "expectedMinAssets": 6, "note": "Shopify Plus" },
+  { "url": "https://www.untuckit.com", "expectedMinAssets": 6, "note": "Shopify Plus" },
+  { "url": "https://www.nike.com", "expectedMinAssets": 4, "note": "Custom platform — JSON-LD/OG fallback expected" },
+  { "url": "https://www.apple.com", "expectedMinAssets": 2, "note": "Custom platform — mostly OG/logo, thin catalogue signal" },
+  { "url": "https://www.ikea.com", "expectedMinAssets": 4, "note": "Custom platform — heavy client rendering, DOM fallback likely" },
+  { "url": "https://www.target.com", "expectedMinAssets": 2, "note": "Custom platform, aggressive bot defenses expected" },
+  { "url": "https://www.rei.com", "expectedMinAssets": 4, "note": "Custom platform — JSON-LD expected" },
+  { "url": "https://www.warbyparker.com", "expectedMinAssets": 4, "note": "Custom platform" },
+  { "url": "https://www.glossier.com", "expectedMinAssets": 4, "note": "Shopify Plus (as of recent redesigns)" },
+  { "url": "https://www.patagonia.com", "expectedMinAssets": 4, "note": "Custom platform — JSON-LD expected" }
+]
