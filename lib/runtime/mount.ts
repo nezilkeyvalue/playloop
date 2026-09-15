@@ -92,6 +92,8 @@ function mountGame(
   const brand = spec.brand;
   const copy = spec.copy;
 
+  ensureGoogleFontLoaded(brand.fontFamily);
+
   // --- DOM scaffold -------------------------------------------------------
   const shell = document.createElement("div");
   shell.style.position = "relative";
@@ -137,7 +139,15 @@ function mountGame(
   shell.style.height = `${stageController.size.height}px`;
 
   // --- input ----------------------------------------------------------------
-  const input = createInput(shell);
+  // Bound to the canvas, not the shell: the shell also contains the overlay
+  // chrome (idle/reward screens' buttons and email input). createInput()
+  // calls setPointerCapture() on every pointerdown, which per the Pointer
+  // Events spec retargets the resulting click to the capturing element —
+  // so a pointerdown starting on an overlay button would have its click
+  // redelivered to the shell instead of the button, silently swallowing
+  // "Start playing" / "Play again" / the email field. Canvas and overlay
+  // are siblings, so scoping capture to canvas leaves overlay clicks alone.
+  const input = createInput(canvas);
 
   // --- tuning, defensively re-clamped --------------------------------------
   const tuning = clampTuning({ ...spec.tuning, durationSec: spec.tuning.durationSec ?? spec.durationSeconds }, capability);
@@ -270,6 +280,50 @@ function mountGame(
   }
 
   return { teardown };
+}
+
+// ---------------------------------------------------------------------------
+// Web font loading
+// ---------------------------------------------------------------------------
+
+// BrandKit.fontFamily has always been "a mapped Google Font" by convention
+// (see the type's own comment) and was already being set as a CSS
+// font-family and even used in canvas `ctx.font` strings — but nothing
+// anywhere ever actually loaded the font. Every game was silently
+// rendering in the browser's default sans-serif regardless of what
+// fontFamily said, auto-generated or editor-picked alike. One `<link>` per
+// distinct family, deduped across mounts on the same page (e.g. the editor
+// remounting on every save).
+const loadedFontFamilies = new Set<string>();
+const GENERIC_FONT_KEYWORDS = new Set([
+  "system-ui",
+  "sans-serif",
+  "serif",
+  "monospace",
+  "cursive",
+  "fantasy",
+  "ui-sans-serif",
+  "ui-serif",
+  "ui-monospace",
+]);
+
+function ensureGoogleFontLoaded(fontFamilyList: string | undefined): void {
+  if (typeof document === "undefined" || !fontFamilyList) return;
+  // fontFamily may be a single mapped name ("Poppins", from auto-generation)
+  // or a full CSS stack with fallbacks ("Inter, system-ui, sans-serif",
+  // from manual mode) — Google Fonts' API wants just the one real name.
+  const primary = fontFamilyList
+    .split(",")[0]
+    ?.trim()
+    .replace(/^["']|["']$/g, "");
+  if (!primary || GENERIC_FONT_KEYWORDS.has(primary.toLowerCase())) return;
+  if (loadedFontFamilies.has(primary)) return;
+  loadedFontFamilies.add(primary);
+
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(primary).replace(/%20/g, "+")}:wght@400;500;600;700&display=swap`;
+  document.head.appendChild(link);
 }
 
 // ---------------------------------------------------------------------------

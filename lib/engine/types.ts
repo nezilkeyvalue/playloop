@@ -31,7 +31,11 @@ export interface ProcessedAsset {
 export interface BrandKit {
   name?: string;
   logoUrl?: string;
-  accent: string; // hex
+  accent: string; // hex — the primary brand colour (buttons, CTAs, reward tier)
+  /** Secondary accent — optional so older specs without it keep working
+   * (the runtime falls back to a neutral tone wherever it's used, e.g.
+   * catch.ts's hazard colour). Editor-settable; not auto-derived yet. */
+  secondaryAccent?: string;
   background: string;
   foreground: string; // contrast-forced against background
   fontFamily: string; // mapped Google Font

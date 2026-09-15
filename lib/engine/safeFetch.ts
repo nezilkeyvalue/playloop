@@ -19,12 +19,32 @@
 
 import dns from "node:dns/promises";
 import net from "node:net";
+import { Agent } from "undici";
 
 const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS) || 10000;
 const IMAGE_TIMEOUT_MS = Number(process.env.IMAGE_TIMEOUT_MS) || 5000;
 const USER_AGENT = "PlayLoopBot/0.1 (+https://playloop.app/bot)";
 const MAX_REDIRECTS = 3;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Node's built-in fetch (undici) rejects any response whose headers exceed
+// its default ~16KB budget with UND_ERR_HEADERS_OVERFLOW — a real-world
+// site with a large CSP or a pile of analytics Set-Cookie headers hits this
+// easily (confirmed live against mvmt.com, which curl fetches fine but the
+// default dispatcher can't). A dedicated Agent with a generous header
+// budget avoids rejecting an otherwise-healthy response over header size
+// alone; every other safety property (SSRF host checks, robots, timeout)
+// still applies identically since only the dispatcher changes.
+const fetchAgent = new Agent({ maxHeaderSize: 1_048_576 });
+
+// `dispatcher` is a real, honored fetch option (it's how you configure
+// undici's per-request Agent) but isn't part of lib.dom.d.ts's RequestInit
+// type — extending it here means passing a *variable* of this type to
+// fetch(), not an inline object literal, so TS's excess-property check
+// (which only fires on fresh literals) never gets a chance to reject it.
+interface FetchInit extends RequestInit {
+  dispatcher?: Agent;
+}
 
 export type SafeFetchErrorCode =
   | "INVALID_URL"
@@ -231,11 +251,13 @@ async function fetchRobotsRules(origin: string): Promise<{ disallow: string[]; a
     await resolveAndCheck(host);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    const res = await fetch(robotsUrl, {
+    const init: FetchInit = {
       signal: controller.signal,
       headers: { "User-Agent": USER_AGENT },
       redirect: "follow",
-    });
+      dispatcher: fetchAgent,
+    };
+    const res = await fetch(robotsUrl, init);
     clearTimeout(timer);
     if (res.ok) {
       const text = await res.text();
@@ -325,7 +347,8 @@ export async function safeFetch(
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let res: Response;
     try {
-      res = await fetch(currentUrl, { redirect: "manual", signal: controller.signal, headers });
+      const init: FetchInit = { redirect: "manual", signal: controller.signal, headers, dispatcher: fetchAgent };
+      res = await fetch(currentUrl, init);
     } catch (err) {
       clearTimeout(timer);
       if (err instanceof Error && err.name === "AbortError") {

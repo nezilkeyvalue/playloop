@@ -72,14 +72,15 @@ async function writeDevTable<T>(file: string, rows: T[]): Promise<void> {
  */
 function createMutex() {
   let chain: Promise<unknown> = Promise.resolve();
-  return function run<T>(fn: () => Promise<T>): Promise<T> {
+  function run<T>(fn: () => Promise<T>): Promise<T> {
     const result = chain.then(fn, fn);
     chain = result.then(
       () => undefined,
       () => undefined,
     );
     return result;
-  };
+  }
+  return { run };
 }
 
 const gamesMutex = createMutex();
@@ -722,12 +723,13 @@ export async function finishPlay(
   let tier: RewardTier | null = null;
   if (!forged) {
     const sortedRewards = [...game.spec.rewards].sort((a, b) => a.minScore - b.minScore);
-    sortedRewards.forEach((candidate, idx) => {
+    for (let idx = 0; idx < sortedRewards.length; idx++) {
+      const candidate = sortedRewards[idx]!;
       if (effectiveScore >= candidate.minScore) {
         tier = candidate;
         tierIndex = idx;
       }
-    });
+    }
   }
 
   await updatePlayRow(play.id, {

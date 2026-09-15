@@ -6,9 +6,7 @@ const nextConfig: NextConfig = {
   },
   // sharp needs the Node runtime, never Edge. Individual routes also declare
   // `export const runtime = "nodejs"` — this is belt-and-suspenders.
-  experimental: {
-    serverComponentsExternalPackages: ["sharp"],
-  },
+  serverExternalPackages: ["sharp"],
   async headers() {
     return [
       {

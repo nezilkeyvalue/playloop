@@ -210,7 +210,7 @@ class CatchGame implements GameModule {
     // brand-accent circle, so the mechanic still works with 0 sprite assets.
     c.save();
     c.beginPath();
-    c.fillStyle = item.kind === "hazard" ? "#3a3a3a" : brand.accent;
+    c.fillStyle = item.kind === "hazard" ? brand.secondaryAccent || "#3a3a3a" : brand.accent;
     if (item.kind === "hazard") {
       roundedRect(c, item.x - half, item.y - half, item.size, item.size, 10);
       c.fill();

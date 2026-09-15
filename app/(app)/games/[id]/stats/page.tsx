@@ -30,8 +30,8 @@ interface Stats {
   topReferrers: { referrer: string; count: number }[];
 }
 
-const ACCENT = "#3B82F6";
-const ACCENT_SOFT = "#93C5FD";
+const ACCENT = "#5B4AFF";
+const ACCENT_SOFT = "#FF7A3D";
 
 export default function StatsPage() {
   const { id } = useParams<{ id: string }>();
@@ -48,8 +48,8 @@ export default function StatsPage() {
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load."));
   }, [id]);
 
-  if (error) return <p className="text-sm text-red-600">{error}</p>;
-  if (!stats) return <p className="text-sm text-ink/50">Loading…</p>;
+  if (error) return <p className="text-sm text-destructive">{error}</p>;
+  if (!stats) return <p className="text-sm text-muted">Loading…</p>;
 
   const deviceData = [
     { name: "Mobile", value: stats.deviceSplit.mobile },
@@ -58,7 +58,7 @@ export default function StatsPage() {
 
   return (
     <div className="space-y-10">
-      <h1 className="text-2xl font-semibold">Stats</h1>
+      <h1 className="font-display text-2xl font-semibold tracking-tight">Stats</h1>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="Plays" value={stats.plays.toString()} />
@@ -68,8 +68,8 @@ export default function StatsPage() {
         <Stat label="Leads captured" value={stats.leadsCaptured.toString()} />
       </div>
 
-      <section>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink/50">
+      <section className="rounded-2xl border border-border bg-card p-5 shadow-card">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
           Rewards claimed by tier
         </h2>
         <div className="mt-3 h-64 w-full">
@@ -85,8 +85,8 @@ export default function StatsPage() {
       </section>
 
       <div className="grid grid-cols-1 gap-8 sm:grid-cols-2">
-        <section>
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-ink/50">
+        <section className="rounded-2xl border border-border bg-card p-5 shadow-card">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
             Device split
           </h2>
           <div className="mt-3 h-56 w-full">
@@ -102,18 +102,18 @@ export default function StatsPage() {
           </div>
         </section>
 
-        <section>
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-ink/50">
+        <section className="rounded-2xl border border-border bg-card p-5 shadow-card">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
             Top referrers
           </h2>
           {stats.topReferrers.length === 0 ? (
-            <p className="mt-3 text-sm text-ink/50">No referrer data yet.</p>
+            <p className="mt-3 text-sm text-muted">No referrer data yet.</p>
           ) : (
             <ul className="mt-3 space-y-2 text-sm">
               {stats.topReferrers.map((r) => (
-                <li key={r.referrer} className="flex justify-between border-b border-ink/5 pb-1">
+                <li key={r.referrer} className="flex justify-between border-b border-border pb-1">
                   <span className="truncate">{r.referrer}</span>
-                  <span className="text-ink/50">{r.count}</span>
+                  <span className="text-muted">{r.count}</span>
                 </li>
               ))}
             </ul>
@@ -126,9 +126,9 @@ export default function StatsPage() {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-ink/10 p-4">
-      <div className="text-2xl font-semibold">{value}</div>
-      <div className="mt-1 text-xs text-ink/50">{label}</div>
+    <div className="rounded-2xl border border-border bg-card p-4 shadow-card">
+      <div className="font-display text-2xl font-semibold">{value}</div>
+      <div className="mt-1 text-xs text-muted">{label}</div>
     </div>
   );
 }

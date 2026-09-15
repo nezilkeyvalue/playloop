@@ -73,14 +73,18 @@ export async function runGeneration(
   }
 
   await emit("downloading", 25, "Downloading images…");
-  const { processed, dropped } = await processSprites(inventory.assets);
+  const { processed, dropped } = await processSprites(inventory.assets, {
+    alwaysInclude: inventory.brand.logo ? new Set([inventory.brand.logo.assetId]) : undefined,
+  });
 
   await emit("processing", 55, "Preparing your products…");
   inventory = { ...inventory, assets: processed };
 
   const gate = runQualityGate(inventory.assets, {
     assumedStageBackground: inventory.brand.palette[0],
-    exemptFromResolutionCheck: inventory.brand.logo ? new Set([inventory.brand.logo.assetId]) : undefined,
+    // The logo is exempt from the whole gate, not just resolution — see
+    // quality.ts's QualityGateOptions.exemptFromGate doc comment for why.
+    exemptFromGate: inventory.brand.logo ? new Set([inventory.brand.logo.assetId]) : undefined,
   });
   await emit("quality", 65);
 

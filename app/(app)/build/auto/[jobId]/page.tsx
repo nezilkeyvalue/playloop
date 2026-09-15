@@ -67,21 +67,24 @@ export default function AutoBuildProgressPage() {
 
   return (
     <div className="mx-auto max-w-lg text-center">
-      <h1 className="text-2xl font-semibold">Building your game</h1>
-      <p className="mt-2 text-ink/60">This usually takes under a minute.</p>
+      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary">
+        <span className="h-6 w-6 animate-pulse rounded-full bg-white/90" />
+      </div>
+      <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight">Building your game</h1>
+      <p className="mt-2 text-muted">This usually takes under a minute.</p>
 
-      <div className="mt-10 h-2 w-full overflow-hidden rounded-full bg-ink/10">
+      <div className="mt-10 h-2 w-full overflow-hidden rounded-full bg-foreground/[0.08]">
         <div
-          className="h-full rounded-full bg-ink transition-all duration-500 ease-out"
+          className="h-full rounded-full bg-primary transition-all duration-500 ease-out"
           style={{ width: `${Math.min(100, Math.max(4, percent))}%` }}
         />
       </div>
-      <p className="mt-4 text-sm text-ink/70">{label}</p>
+      <p className="mt-4 text-sm text-foreground/80">{label}</p>
 
       {(stage === "error" || pollError) && (
-        <div className="mt-8 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="mt-8 rounded-2xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
           <p>{job?.error ?? pollError ?? "Generation failed."}</p>
-          <a href="/build/manual" className="mt-3 inline-block underline">
+          <a href="/build/manual" className="mt-3 inline-block font-medium underline underline-offset-4">
             Try manual mode instead
           </a>
         </div>

@@ -93,21 +93,23 @@ export default function EmbedPage() {
     });
   }
 
-  if (!game) return <p className="text-sm text-ink/50">Loading…</p>;
+  if (!game) return <p className="text-sm text-muted">Loading…</p>;
 
   return (
     <div className="mx-auto max-w-xl space-y-8">
-      <h1 className="text-2xl font-semibold">Publish &amp; embed</h1>
+      <h1 className="font-display text-2xl font-semibold tracking-tight">Publish &amp; embed</h1>
 
-      <section>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink/50">Placement</h2>
+      <section className="rounded-2xl border border-border bg-card p-5 shadow-card">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Placement</h2>
         <div className="mt-3 grid grid-cols-2 gap-2">
           {supportedPlacements.map((p) => (
             <button
               key={p}
               onClick={() => setPlacement(p)}
-              className={`rounded-md border px-4 py-3 text-left text-sm ${
-                placement === p ? "border-ink bg-ink text-paper" : "border-ink/20"
+              className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
+                placement === p
+                  ? "border-transparent bg-primary text-white"
+                  : "border-border hover:border-primary/30"
               }`}
             >
               {PLACEMENT_LABELS[p]}
@@ -115,18 +117,18 @@ export default function EmbedPage() {
           ))}
         </div>
         {supportedPlacements.length === 0 && (
-          <p className="mt-2 text-sm text-ink/50">
+          <p className="mt-2 text-sm text-muted">
             No placements available for this template yet.
           </p>
         )}
       </section>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
       <button
         onClick={handlePublish}
         disabled={publishing || supportedPlacements.length === 0}
-        className="w-full rounded-md bg-ink px-5 py-3 text-sm font-medium text-paper disabled:opacity-40"
+        className="w-full rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-40"
       >
         {publishing ? "Publishing…" : result ? "Republish with this placement" : "Publish"}
       </button>
@@ -134,30 +136,30 @@ export default function EmbedPage() {
       {result && (
         <div className="space-y-6">
           <section>
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-ink/50">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
               Embed code
             </h2>
-            <pre className="mt-2 overflow-x-auto rounded-md border border-ink/10 bg-ink/5 p-4 text-xs">
+            <pre className="mt-2 overflow-x-auto rounded-xl border border-border bg-foreground/[0.04] p-4 text-xs">
               {result.embed}
             </pre>
             <button
               onClick={() => copy(result.embed, "embed")}
-              className="mt-2 text-sm underline"
+              className="mt-2 text-sm font-medium text-primary underline underline-offset-4"
             >
               {copied === "embed" ? "Copied!" : "Copy embed code"}
             </button>
           </section>
 
           <section>
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-ink/50">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
               Raw iframe (fallback for locked-down CMSs)
             </h2>
-            <pre className="mt-2 overflow-x-auto rounded-md border border-ink/10 bg-ink/5 p-4 text-xs">
+            <pre className="mt-2 overflow-x-auto rounded-xl border border-border bg-foreground/[0.04] p-4 text-xs">
               {buildIframeFallback(result.slug)}
             </pre>
             <button
               onClick={() => copy(buildIframeFallback(result.slug), "iframe")}
-              className="mt-2 text-sm underline"
+              className="mt-2 text-sm font-medium text-primary underline underline-offset-4"
             >
               {copied === "iframe" ? "Copied!" : "Copy iframe"}
             </button>

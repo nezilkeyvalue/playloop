@@ -167,8 +167,101 @@ export const guessPriceGameSpec: GameSpec = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Showcase skins — the same two templates restyled for different brands.
+// Used only by the marketing homepage slideshow to prove the product works
+// across verticals; real GameSpecs mounted through the real runtime, not
+// screenshots.
+// ---------------------------------------------------------------------------
+
+const skincareCollectibles: ProcessedAsset[] = [
+  asset("serum-1", "#C98BA5", "🧴", { name: "Rose Glow Serum", priceMinor: 3200, currency: "USD" }),
+  asset("serum-2", "#B87A9B", "🧴", { name: "Vitamin C Drops", priceMinor: 2800, currency: "USD" }),
+  asset("serum-3", "#A66B95", "🧴", { name: "Overnight Repair Oil", priceMinor: 3600, currency: "USD" }),
+  asset("serum-4", "#D497AE", "🧴", { name: "Hydra Mist", priceMinor: 2200, currency: "USD" }),
+  asset("serum-5", "#9C5F8E", "🧴", { name: "Retinol Complex", priceMinor: 4200, currency: "USD" }),
+  asset("serum-6", "#C286A8", "🧴", { name: "Clay Mask Duo", priceMinor: 2600, currency: "USD" }),
+  asset("serum-7", "#B074A0", "🧴", { name: "Eye Cream", priceMinor: 3100, currency: "USD" }),
+  asset("serum-8", "#DA9FB8", "🧴", { name: "SPF Glow Fluid", priceMinor: 2900, currency: "USD" }),
+];
+
+export const skincareGameSpec: GameSpec = {
+  ...catchGameSpec,
+  id: "demo-catch-lumen",
+  brand: {
+    name: "Lumen Skincare",
+    accent: "#C98BA5",
+    secondaryAccent: "#5B4B8A",
+    background: "#FBF4F7",
+    foreground: "#2B2230",
+    fontFamily: "DM Sans, system-ui, sans-serif",
+    palette: ["#C98BA5", "#5B4B8A", "#FBF4F7", "#2B2230"],
+  },
+  copy: {
+    headline: "Catch your glow",
+    subhead: "Drag the tray, catch the serums, dodge the empties.",
+    ctaStart: "Start catching",
+    ctaReplay: "Catch again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: skincareCollectibles,
+  roles: {
+    ...catchGameSpec.roles,
+    collectible: skincareCollectibles.map((a) => a.id),
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "GLOW10" },
+    { minScore: 450, label: "15% off", percentOff: 15, code: "GLOW15" },
+    { minScore: 900, label: "20% off", percentOff: 20, code: "GLOW20" },
+  ],
+};
+
+const sneakerHeroes: ProcessedAsset[] = [
+  asset("sneaker-1", "#1C1C1C", "👟", { name: "Air Runner Low", priceMinor: 8900, currency: "USD" }),
+  asset("sneaker-2", "#D9772A", "👟", { name: "Trail Max", priceMinor: 11900, currency: "USD" }),
+  asset("sneaker-3", "#2A2A2A", "👟", { name: "Court Classic", priceMinor: 7400, currency: "USD" }),
+  asset("sneaker-4", "#B94A2C", "👟", { name: "Retro High", priceMinor: 13900, currency: "USD" }),
+  asset("sneaker-5", "#333333", "👟", { name: "Featherlight Racer", priceMinor: 9900, currency: "USD" }),
+  asset("sneaker-6", "#C25A1E", "👟", { name: "Street Slip-On", priceMinor: 6900, currency: "USD" }),
+];
+
+export const sneakerGameSpec: GameSpec = {
+  ...guessPriceGameSpec,
+  id: "demo-guess-price-kicks",
+  brand: {
+    name: "Kicks & Co",
+    accent: "#D9772A",
+    secondaryAccent: "#1C1C1C",
+    background: "#F5F1EA",
+    foreground: "#1C1C1C",
+    fontFamily: "Montserrat, system-ui, sans-serif",
+    palette: ["#D9772A", "#1C1C1C", "#F5F1EA", "#ffffff"],
+  },
+  copy: {
+    headline: "How well do you know our drops?",
+    subhead: "Guess the price. Get closer, save more.",
+    ctaStart: "Start guessing",
+    ctaReplay: "Try again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: sneakerHeroes,
+  roles: {
+    ...guessPriceGameSpec.roles,
+    hero: sneakerHeroes.map((a) => a.id),
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "KICKS10" },
+    { minScore: 500, label: "15% off", percentOff: 15, code: "KICKS15" },
+    { minScore: 950, label: "20% off", percentOff: 20, code: "KICKS20" },
+  ],
+};
+
 /** Keyed by the slug app/play/[slug]/page.tsx serves directly, no DB hit. */
 export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-catch": catchGameSpec,
   "demo-guess-price": guessPriceGameSpec,
+  "demo-catch-lumen": skincareGameSpec,
+  "demo-guess-price-kicks": sneakerGameSpec,
 };

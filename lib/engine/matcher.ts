@@ -115,7 +115,17 @@ function matchOneTemplate(inventory: AssetInventory, cap: GameCapability): Templ
   let ineligible = false;
   let estimatedBuildMs = cap.cost.buildMs;
 
-  for (const role of cap.roles) {
+  // Assign roles most-constrained-first, not in capability-JSON declaration
+  // order: a role with fallback "none" blocks the whole template if it
+  // doesn't get filled, so it must get first pick of eligible assets
+  // regardless of where it happens to sit in the JSON. Without this, a new
+  // capability file (Track A: adding "match"/"stack") that happens to list
+  // an optional role before a required one would silently let the greedy
+  // per-role assignment below starve the required role of assets an
+  // earlier-processed optional role already claimed.
+  const rolesByPriority = [...cap.roles].sort((a, b) => rolePriority(a) - rolePriority(b));
+
+  for (const role of rolesByPriority) {
     const eligibleForRole = availableAssets.filter((a) => assetMeetsRequirements(a, role.requires));
     eligibleForRole.sort((a, b) => b.quality.score - a.quality.score);
 
@@ -330,6 +340,15 @@ function transformsMs(transforms: TransformId[]): number {
 
 function roleWeight(role: CapabilityRole): number {
   return role.optional ? OPTIONAL_ROLE_WEIGHT : REQUIRED_ROLE_WEIGHT;
+}
+
+/** Lower sorts first. Roles that can outright block eligibility (no
+ * fallback) must claim assets before roles that merely degrade gracefully
+ * (a real fallback) or barely move the score (optional). */
+function rolePriority(role: CapabilityRole): number {
+  if (role.fallback === "none") return 0;
+  if (!role.optional) return 1;
+  return 2;
 }
 
 function describeFallback(fallback: FallbackKind): string {

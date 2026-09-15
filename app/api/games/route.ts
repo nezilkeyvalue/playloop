@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
   const game = await createGame({
     accountId: null, // MVP stub: single implicit dev account, see queries.ts
     name: parsed.data.name,
-    spec: parsed.data.spec as GameSpec,
+    spec: parsed.data.spec as unknown as GameSpec,
     placement: parsed.data.placement,
   });
 

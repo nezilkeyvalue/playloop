@@ -13,8 +13,11 @@
 //   text density      burned-in "50% OFF" style badges
 //   contrast          sprite luminance too close to the stage background
 //
-// Text density has no OCR here — see estimateTextDensity()'s doc comment
-// for exactly what it approximates and where that approximation is weak.
+// Text density is computed upstream in sprites.ts (an edge-density signal
+// read off the actual decoded pixel buffer — see estimateTextDensity() over
+// there for exactly what it approximates and where it's weak); this file
+// only applies the reject/flag thresholds against that already-computed
+// asset.content.textDensity.
 
 import type { RawAsset } from "@/lib/engine/types";
 import { contrastRatioFromLuminance, luminanceOfHex } from "./palette";
@@ -27,12 +30,21 @@ export interface QualityGateOptions {
    * lead colour or a page's theme-color when available; defaults to a
    * light stage, the common case for e-commerce product photography. */
   assumedStageBackground?: string;
-  /** Asset ids to exempt from the resolution (short-edge) reject — the
-   * logo ladder's last resort is deliberately a favicon (build spec §7:
-   * "favicon last"), often ~32px, which would otherwise always fail the
-   * 300px floor. A brand mark shown small in the UI doesn't need
-   * collectible-sprite resolution; every other check still applies. */
-  exemptFromResolutionCheck?: Set<string>;
+  /**
+   * Asset ids to exempt from every reject rule in this gate, not just
+   * resolution. Originally this only exempted the logo from the
+   * short-edge floor (a favicon, build spec §7's deliberate last resort,
+   * is often ~32px) — but a logo also routinely fails the rules built for
+   * *product* sprites: a horizontal wordmark exceeds the 3:1 aspect cap,
+   * and a simple mark on a transparent background often has alpha
+   * coverage well under the 5% collectible floor. Those aren't quality
+   * problems for a logo, they're just what logos look like — so a logo
+   * candidate is exempted from the whole gate rather than one rule at a
+   * time, which in practice was silently dropping the logo from nearly
+   * every real auto-generated game (confirmed against the JSON-LD/OG
+   * ladder's output: `brand.logoUrl` came back undefined every time).
+   */
+  exemptFromGate?: Set<string>;
 }
 
 export interface RejectedAsset {
@@ -59,12 +71,18 @@ const MIN_STAGE_CONTRAST = 1.6; // soft luminance-distance signal, not full WCAG
 
 export function runQualityGate(assets: RawAsset[], options: QualityGateOptions = {}): QualityGateResult {
   const stageLuminance = luminanceOfHex(options.assumedStageBackground ?? "#FFFFFF");
-  const exempt = options.exemptFromResolutionCheck ?? new Set<string>();
+  const exempt = options.exemptFromGate ?? new Set<string>();
 
   const survivors: RawAsset[] = [];
   const rejected: RejectedAsset[] = [];
 
   for (const asset of assets) {
+    if (exempt.has(asset.id)) {
+      asset.quality = { score: 1, flags: [...asset.quality.flags, "exempt_from_gate"] };
+      survivors.push(asset);
+      continue;
+    }
+
     const reasons: string[] = [];
     // Preserve the transform provenance flags sprites.ts already recorded
     // (e.g. "transform:cutout:flood", "transform:shadow") — matcher.ts
@@ -72,7 +90,7 @@ export function runQualityGate(assets: RawAsset[], options: QualityGateOptions =
     const flags: string[] = [...asset.quality.flags];
 
     const shortEdge = Math.min(asset.pixels.width, asset.pixels.height);
-    if (shortEdge > 0 && shortEdge < MIN_SHORT_EDGE && !exempt.has(asset.id)) {
+    if (shortEdge > 0 && shortEdge < MIN_SHORT_EDGE) {
       reasons.push(`short edge ${shortEdge}px is under the ${MIN_SHORT_EDGE}px floor`);
     }
 
@@ -96,8 +114,7 @@ export function runQualityGate(assets: RawAsset[], options: QualityGateOptions =
       );
     }
 
-    const textDensity = estimateTextDensity(asset);
-    asset.content.textDensity = textDensity;
+    const textDensity = asset.content.textDensity;
     if (textDensity > HIGH_TEXT_DENSITY) {
       reasons.push(`estimated text density ${textDensity.toFixed(2)} looks like a burned-in badge/label`);
     } else if (textDensity > POSSIBLE_TEXT_DENSITY) {
@@ -146,29 +163,6 @@ function scoreAsset(asset: RawAsset, stageContrast: number): number {
   score *= clamp(1 - asset.content.textDensity, 0.5, 1);
 
   return clamp(Number(score.toFixed(3)), 0, 1);
-}
-
-/**
- * APPROXIMATION, not OCR. We have no text-detection model in this pipeline,
- * so this estimates "burned-in badge/label" risk from signals available
- * for free off already-computed asset fields:
- *   - non-isolatable backgrounds correlate with promotional graphics (solid
- *     colour blocks, banner sale tiles) that often carry text;
- *   - very high colour saturation combined with a non-square aspect is a
- *     mild banner/badge signal.
- * This will both miss real burned-in text on an otherwise clean packshot
- * (false negative) and flag busy-but-textless lifestyle photography (false
- * positive). It is deliberately capped well below 1.0 — the intent is a
- * soft prior for the matcher's `maxTextDensity` gate, not a confident
- * number. Treat any asset near the HIGH_TEXT_DENSITY threshold as "genuinely
- * unknown", not "verified"; a real OCR/vision pass (build spec §24 open
- * decision) is the correct fix, not a bigger heuristic.
- */
-function estimateTextDensity(asset: RawAsset): number {
-  let estimate = 0;
-  if (!asset.background.isolatable && asset.background.uniformity < 0.5) estimate += 0.15;
-  if (asset.colour.saturation > 0.6 && (asset.pixels.aspect > 1.6 || asset.pixels.aspect < 0.6)) estimate += 0.1;
-  return clamp(estimate, 0, 1);
 }
 
 function dedupeByPhash(survivors: RawAsset[], rejected: RejectedAsset[]): QualityGateResult {

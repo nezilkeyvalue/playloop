@@ -30,11 +30,25 @@ export interface ProcessSpritesResult {
   dropped: { assetId: string; url: string; reason: string }[];
 }
 
-export async function processSprites(assets: RawAsset[]): Promise<ProcessSpritesResult> {
+export async function processSprites(
+  assets: RawAsset[],
+  options: { alwaysInclude?: Set<string> } = {},
+): Promise<ProcessSpritesResult> {
   // Build spec §6: "downloading — parallel, cap 12". We cap *which* assets
   // we even attempt, not just how many requests run concurrently — MAX_CANDIDATE_IMAGES
   // is a hard ceiling on total work per generation.
-  const candidates = assets.slice(0, MAX_CANDIDATE_IMAGES);
+  //
+  // `alwaysInclude` (the logo) is reserved a slot before the cap is applied
+  // instead of a plain `.slice(0, N)` — the logo ladder appends its result
+  // to the *end* of the asset list (extract/index.ts), so on any real site
+  // with MAX_CANDIDATE_IMAGES+ product photos (most Shopify stores), the
+  // logo was silently sliced off before it was ever downloaded, regardless
+  // of anything the quality gate did with it downstream. Confirmed live:
+  // every auto-generated game so far had `brand.logoUrl` undefined.
+  const always = options.alwaysInclude ?? new Set<string>();
+  const priority = assets.filter((a) => always.has(a.id));
+  const rest = assets.filter((a) => !always.has(a.id));
+  const candidates = [...priority, ...rest].slice(0, MAX_CANDIDATE_IMAGES);
 
   const settled = await Promise.all(candidates.map((asset) => processOne(asset)));
 
@@ -92,10 +106,11 @@ async function processOne(asset: RawAsset): Promise<ProcessOneResult> {
   }
 
   try {
-    const [cutoutResult, phash, colourSummary] = await Promise.all([
+    const [cutoutResult, phash, colourSummary, textDensity] = await Promise.all([
       cutout(workingBuffer),
       computePhash(workingBuffer),
       extractColours(workingBuffer),
+      estimateTextDensity(workingBuffer),
     ]);
 
     const transformFlags: string[] = [];
@@ -134,7 +149,7 @@ async function processOne(asset: RawAsset): Promise<ProcessOneResult> {
         isolatable: cutoutResult.isolatable,
       },
       colour: colourSummary,
-      content: { ...asset.content, subjectType },
+      content: { ...asset.content, subjectType, textDensity },
       phash,
       // Placeholder score/flags here — quality.ts computes the real
       // confidence score once every gate check has run; transformFlags
@@ -256,6 +271,48 @@ async function addSoftShadow(spritePng: Buffer, size: number): Promise<Buffer> {
     ])
     .png()
     .toBuffer();
+}
+
+const TEXT_EDGE_THRESHOLD = 40; // Laplacian magnitude (0-255) counted as a "strong" edge
+const TEXT_DENSITY_SCALE = 2; // maps measured edge density onto quality.ts's 0..1 reject scale
+
+/**
+ * Edge-density text estimate — still not OCR (build spec §24 open decision:
+ * a real OCR/vision pass is the correct eventual fix), but unlike the
+ * heuristic this replaces, it actually looks at pixel content instead of
+ * inferring from unrelated summary stats (background uniformity, colour
+ * saturation). Burned-in text/badges pack many small, sharp edges into a
+ * small area (glyph strokes stacked in rows); a clean product photo or a
+ * soft lifestyle shot does not, even when it reads as visually "busy" in
+ * colour. A Laplacian high-pass over a small greyscale copy of the actual
+ * decoded image measures exactly that: the fraction of pixels that come
+ * back as a strong edge.
+ *
+ * The `* 2` scale factor is an empirical guess, not a calibrated fit (no
+ * labeled dataset in this pipeline to calibrate against) — chosen so a
+ * clean packshot (typically 2-8% strong-edge pixels at this resolution)
+ * lands well under quality.ts's POSSIBLE_TEXT_DENSITY (0.15), while a
+ * genuinely dense badge/label (15%+) can actually cross HIGH_TEXT_DENSITY
+ * (0.3) — the previous heuristic's output range topped out around 0.25 and
+ * so could never trigger a hard reject at all. Revisit the scale factor
+ * once this has run against real sites.
+ */
+async function estimateTextDensity(buffer: Buffer): Promise<number> {
+  const { data, info } = await sharp(buffer)
+    .greyscale()
+    .resize(160, 160, { fit: "inside" })
+    .convolve({ width: 3, height: 3, kernel: [-1, -1, -1, -1, 8, -1, -1, -1, -1] })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const total = info.width * info.height;
+  if (total === 0) return 0;
+
+  let strong = 0;
+  for (let i = 0; i < data.length; i++) {
+    if ((data[i] ?? 0) > TEXT_EDGE_THRESHOLD) strong++;
+  }
+  return Math.min(1, (strong / total) * TEXT_DENSITY_SCALE);
 }
 
 /**
