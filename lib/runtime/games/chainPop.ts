@@ -26,7 +26,7 @@
 // phone inside someone else's page.
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
-import type { BrandKit } from "@/lib/engine/types";
+import type { BrandKit, ColorAdjust } from "@/lib/engine/types";
 
 // Scoring constants, chosen so maxRealisticScore() at the capability's
 // default tuning (durationSec 45, minChainLength 3) lands close to
@@ -546,6 +546,7 @@ class ChainPopGame implements GameModule {
 
     if (kind.asset?.image) {
       const inset = size * 0.1;
+      const boxSize = size - inset * 2;
       c.save();
       roundedRect(c, 0, 0, size, size, radius);
       c.clip();
@@ -556,10 +557,25 @@ class ChainPopGame implements GameModule {
         // (pre-rendered once in buildKinds, not re-blurred every frame).
         c.drawImage(kind.blurredBackdrop, 0, 0, size, size);
       }
-      // The full sprite, always — "contain" scaling only (fit entirely
-      // within the inset box, preserving aspect), never a source crop, so
-      // no real content is ever cut off regardless of treatment.
-      c.drawImage(kind.asset.image, inset, inset, size - inset * 2, size - inset * 2);
+      // Smart zoom toward the real subject (SubjectBounds — see
+      // lib/engine/types.ts) rather than always drawing the whole square
+      // sprite: a product that's small/off-centre in its own source photo
+      // otherwise renders small/off-centre here too. Still "contain"
+      // scaling, still never a source crop *into* the subject — bounds
+      // are asserted safe by construction (sprites.ts's exact trim-derived
+      // rect, or brain.ts's validated, clamped AI estimate) — falls back
+      // to the whole image when no bounds are known (no AI, no clean
+      // cutout to trim), identical to the pre-subjectBounds behaviour.
+      const img = kind.asset.image;
+      const bounds = kind.asset.subjectBounds;
+      const sx = bounds ? bounds.x * img.naturalWidth : 0;
+      const sy = bounds ? bounds.y * img.naturalHeight : 0;
+      const sw = bounds ? bounds.width * img.naturalWidth : img.naturalWidth;
+      const sh = bounds ? bounds.height * img.naturalHeight : img.naturalHeight;
+      const fit = containFit(sw, sh, boxSize, boxSize);
+      c.filter = colorAdjustFilterString(kind.asset.colorAdjust);
+      c.drawImage(img, sx, sy, sw, sh, inset + fit.x, inset + fit.y, fit.w, fit.h);
+      c.filter = "none";
       c.restore();
     } else {
       c.fillStyle = kind.color;
@@ -603,7 +619,7 @@ function buildKinds(tileAssets: LoadedAsset[], brand: BrandKit, random: () => nu
       color: colors[i % colors.length] ?? brand.accent,
       blurredBackdrop:
         asset?.image && asset.presentation === "photographic" && asset.backgroundTreatment === "blurFill"
-          ? createBlurredBackdrop(asset.image)
+          ? createBlurredBackdrop(asset.image, asset.colorAdjust)
           : null,
     });
   }
@@ -618,7 +634,7 @@ function buildKinds(tileAssets: LoadedAsset[], brand: BrandKit, random: () => nu
  * changes. Returns null in non-DOM environments (SSR) or if 2D context
  * creation fails — callers already treat a null backdrop as "no blur
  * decoration", never a hard failure. */
-function createBlurredBackdrop(image: HTMLImageElement): HTMLCanvasElement | null {
+function createBlurredBackdrop(image: HTMLImageElement, colorAdjust: ColorAdjust | undefined): HTMLCanvasElement | null {
   if (typeof document === "undefined") return null;
   const canvas = document.createElement("canvas");
   canvas.width = BLUR_BACKDROP_RESOLUTION;
@@ -626,7 +642,12 @@ function createBlurredBackdrop(image: HTMLImageElement): HTMLCanvasElement | nul
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
 
-  ctx.filter = `blur(${BLUR_BACKDROP_RADIUS_PX}px)`;
+  // Baked in at pre-render time (this only ever runs once per kind, not
+  // per frame) rather than left for the live foreground draw to apply —
+  // the corrected colour should show through the blurred decor layer too,
+  // not just the sharp image on top of it.
+  const adjust = colorAdjustFilterString(colorAdjust);
+  ctx.filter = adjust === "none" ? `blur(${BLUR_BACKDROP_RADIUS_PX}px)` : `blur(${BLUR_BACKDROP_RADIUS_PX}px) ${adjust}`;
   const d = BLUR_BACKDROP_RESOLUTION * BLUR_BACKDROP_ZOOM;
   const offset = (BLUR_BACKDROP_RESOLUTION - d) / 2;
   ctx.drawImage(image, offset, offset, d, d);
@@ -658,6 +679,38 @@ function isHexColor(value: string | undefined): value is string {
 
 function clampInt(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+/** "Contain" fit of a `srcW`x`srcH` rect into a `boxW`x`boxH` box: the
+ * largest size that preserves the source's own aspect ratio without
+ * exceeding either box dimension, centred. Needed because a subjectBounds
+ * sub-rect (see drawCell) is generally NOT square even though every sprite
+ * itself is (sprites.ts always pads to a square canvas) — drawing that
+ * sub-rect straight into a square destination without this would stretch
+ * a tall/wide subject out of proportion. */
+function containFit(
+  srcW: number,
+  srcH: number,
+  boxW: number,
+  boxH: number,
+): { w: number; h: number; x: number; y: number } {
+  if (srcW <= 0 || srcH <= 0) return { w: boxW, h: boxH, x: 0, y: 0 };
+  const srcAspect = srcW / srcH;
+  const boxAspect = boxW / boxH;
+  const w = srcAspect > boxAspect ? boxW : boxH * srcAspect;
+  const h = srcAspect > boxAspect ? boxW / srcAspect : boxH;
+  return { w, h, x: (boxW - w) / 2, y: (boxH - h) / 2 };
+}
+
+/** `ColorAdjust` → a canvas `ctx.filter` string. "none" both when there's
+ * no adjustment at all and when one is present but numerically neutral
+ * (1,1,1) — either way, skip the filter entirely rather than pay for a
+ * no-op canvas filter graph on every draw. */
+function colorAdjustFilterString(adjust: ColorAdjust | undefined): string {
+  if (!adjust) return "none";
+  const { brightness, contrast, saturation } = adjust;
+  if (brightness === 1 && contrast === 1 && saturation === 1) return "none";
+  return `brightness(${brightness}) contrast(${contrast}) saturate(${saturation})`;
 }
 
 function lerp(a: number, b: number, t: number): number {

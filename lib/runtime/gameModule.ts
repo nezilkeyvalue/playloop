@@ -13,9 +13,11 @@ import type {
   AssetBackgroundTreatment,
   AssetPresentation,
   BrandKit,
+  ColorAdjust,
   FallbackKind,
   GameCopy,
   GameSpec,
+  SubjectBounds,
   TemplateId,
 } from "@/lib/engine/types";
 import type { InputState } from "@/lib/runtime/input";
@@ -32,6 +34,8 @@ export interface LoadedAsset {
   presentation?: AssetPresentation;
   backgroundColor?: string;
   backgroundTreatment?: AssetBackgroundTreatment;
+  subjectBounds?: SubjectBounds;
+  colorAdjust?: ColorAdjust;
 }
 
 /**

@@ -20,6 +20,7 @@ interface Slide {
 const SLIDES: Slide[] = [
   { specKey: "demo-catch", domain: "bloomcoffee.co", vertical: "Coffee & retail" },
   { specKey: "demo-chain-pop", domain: "sweetpop.co", vertical: "Confectionery" },
+  { specKey: "demo-shooter", domain: "novabites.com", vertical: "Snacks" },
   { specKey: "demo-guess-price", domain: "nordicsock.co", vertical: "Apparel" },
   { specKey: "demo-catch-lumen", domain: "lumenskincare.com", vertical: "Beauty" },
   { specKey: "demo-guess-price-kicks", domain: "kicksandco.com", vertical: "Footwear" },

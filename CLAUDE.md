@@ -129,19 +129,48 @@ touching the related area.
   `hero`); a role that *frames* a photo (a tile, a card) doesn't need it —
   see `ProcessedAsset.presentation`/`docs/ARCHITECTURE.md` §3 for how to
   render a non-isolated photo well instead.
-- **Never crop a `"photographic"` asset to make it "fit."** The first
-  attempt at the fix above filled a tile's frame with the photo's own
-  `backgroundColor` (right) but also cropped into the sprite to reduce
-  visible backdrop margin (wrong) — a subject that already filled most of
-  the frame got its head/feet/edges cut off. Always scale the *whole*
-  image in (Canvas `drawImage` "contain" semantics, no source-rect
-  cropping) and fill the leftover space with `backgroundColor` and/or a
-  pre-rendered blurred self-extension (`backgroundTreatment` — see
-  `docs/ARCHITECTURE.md` §3) instead of cropping toward it.
+- **Never crop a `"photographic"` asset to make it "fit" — unless you have
+  `subjectBounds`, and then only toward it.** The first attempt at the fix
+  above filled a tile's frame with the photo's own `backgroundColor`
+  (right) but also cropped into the sprite to reduce visible backdrop
+  margin (wrong) — a subject that already filled most of the frame got its
+  head/feet/edges cut off. The rule is now: without a known subject
+  boundary, always scale the *whole* image in (Canvas `drawImage` "contain"
+  semantics, no source-rect cropping) and fill the leftover space with
+  `backgroundColor` and/or a pre-rendered blurred self-extension
+  (`backgroundTreatment`) instead of cropping toward it. *With* a known
+  boundary (`ProcessedAsset.subjectBounds` — see `docs/ARCHITECTURE.md` §3)
+  it's safe, and often much better-looking, to crop toward it — that field
+  exists specifically to mark the part of the frame that's genuinely unsafe
+  to touch, so cropping to it (never into it) removes only padding, never
+  content.
 - **`undici`'s default max header size is small.** Some real-world sites
   return oversized response headers that blow past Node's default and throw
   before `safeFetch.ts` even gets a body. Both fetches there use a shared
   `undici.Agent({ maxHeaderSize: 1_048_576 })` dispatcher.
+- **A site that blocks non-browser User-Agents is expected behaviour, not a
+  bug to route around.** Confirmed live: uniqlo.com's edge WAF silently
+  drops (no response at all, not even a clean 4xx) any request carrying our
+  honest `PlayLoopBot` User-Agent. Do not "fix" this by spoofing a browser
+  UA to evade a site's own deliberate bot-detection — that's evasion of an
+  access control the site owner put up on purpose, not a defect in this
+  codebase. Two real bugs *were* found and fixed alongside this, though:
+  (1) `extract/index.ts`'s root document fetch was the one ladder step not
+  wrapped in `tryStep()`, so a fully-blocked site threw all the way up
+  instead of degrading to an empty inventory (which already routes the user
+  to "no template fit — try manual mode", exactly as build spec §23
+  intends: "sites blocking fetch → empty extraction, not a thrown error").
+  (2) A single blocked origin still cost ~40s of real wall time even after
+  that fix — the robots.txt lookup, the root page, the Shopify
+  `products.json` probe, and the sitemap.xml probe each independently paid
+  the *same* ~10s timeout discovering the *same* fact. `safeFetch.ts`'s
+  `originFailureCache` (5-minute TTL, separate from the 24h response/robots
+  caches) now remembers a hard failure (timeout/connection error — never a
+  clean non-2xx response) per origin so every subsequent attempt in the
+  same run fails immediately instead of re-timing-out; verified live this
+  brought uniqlo.com's total extraction time down to ~11s (one honest
+  timeout — the real floor, since confirming a truly silent origin
+  necessarily costs one full wait).
 - **macOS `sed` needs `-E`** for extended regex (e.g. `\+`) if you're
   scripting edits — BSD sed, not GNU.
 - **Verification workflow for UI changes:** temporarily
@@ -170,8 +199,8 @@ touching the related area.
 
 ## What's implemented vs. reserved
 
-Three templates are live end-to-end: `catch`, `guess_price`, and
-`chain_pop` (see `lib/capabilities/*.json`, `lib/runtime/games/*.ts`).
+Four templates are live end-to-end: `catch`, `guess_price`, `chain_pop`, and
+`shooter` (see `lib/capabilities/*.json`, `lib/runtime/games/*.ts`).
 `TemplateId` in `types.ts` also reserves `"match"` and `"stack"` — they
 exist in the type system (and the capability-schema Zod validator)
 precisely so more templates can be added later without touching that

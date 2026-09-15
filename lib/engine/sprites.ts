@@ -11,7 +11,7 @@
 import sharp from "sharp";
 import { safeFetchImage } from "@/lib/engine/safeFetch";
 import { uploadSprite } from "@/lib/storage";
-import type { RawAsset, SubjectType } from "@/lib/engine/types";
+import type { RawAsset, SubjectBounds, SubjectType } from "@/lib/engine/types";
 import { cutout, computePhash, MIN_UNIFORMITY_FOR_ISOLATION } from "./cutout";
 import { extractColours } from "./palette";
 
@@ -117,7 +117,18 @@ async function processOne(asset: RawAsset): Promise<ProcessOneResult> {
     transformFlags.push(cutoutResult.alreadyHadAlpha ? "transform:alpha_passthrough" : "transform:cutout:flood");
     if (!cutoutResult.isolatable) transformFlags.push("transform:cutout:failed");
 
-    const { buffer: spriteBuffer, coverage } = await buildSprite(cutoutResult.rgba, cutoutResult.width, cutoutResult.height);
+    const { buffer: spriteBuffer, coverage, subjectBounds: trimmedBounds } = await buildSprite(
+      cutoutResult.rgba,
+      cutoutResult.width,
+      cutoutResult.height,
+    );
+    // Only trust the trim-derived rect as real subject bounds for an
+    // isolated cutout, where trim() is finding an actual alpha silhouette —
+    // for a photographic asset (fully opaque input), a near-full-frame trim
+    // result is common but not a segmentation, so leave it unset and let
+    // SubjectBounds' documented absent-means-full-frame default apply
+    // instead of asserting a boundary this pipeline doesn't really know.
+    const subjectBounds: SubjectBounds | undefined = cutoutResult.isolatable ? trimmedBounds : undefined;
 
     let finalSprite = spriteBuffer;
     if (cutoutResult.isolatable) {
@@ -182,6 +193,9 @@ async function processOne(asset: RawAsset): Promise<ProcessOneResult> {
           : cutoutResult.uniformity >= MIN_UNIFORMITY_FOR_ISOLATION
             ? "solid"
             : "blurFill",
+        // Computed exactly (not guessed) from the trim step just above —
+        // see the subjectBounds assignment and SubjectBounds' doc comment.
+        subjectBounds,
       },
     };
 
@@ -197,12 +211,18 @@ async function processOne(asset: RawAsset): Promise<ProcessOneResult> {
 }
 
 /** Trim to alpha bbox → pad square → resize SPRITE_SIZE. Returns the final
- * PNG buffer and its alpha coverage (non-transparent fraction, 0..1). */
+ * PNG buffer, its alpha coverage (non-transparent fraction, 0..1), and the
+ * trimmed content's normalized rect within the final square canvas
+ * (SubjectBounds shape — this IS an exact subject bbox when the input came
+ * from a real alpha cutout, since the pad-square step centers the trimmed
+ * content and the two proportional resizes afterward don't change the
+ * normalized fractions). Callers decide whether to trust it as such — see
+ * the `cutoutResult.isolatable` gate at the processOne() call site. */
 async function buildSprite(
   rgba: Buffer,
   width: number,
   height: number,
-): Promise<{ buffer: Buffer; coverage: number }> {
+): Promise<{ buffer: Buffer; coverage: number; subjectBounds: SubjectBounds }> {
   const rawPng = await sharp(rgba, { raw: { width, height, channels: 4 } }).png().toBuffer();
 
   let trimmedBuffer: Buffer;
@@ -243,7 +263,16 @@ async function buildSprite(
     .toBuffer();
 
   const coverage = await computeAlphaCoverage(finalSprite);
-  return { buffer: finalSprite, coverage };
+  // `side` is exactly the pad-square canvas both proportional resizes below
+  // preserve the aspect of, so these fractions describe the trimmed content
+  // rect in both the padded square AND the final SPRITE_SIZE canvas alike.
+  const subjectBounds: SubjectBounds = {
+    x: (side - trimmedWidth) / 2 / side,
+    y: (side - trimmedHeight) / 2 / side,
+    width: trimmedWidth / side,
+    height: trimmedHeight / side,
+  };
+  return { buffer: finalSprite, coverage, subjectBounds };
 }
 
 async function computeAlphaCoverage(pngBuffer: Buffer): Promise<number> {

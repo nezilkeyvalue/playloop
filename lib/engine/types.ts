@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 export type Placement = "section" | "fullpage" | "modal" | "ad";
-export type TemplateId = "catch" | "guess_price" | "chain_pop" | "match" | "stack";
+export type TemplateId = "catch" | "guess_price" | "chain_pop" | "shooter" | "match" | "stack";
 
 /**
  * How a sprite's background should be treated by a renderer that frames it
@@ -59,6 +59,65 @@ export type AssetPresentation = "isolated" | "photographic";
  */
 export type AssetBackgroundTreatment = "solid" | "blurFill";
 
+/**
+ * Normalized (0..1, relative to the sprite's own square canvas — see
+ * `ProcessedAsset.width`/`height`) bounding box of the *real subject* within
+ * the frame — everything outside it is safe padding/backdrop, not content.
+ *
+ * This refines, not contradicts, AssetPresentation's "never crop" rule: a
+ * renderer may crop toward `subjectBounds` (tightening the frame around a
+ * subject that's small/off-centre in its source photo, e.g. a product shot
+ * on a huge white void) but must never crop *into* it — the region this
+ * rect describes is exactly the part that rule protects. Cropping outside
+ * it removes only padding, which is what makes a genuinely amateur "tiny
+ * lost product" tile look intentional instead.
+ *
+ * `{ x: 0, y: 0, width: 1, height: 1 }` (the whole frame is "subject") is
+ * always a safe, conservative value — a renderer that ignores this field
+ * entirely, or gets exactly that value, behaves identically to before this
+ * field existed.
+ *
+ * For an "isolated" asset this is computed exactly, for free, from
+ * sprites.ts's own trim step (the alpha-trimmed content rect within the
+ * padded square — no guessing needed). For a "photographic" asset there is
+ * no reliable way to segment subject from backdrop without real vision
+ * judgment, so sprites.ts's deterministic fallback is the full frame (no
+ * crop) and only `brain.ts`'s `imageSubjectBounds` (Gemini, when a key is
+ * configured) can tighten it — same call/fallback pattern as
+ * `imagePresentation`.
+ */
+export interface SubjectBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Multiplicative brightness/contrast/saturation nudge (1 = no change),
+ * meant to be applied as a cheap canvas filter (`ctx.filter =
+ * "brightness(b) contrast(c) saturate(s)"`) at draw time. Exists to correct
+ * for the fact that a site's product photos rarely share one consistent
+ * exposure/colour grade (different photographers, lighting, years) — a
+ * grid of tiles with visibly inconsistent brightness reads as scraped, not
+ * designed, even once presentation/backgroundTreatment are both right.
+ *
+ * There is no deterministic heuristic for this today — guessing "correct"
+ * exposure from pixel statistics alone is as likely to make an image worse
+ * as better without real judgment, which is worse than doing nothing. So
+ * the fallback is always the neutral, no-op `{ brightness: 1, contrast: 1,
+ * saturation: 1 }` (equivalently: omit the field entirely — a renderer must
+ * treat "absent" the same as neutral), and only `brain.ts`'s
+ * `imageColorAdjust` (Gemini, when a key is configured) ever sets a real
+ * value. Each field is clamped server-side to [0.5, 1.5] — see
+ * brain.ts's parseColorAdjustValue — a correction, not a re-edit.
+ */
+export interface ColorAdjust {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+}
+
 export interface ProcessedAsset {
   id: string;
   spriteUrl: string; // square, transparent, trimmed
@@ -80,6 +139,10 @@ export interface ProcessedAsset {
    * typically absent) otherwise. Absent-but-photographic should be treated
    * as "solid" (the original, simpler behaviour) for backward compatibility. */
   backgroundTreatment?: AssetBackgroundTreatment;
+  /** Absent means "whole frame is subject" — see SubjectBounds' doc comment. */
+  subjectBounds?: SubjectBounds;
+  /** Absent means neutral/no-op — see ColorAdjust's doc comment. */
+  colorAdjust?: ColorAdjust;
 }
 
 export interface BrandKit {
@@ -351,6 +414,19 @@ export interface BrainResponse {
    * ProcessedAsset) — same reasoning and fallback behaviour as
    * `imagePresentation`. */
   imageBackgroundTreatment?: Record<string, AssetBackgroundTreatment>;
+  /** Per-asset-id override for SubjectBounds (see ProcessedAsset) — the
+   * only source of a tightened crop for a "photographic" asset, since
+   * sprites.ts's deterministic fallback is always the full frame for those
+   * (no reliable heuristic). Still useful, if less impactful, for an
+   * "isolated" asset too — Gemini can judge padding a plain alpha-trim
+   * can't (e.g. a product shot deliberately off-centre within its own
+   * cutout). Absent on the deterministic fallback. */
+  imageSubjectBounds?: Record<string, SubjectBounds>;
+  /** Per-asset-id override for ColorAdjust (see ProcessedAsset) — this
+   * field has no deterministic source at all (see ColorAdjust's doc
+   * comment), so it is *only* ever populated here, on a real Gemini
+   * response; compose.ts's fallback is always neutral. */
+  imageColorAdjust?: Record<string, ColorAdjust>;
 }
 
 // ---------------------------------------------------------------------------

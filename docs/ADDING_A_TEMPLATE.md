@@ -15,11 +15,19 @@ step 0) for something new entirely.
 ## Step 0 — only if the id doesn't already exist
 
 If you're not implementing `match` or `stack`, add the new id in exactly
-two places (both are small, low-conflict-risk, shared files):
+three places (all small, low-conflict-risk, shared files):
 
 1. `TemplateId` union in `lib/engine/types.ts`
 2. The `z.enum([...])` for `id` in `lib/capabilities/index.ts`'s
    `gameCapabilitySchema`
+3. The `z.enum([...])` for `template` in `app/api/games/route.ts`'s
+   `gameSpecSchema` — easy to miss since it's a separate, independent zod
+   schema for the same value (this route accepts a hand-assembled `GameSpec`
+   directly from manual mode's build wizard, rather than going through the
+   capability-JSON pipeline the other two touch). Missing this one doesn't
+   fail loudly: chain_pop and shooter both shipped fully working in auto
+   mode while manual mode silently rejected every attempt to create either,
+   until this line was found and fixed.
 
 ## Step 1 — capability JSON (`lib/capabilities/<id>.json`)
 

@@ -226,6 +226,65 @@ export const chainPopGameSpec: GameSpec = {
 };
 
 // ---------------------------------------------------------------------------
+// Space Shooter — "Nova Bites"
+// ---------------------------------------------------------------------------
+
+const shooterProducts: ProcessedAsset[] = [
+  asset("bar-1", "#F2A72E", "🍫", { name: "Peanut Crunch Bar", priceMinor: 320, currency: "USD" }),
+  asset("bar-2", "#6A4FB6", "🍪", { name: "Cookie Dough Bites", priceMinor: 280, currency: "USD" }),
+  asset("bar-3", "#3FAE8C", "🥜", { name: "Almond Protein Bar", priceMinor: 350, currency: "USD" }),
+  asset("bar-4", "#E8567A", "🍓", { name: "Berry Oat Bar", priceMinor: 300, currency: "USD" }),
+  asset("bar-5", "#2E86F2", "🍯", { name: "Honey Granola Bar", priceMinor: 290, currency: "USD" }),
+];
+
+export const shooterGameSpec: GameSpec = {
+  id: "demo-shooter",
+  version: 1,
+  template: "shooter",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Nova Bites",
+    accent: "#2E86F2",
+    secondaryAccent: "#F2A72E",
+    background: "#0B0F1E",
+    foreground: "#F5F7FF",
+    fontFamily: "Space Grotesk, system-ui, sans-serif",
+    palette: ["#2E86F2", "#F2A72E", "#6A4FB6", "#0B0F1E"],
+  },
+  copy: {
+    headline: "Shoot your favorite bite",
+    subhead: "We'll show you the target — blast it, dodge the rest.",
+    ctaStart: "Launch",
+    ctaReplay: "Fly again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: shooterProducts,
+  roles: {
+    product: shooterProducts.map((a) => a.id),
+    ship: { fallback: "generatedShape" },
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "NOVA10" },
+    { minScore: 300, label: "15% off", percentOff: 15, code: "NOVA15" },
+    { minScore: 550, label: "20% off", percentOff: 20, code: "NOVA20" },
+  ],
+  durationSeconds: 40,
+  tuning: {
+    fireRateHz: 2.2,
+    spawnRateHz: 1.0,
+    fallSpeed: 120,
+    targetRatio: 0.4,
+    durationSec: 40,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Showcase skins — the same two templates restyled for different brands.
 // Used only by the marketing homepage slideshow to prove the product works
 // across verticals; real GameSpecs mounted through the real runtime, not
@@ -321,6 +380,7 @@ export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-catch": catchGameSpec,
   "demo-guess-price": guessPriceGameSpec,
   "demo-chain-pop": chainPopGameSpec,
+  "demo-shooter": shooterGameSpec,
   "demo-catch-lumen": skincareGameSpec,
   "demo-guess-price-kicks": sneakerGameSpec,
 };

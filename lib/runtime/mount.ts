@@ -31,16 +31,18 @@ import { beginSession, captureLead, endSession, trackEvent } from "@/lib/runtime
 import { createCatchGame } from "@/lib/runtime/games/catch";
 import { createGuessPriceGame } from "@/lib/runtime/games/guessPrice";
 import { createChainPopGame } from "@/lib/runtime/games/chainPop";
+import { createShooterGame } from "@/lib/runtime/games/shooter";
 
 type GameModuleFactory = () => GameModule;
 
-/** "catch", "guess_price", and "chain_pop" are implemented. "match" / "stack"
- * are reserved TemplateId values with no capability JSON and no runtime
- * module yet — mount() degrades to a friendly message. */
+/** "catch", "guess_price", "chain_pop", and "shooter" are implemented.
+ * "match" / "stack" are reserved TemplateId values with no capability JSON
+ * and no runtime module yet — mount() degrades to a friendly message. */
 const REGISTRY: Partial<Record<TemplateId, GameModuleFactory>> = {
   catch: createCatchGame,
   guess_price: createGuessPriceGame,
   chain_pop: createChainPopGame,
+  shooter: createShooterGame,
 };
 
 export interface MountOptions {
@@ -384,6 +386,8 @@ function loadAsset(asset: GameSpec["assets"][number]): Promise<LoadedAsset> {
     presentation: asset.presentation,
     backgroundColor: asset.backgroundColor,
     backgroundTreatment: asset.backgroundTreatment,
+    subjectBounds: asset.subjectBounds,
+    colorAdjust: asset.colorAdjust,
   }));
 }
 
