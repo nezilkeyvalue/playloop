@@ -209,7 +209,12 @@ export default function ManualBuildPage() {
       const res = await fetch("/api/games", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: headline || "Untitled game", placement, spec }),
+        body: JSON.stringify({
+          name: headline || "Untitled game",
+          placement,
+          spec,
+          rightsConfirmed,
+        }),
       });
       if (!res.ok) throw new Error("Could not create the game.");
       const { id } = (await res.json()) as { id: string };
@@ -392,7 +397,10 @@ export default function ManualBuildPage() {
             onChange={(e) => setRightsConfirmed(e.target.checked)}
             className="mt-0.5 accent-primary"
           />
-          <span>I have the rights to use these images in this game.</span>
+          <span>
+            I own these images, or have permission to use them, and give PlayLoop permission
+            to use them to build this game.
+          </span>
         </label>
       </section>
 

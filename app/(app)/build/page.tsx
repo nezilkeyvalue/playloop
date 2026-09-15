@@ -7,18 +7,20 @@ import { useRouter } from "next/navigation";
 export default function BuildPage() {
   const router = useRouter();
   const [url, setUrl] = useState("");
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!rightsConfirmed) return;
     setError(null);
     setLoading(true);
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, rightsConfirmed }),
       });
       if (!res.ok) throw new Error("Could not start generation. Try again.");
       const { jobId } = (await res.json()) as { jobId: string };
@@ -51,12 +53,26 @@ export default function BuildPage() {
         />
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || !rightsConfirmed}
           className="rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-50"
         >
           {loading ? "Starting…" : "Generate"}
         </button>
       </form>
+
+      <label className="mt-4 flex items-start gap-2 text-sm text-foreground/80">
+        <input
+          type="checkbox"
+          checked={rightsConfirmed}
+          onChange={(e) => setRightsConfirmed(e.target.checked)}
+          className="mt-0.5 accent-primary"
+        />
+        <span>
+          I own this website, or have permission from its owner, to use its content and
+          images to build this game.
+        </span>
+      </label>
+
       {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
 
       <div className="mt-10 flex items-center gap-4 text-xs uppercase tracking-wide text-muted">

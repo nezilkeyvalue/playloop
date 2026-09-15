@@ -16,18 +16,20 @@ import { ShowcaseSlideshow } from "@/components/ShowcaseSlideshow";
 export default function LandingPage() {
   const router = useRouter();
   const [url, setUrl] = useState("");
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!rightsConfirmed) return;
     setError(null);
     setLoading(true);
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, rightsConfirmed }),
       });
       if (!res.ok) throw new Error("Could not start generation. Try again.");
       const { jobId } = (await res.json()) as { jobId: string };
@@ -73,12 +75,26 @@ export default function LandingPage() {
         />
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || !rightsConfirmed}
           className="rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground transition hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
         >
           {loading ? "Starting…" : "Make it playable"}
         </button>
       </form>
+
+      <label className="mt-3 flex max-w-xl items-start gap-2 text-left text-sm text-muted animate-fade-up" style={{ animationDelay: "100ms" }}>
+        <input
+          type="checkbox"
+          checked={rightsConfirmed}
+          onChange={(e) => setRightsConfirmed(e.target.checked)}
+          className="mt-0.5 accent-primary"
+        />
+        <span>
+          I own this website, or have permission from its owner, to use its content and
+          images to build this game.
+        </span>
+      </label>
+
       {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
 
       <p className="mt-5 text-sm text-muted">

@@ -21,7 +21,14 @@ const gameSpecSchema = z
   .object({
     id: z.string(),
     version: z.literal(1),
-    template: z.enum(["catch", "guess_price", "match", "stack"]),
+    // Every implemented template, not just the first two — this had gone
+    // stale (chain_pop and shooter were both added elsewhere without this
+    // enum being updated to match), which meant manual mode could not
+    // actually create a game for either despite both being fully
+    // implemented and selectable in auto mode. Keep this in sync with
+    // TemplateId (lib/engine/types.ts) and the capabilities registry's own
+    // enum (lib/capabilities/index.ts) — see docs/ADDING_A_TEMPLATE.md.
+    template: z.enum(["catch", "guess_price", "chain_pop", "shooter", "match", "stack"]),
     placements: z.array(placementSchema).min(1),
     brand: z.record(z.any()),
     copy: z.record(z.any()),
@@ -38,6 +45,13 @@ const bodySchema = z.object({
   name: z.string().min(1),
   placement: placementSchema,
   spec: gameSpecSchema,
+  // Same discipline as POST /api/generate's rightsConfirmed: the manual
+  // build wizard (app/(app)/build/manual/page.tsx) already gates its own
+  // submit button on this checkbox, but that's cosmetic without a server-
+  // side check too — a direct API call could just omit it.
+  rightsConfirmed: z.literal(true, {
+    errorMap: () => ({ message: "You must confirm you have the rights to use these images." }),
+  }),
 });
 
 export async function POST(req: NextRequest) {
