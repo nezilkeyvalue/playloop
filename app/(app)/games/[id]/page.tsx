@@ -11,10 +11,38 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { getCapability } from "@/lib/capabilities";
-import { CheckIcon, ChevronIcon, GiftIcon, ImageIcon, PaletteIcon, TextIcon } from "@/components/EditorIcons";
+import {
+  CheckIcon,
+  ChevronIcon,
+  ControllerIcon,
+  FlagIcon,
+  GiftIcon,
+  ImageIcon,
+  LayersIcon,
+  PaletteIcon,
+  TextIcon,
+  TrophyIcon,
+} from "@/components/EditorIcons";
 import type { GameRecord, GameSpec, ProcessedAsset, RewardTier } from "@/lib/engine/types";
 
 type Device = "desktop" | "mobile";
+
+/**
+ * The editor is organized by which moment in the play flow a change
+ * affects, not by field type — a merchant thinks "the start screen" or "the
+ * end screen", not "copy" vs. "branding". "whole" holds the one thing that
+ * genuinely applies everywhere (branding) rather than forcing it into one
+ * of the three actual screens the runtime shows (mount.ts: idle → play →
+ * reward).
+ */
+type Screen = "whole" | "start" | "game" | "end";
+
+const SCREENS: { id: Screen; label: string; hint: string; icon: ReactNode }[] = [
+  { id: "whole", label: "Whole game", hint: "Branding", icon: <LayersIcon className="h-4 w-4" /> },
+  { id: "start", label: "Start screen", hint: "Headline & CTA", icon: <FlagIcon className="h-4 w-4" /> },
+  { id: "game", label: "Game screen", hint: "Images in play", icon: <ControllerIcon className="h-4 w-4" /> },
+  { id: "end", label: "End summary", hint: "Rewards & replay", icon: <TrophyIcon className="h-4 w-4" /> },
+];
 
 // Curated rather than free-text — mount.ts only ever actually loads whatever
 // name is here (see ensureGoogleFontLoaded in lib/runtime/mount.ts), so an
@@ -37,12 +65,21 @@ export default function GamePreviewEditorPage() {
   const [game, setGame] = useState<GameRecord | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [device, setDevice] = useState<Device>("desktop");
+  const [screen, setScreen] = useState<Screen>("whole");
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [mountError, setMountError] = useState<string | null>(null);
+
+  // In-progress keystrokes for the start/end screen copy fields, so the
+  // static preview (StaticScreenPreview) updates the instant you type
+  // rather than waiting on the blur-triggered PATCH. Reset
+  // once the server's copy actually changes — i.e. once a save lands and
+  // the draft and the committed value agree again.
+  const [copyDraft, setCopyDraft] = useState<Partial<GameSpec["copy"]>>({});
+  useEffect(() => setCopyDraft({}), [game?.spec.copy]);
 
   useEffect(() => {
     fetch(`/api/games/${id}?full=1`, { cache: "no-store" })
@@ -56,17 +93,23 @@ export default function GamePreviewEditorPage() {
 
   const spec = game?.spec ?? null;
 
-  // Mount the real runtime against the current spec. Re-runs whenever the
-  // spec changes (an edit saved) or the device toggle changes (so the
-  // canvas re-fits its container).
+  // Mount the real runtime against the current spec — but only for the two
+  // tabs that actually need the canvas ("whole game" and "game screen"; the
+  // start/end screens render a static preview below instead, built from the
+  // same overlay DOM mount.ts itself uses — see StaticScreenPreview).
+  // Re-runs whenever the spec changes (an edit saved), the device toggle
+  // changes (canvas re-fits its container), or the screen tab switches
+  // into/out of a canvas tab.
   useEffect(() => {
     let cancelled = false;
     let handle: { teardown(): void } | undefined;
 
     async function run() {
-      if (!containerRef.current || !spec || !game) return;
+      if (!containerRef.current) return;
       containerRef.current.innerHTML = "";
       setMountError(null);
+      if (screen !== "whole" && screen !== "game") return;
+      if (!spec || !game) return;
       try {
         const { mount } = await import("@/lib/runtime/mount");
         if (cancelled) return;
@@ -75,6 +118,10 @@ export default function GamePreviewEditorPage() {
         // the synthetic spec.id fallback mount() uses when no slug is given.
         handle = mount(spec, containerRef.current, game.placement, {
           slug: game.slug ?? undefined,
+          // "Game screen" wants to show gameplay immediately, not force a
+          // click through the idle screen first — that idle screen is its
+          // own tab already.
+          autoStart: screen === "game",
         });
       } catch {
         if (!cancelled) {
@@ -90,7 +137,7 @@ export default function GamePreviewEditorPage() {
       handle?.teardown();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spec, device]);
+  }, [spec, device, screen]);
 
   async function patchSpec(patch: Partial<GameSpec>) {
     setSaving(true);
@@ -118,263 +165,356 @@ export default function GamePreviewEditorPage() {
   if (loadError) return <p className="text-sm text-destructive">{loadError}</p>;
   if (!game || !spec) return <p className="text-sm text-muted">Loading…</p>;
 
-  return (
-    <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_360px] lg:items-start">
-      <div className="animate-fade-up lg:sticky lg:top-24">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h1 className="font-display text-2xl font-semibold tracking-tight">{game.name}</h1>
-            <span
-              className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
-                game.status === "published"
-                  ? "bg-success/10 text-success"
-                  : "bg-foreground/[0.06] text-muted"
-              }`}
-            >
-              {game.status}
-            </span>
-          </div>
-          <div className="flex gap-1 rounded-full border border-border bg-card p-1 text-sm shadow-card">
-            <button
-              className={`rounded-full px-3 py-1 transition ${
-                device === "desktop" ? "bg-primary text-white" : "text-muted hover:text-foreground"
-              }`}
-              onClick={() => setDevice("desktop")}
-            >
-              Desktop
-            </button>
-            <button
-              className={`rounded-full px-3 py-1 transition ${
-                device === "mobile" ? "bg-primary text-white" : "text-muted hover:text-foreground"
-              }`}
-              onClick={() => setDevice("mobile")}
-            >
-              Mobile
-            </button>
-          </div>
-        </div>
+  // Merges in-flight copy keystrokes over the committed spec, for the
+  // start/end static preview mocks only — every other reader keeps using
+  // `spec` (the settings inputs, the live canvas, patchSpec) unchanged.
+  const previewSpec: GameSpec = { ...spec, copy: { ...spec.copy, ...copyDraft } };
 
-        <div
-          className={`mt-6 overflow-hidden rounded-2xl border border-border bg-card shadow-card ${
-            device === "mobile" ? "mx-auto max-w-sm" : "w-full"
-          }`}
-          style={{ minHeight: 480 }}
-        >
-          <div ref={containerRef} className="h-full w-full" style={{ minHeight: 480 }} />
-          {mountError && (
-            <div className="p-6 text-center text-sm text-muted">{mountError}</div>
-          )}
+  return (
+    <div className="animate-fade-up">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h1 className="font-display text-2xl font-semibold tracking-tight">{game.name}</h1>
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
+              game.status === "published"
+                ? "bg-success/10 text-success"
+                : "bg-foreground/[0.06] text-muted"
+            }`}
+          >
+            {game.status}
+          </span>
+        </div>
+        <div className="flex gap-1 rounded-full border border-border bg-card p-1 text-sm shadow-card">
+          <button
+            className={`rounded-full px-3 py-1 transition ${
+              device === "desktop" ? "bg-primary text-white" : "text-muted hover:text-foreground"
+            }`}
+            onClick={() => setDevice("desktop")}
+          >
+            Desktop
+          </button>
+          <button
+            className={`rounded-full px-3 py-1 transition ${
+              device === "mobile" ? "bg-primary text-white" : "text-muted hover:text-foreground"
+            }`}
+            onClick={() => setDevice("mobile")}
+          >
+            Mobile
+          </button>
         </div>
       </div>
 
-      <aside className="animate-fade-up" style={{ animationDelay: "60ms" }}>
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold tracking-tight">Customize your game</h2>
-            <p className="text-xs text-muted">Changes save automatically.</p>
-          </div>
-          <SaveStatus saving={saving} justSaved={justSaved} />
-        </div>
-        {saveError && <p className="mt-2 text-sm text-destructive">{saveError}</p>}
+      {/* Three columns: which screen (left) → what it looks like (middle,
+          live for whole-game/game-screen, a static instant-updating mock for
+          start/end since those two are simple overlays, not canvas state) →
+          the fields that affect only that screen (right). Editing was
+          previously one flat "every field, grouped by type" list; a
+          merchant thinks in terms of the screen a player actually sees
+          (start / mid-game / end), not "copy" vs. "branding". */}
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[168px_1fr_360px] lg:items-start">
+        <nav className="flex gap-2 overflow-x-auto pb-1 lg:sticky lg:top-24 lg:w-auto lg:shrink-0 lg:flex-col lg:overflow-visible lg:pb-0">
+          {SCREENS.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setScreen(s.id)}
+              className={`flex shrink-0 items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition lg:w-full ${
+                screen === s.id
+                  ? "border-primary/30 bg-primary/10 text-primary"
+                  : "border-border bg-card text-foreground hover:border-primary/30"
+              }`}
+            >
+              <span
+                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                  screen === s.id ? "bg-primary/15" : "bg-foreground/[0.06] text-muted"
+                }`}
+              >
+                {s.icon}
+              </span>
+              <span className="min-w-0">
+                <span className="block whitespace-nowrap text-sm font-medium">{s.label}</span>
+                <span className="hidden truncate text-xs text-muted lg:block">{s.hint}</span>
+              </span>
+            </button>
+          ))}
+        </nav>
 
-        {/* Lives here, not beside the preview: the preview column is sticky
-            (position: sticky doesn't create its own scroll container), so a
-            variable-length list here could push the canvas below the fold
-            with no way to scroll to it. The aside already scrolls normally
-            with the page, so this is always reachable no matter how long. */}
-        {warnings.length > 0 && (
-          <div className="mt-4 rounded-2xl border border-warning/25 bg-warning/10 p-3 text-sm text-warning">
-            <p className="font-medium">What we inferred</p>
-            <ul className="mt-1 list-disc pl-5">
-              {warnings.map((w, i) => (
-                <li key={i}>{w}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="mt-4 space-y-3">
-          {/* 1. Branding — identity first: colours, font and logo set the
-              tone everything else (images, copy) gets judged against. */}
-          <EditorSection
-            icon={<PaletteIcon className="h-4 w-4" />}
-            title="Branding"
-            description="Logo, colours and font"
+        <div className="lg:sticky lg:top-24">
+          <div
+            className={`overflow-hidden rounded-2xl border border-border bg-card shadow-card ${
+              device === "mobile" ? "mx-auto max-w-sm" : "w-full"
+            }`}
+            style={{ minHeight: 480 }}
           >
-            <div className="space-y-4">
-              <div>
-                <span className="mb-1.5 block text-xs text-muted">Logo</span>
-                <div className="flex items-center gap-3">
-                  {spec.brand.logoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={spec.brand.logoUrl}
-                      alt="Logo"
-                      className="h-10 w-10 rounded-lg border border-border object-contain p-1"
-                    />
-                  ) : (
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted">
-                      None
+            {screen === "whole" || screen === "game" ? (
+              <>
+                <div ref={containerRef} className="h-full w-full" style={{ minHeight: 480 }} />
+                {mountError && (
+                  <div className="p-6 text-center text-sm text-muted">{mountError}</div>
+                )}
+              </>
+            ) : screen === "start" ? (
+              <StaticScreenPreview kind="idle" spec={previewSpec} />
+            ) : (
+              <StaticScreenPreview kind="reward" spec={previewSpec} />
+            )}
+          </div>
+          <p className="mt-2 text-center text-xs text-muted">
+            {screen === "whole" && "The full flow — press play to try it."}
+            {screen === "start" && "What players see before pressing play. Updates as you type."}
+            {screen === "game" && "Gameplay, using whatever images are assigned below."}
+            {screen === "end" && "What players see after finishing. Updates as you type."}
+          </p>
+        </div>
+
+        <aside>
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-semibold tracking-tight">Customize your game</h2>
+              <p className="text-xs text-muted">Changes save automatically.</p>
+            </div>
+            <SaveStatus saving={saving} justSaved={justSaved} />
+          </div>
+          {saveError && <p className="mt-2 text-sm text-destructive">{saveError}</p>}
+
+          {/* Global, not screen-scoped, so it's always visible no matter
+              which tab is open — a gap in the game screen's images is just
+              as worth surfacing while looking at the start screen. */}
+          {warnings.length > 0 && (
+            <div className="mt-4 rounded-2xl border border-warning/25 bg-warning/10 p-3 text-sm text-warning">
+              <p className="font-medium">What we inferred</p>
+              <ul className="mt-1 list-disc pl-5">
+                {warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="mt-4 space-y-3">
+            {screen === "whole" && (
+              // Branding is the one thing that isn't scoped to a single
+              // screen — logo, colours and font show up on all three.
+              <EditorSection
+                icon={<PaletteIcon className="h-4 w-4" />}
+                title="Branding"
+                description="Logo, colours and font — used on every screen"
+                defaultOpen
+              >
+                <div className="space-y-4">
+                  <div>
+                    <span className="mb-1.5 block text-xs text-muted">Logo</span>
+                    <div className="flex items-center gap-3">
+                      {spec.brand.logoUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={spec.brand.logoUrl}
+                          alt="Logo"
+                          className="h-10 w-10 rounded-lg border border-border object-contain p-1"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted">
+                          None
+                        </div>
+                      )}
+                      <LogoUploadButton
+                        onUploaded={(url) => patchSpec({ brand: { ...spec.brand, logoUrl: url } })}
+                      />
+                      {spec.brand.logoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => patchSpec({ brand: { ...spec.brand, logoUrl: undefined } })}
+                          className="text-xs text-destructive/80 underline hover:text-destructive"
+                        >
+                          Remove
+                        </button>
+                      )}
                     </div>
-                  )}
-                  <LogoUploadButton
-                    onUploaded={(url) => patchSpec({ brand: { ...spec.brand, logoUrl: url } })}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="text-xs">
+                      <span className="block text-muted">Primary colour</span>
+                      <div className="mt-1 flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={spec.brand.accent}
+                          onChange={(e) => patchSpec({ brand: { ...spec.brand, accent: e.target.value } })}
+                          className="h-9 w-12 cursor-pointer rounded-md border border-border"
+                        />
+                        <span className="font-mono uppercase text-muted">{spec.brand.accent}</span>
+                      </div>
+                    </label>
+                    <label className="text-xs">
+                      <span className="block text-muted">Secondary colour</span>
+                      <div className="mt-1 flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={spec.brand.secondaryAccent ?? spec.brand.foreground}
+                          onChange={(e) =>
+                            patchSpec({ brand: { ...spec.brand, secondaryAccent: e.target.value } })
+                          }
+                          className="h-9 w-12 cursor-pointer rounded-md border border-border"
+                        />
+                        <span className="font-mono uppercase text-muted">
+                          {spec.brand.secondaryAccent ?? spec.brand.foreground}
+                        </span>
+                      </div>
+                    </label>
+                  </div>
+
+                  <label className="block text-xs">
+                    <span className="text-muted">Font</span>
+                    <select
+                      value={FONT_OPTIONS.includes(spec.brand.fontFamily) ? spec.brand.fontFamily : FONT_OPTIONS[0]}
+                      onChange={(e) => patchSpec({ brand: { ...spec.brand, fontFamily: e.target.value } })}
+                      className="mt-1 w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-primary/50"
+                    >
+                      {FONT_OPTIONS.map((font) => (
+                        <option key={font} value={font}>
+                          {font}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </EditorSection>
+            )}
+
+            {screen === "start" && (
+              <EditorSection
+                icon={<TextIcon className="h-4 w-4" />}
+                title="Start screen copy"
+                description="What players see before pressing play"
+                defaultOpen
+              >
+                <div className="space-y-3">
+                  <EditableField
+                    label="Headline"
+                    value={spec.copy.headline}
+                    onCommit={(v) => patchSpec({ copy: { ...spec.copy, headline: v } })}
+                    onDraftChange={(v) => setCopyDraft((d) => ({ ...d, headline: v }))}
                   />
-                  {spec.brand.logoUrl && (
+                  <EditableField
+                    label="Subhead"
+                    value={spec.copy.subhead}
+                    onCommit={(v) => patchSpec({ copy: { ...spec.copy, subhead: v } })}
+                    onDraftChange={(v) => setCopyDraft((d) => ({ ...d, subhead: v }))}
+                  />
+                  <EditableField
+                    label="Start button"
+                    value={spec.copy.ctaStart}
+                    onCommit={(v) => patchSpec({ copy: { ...spec.copy, ctaStart: v } })}
+                    onDraftChange={(v) => setCopyDraft((d) => ({ ...d, ctaStart: v }))}
+                  />
+                </div>
+              </EditorSection>
+            )}
+
+            {screen === "game" && (
+              // Images, grouped by the role each one plays in the game.
+              <EditorSection
+                icon={<ImageIcon className="h-4 w-4" />}
+                title="Images"
+                description="Assign photos to each role in the game"
+                badge={<RoleCompletenessBadge spec={spec} />}
+                defaultOpen
+              >
+                <RoleImagesEditor spec={spec} patchSpec={patchSpec} />
+              </EditorSection>
+            )}
+
+            {screen === "end" && (
+              <>
+                <EditorSection
+                  icon={<TextIcon className="h-4 w-4" />}
+                  title="End screen copy"
+                  description="Score reveal, reward line and replay"
+                  defaultOpen
+                >
+                  <div className="space-y-3">
+                    <EditableField
+                      label="Reward intro"
+                      value={spec.copy.rewardIntro}
+                      onCommit={(v) => patchSpec({ copy: { ...spec.copy, rewardIntro: v } })}
+                      onDraftChange={(v) => setCopyDraft((d) => ({ ...d, rewardIntro: v }))}
+                    />
+                    <EditableField
+                      label="Email prompt"
+                      value={spec.copy.emailPrompt}
+                      onCommit={(v) => patchSpec({ copy: { ...spec.copy, emailPrompt: v } })}
+                      onDraftChange={(v) => setCopyDraft((d) => ({ ...d, emailPrompt: v }))}
+                    />
+                    <EditableField
+                      label="Replay button"
+                      value={spec.copy.ctaReplay}
+                      onCommit={(v) => patchSpec({ copy: { ...spec.copy, ctaReplay: v } })}
+                      onDraftChange={(v) => setCopyDraft((d) => ({ ...d, ctaReplay: v }))}
+                    />
+                  </div>
+                </EditorSection>
+
+                {/* Reward thresholds — fully optional; a game with zero
+                    tiers just shows a "thanks for playing" screen
+                    (lib/runtime/reward.ts already handles an empty rewards
+                    array). */}
+                <EditorSection
+                  icon={<GiftIcon className="h-4 w-4" />}
+                  title="Rewards"
+                  description="Optional — discount tiers unlocked by score"
+                  badge={
+                    <span className="shrink-0 rounded-full bg-foreground/[0.06] px-2 py-0.5 text-xs text-muted">
+                      {spec.rewards.length === 0 ? "Off" : spec.rewards.length}
+                    </span>
+                  }
+                  defaultOpen
+                >
+                  <div className="space-y-3">
+                    {spec.rewards.length === 0 && (
+                      <p className="text-xs text-muted">
+                        No reward tiers yet — players just see a &ldquo;thanks for playing&rdquo; screen.
+                        Add a tier to offer a discount instead.
+                      </p>
+                    )}
+                    {spec.rewards.map((r, i) => (
+                      <RewardRow
+                        key={i}
+                        reward={r}
+                        onCommit={(patch) => {
+                          const next = spec.rewards.map((existing, idx) =>
+                            idx === i ? { ...existing, ...patch } : existing,
+                          );
+                          patchSpec({ rewards: next });
+                        }}
+                        onRemove={() => patchSpec({ rewards: spec.rewards.filter((_, idx) => idx !== i) })}
+                      />
+                    ))}
                     <button
                       type="button"
-                      onClick={() => patchSpec({ brand: { ...spec.brand, logoUrl: undefined } })}
-                      className="text-xs text-destructive/80 underline hover:text-destructive"
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <label className="text-xs">
-                  <span className="block text-muted">Primary colour</span>
-                  <div className="mt-1 flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={spec.brand.accent}
-                      onChange={(e) => patchSpec({ brand: { ...spec.brand, accent: e.target.value } })}
-                      className="h-9 w-12 cursor-pointer rounded-md border border-border"
-                    />
-                    <span className="font-mono uppercase text-muted">{spec.brand.accent}</span>
-                  </div>
-                </label>
-                <label className="text-xs">
-                  <span className="block text-muted">Secondary colour</span>
-                  <div className="mt-1 flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={spec.brand.secondaryAccent ?? spec.brand.foreground}
-                      onChange={(e) =>
-                        patchSpec({ brand: { ...spec.brand, secondaryAccent: e.target.value } })
+                      onClick={() =>
+                        patchSpec({
+                          rewards: [...spec.rewards, { minScore: 0, label: "New tier", percentOff: 10 }],
+                        })
                       }
-                      className="h-9 w-12 cursor-pointer rounded-md border border-border"
-                    />
-                    <span className="font-mono uppercase text-muted">
-                      {spec.brand.secondaryAccent ?? spec.brand.foreground}
-                    </span>
+                      className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-2 text-xs font-medium text-primary hover:border-primary/40"
+                    >
+                      + Add {spec.rewards.length === 0 ? "a reward tier" : "another tier"}
+                    </button>
                   </div>
-                </label>
-              </div>
+                </EditorSection>
+              </>
+            )}
+          </div>
 
-              <label className="block text-xs">
-                <span className="text-muted">Font</span>
-                <select
-                  value={FONT_OPTIONS.includes(spec.brand.fontFamily) ? spec.brand.fontFamily : FONT_OPTIONS[0]}
-                  onChange={(e) => patchSpec({ brand: { ...spec.brand, fontFamily: e.target.value } })}
-                  className="mt-1 w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-primary/50"
-                >
-                  {FONT_OPTIONS.map((font) => (
-                    <option key={font} value={font}>
-                      {font}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </EditorSection>
-
-          {/* 2. Images, grouped by the role each one plays in the game */}
-          <EditorSection
-            icon={<ImageIcon className="h-4 w-4" />}
-            title="Images"
-            description="Assign photos to each role in the game"
-            badge={<RoleCompletenessBadge spec={spec} />}
+          <a
+            href={`/games/${id}/embed`}
+            className="mt-4 block rounded-xl bg-primary px-4 py-3 text-center text-sm font-semibold text-white shadow-elevated transition active:scale-[0.98]"
           >
-            <RoleImagesEditor spec={spec} patchSpec={patchSpec} />
-          </EditorSection>
-
-          {/* 3. Copy */}
-          <EditorSection
-            icon={<TextIcon className="h-4 w-4" />}
-            title="Copy"
-            description="Headline, subhead and button text"
-          >
-            <div className="space-y-3">
-              <EditableField
-                label="Headline"
-                value={spec.copy.headline}
-                onCommit={(v) => patchSpec({ copy: { ...spec.copy, headline: v } })}
-              />
-              <EditableField
-                label="Subhead"
-                value={spec.copy.subhead}
-                onCommit={(v) => patchSpec({ copy: { ...spec.copy, subhead: v } })}
-              />
-              <EditableField
-                label="Start button"
-                value={spec.copy.ctaStart}
-                onCommit={(v) => patchSpec({ copy: { ...spec.copy, ctaStart: v } })}
-              />
-              <EditableField
-                label="Replay button"
-                value={spec.copy.ctaReplay}
-                onCommit={(v) => patchSpec({ copy: { ...spec.copy, ctaReplay: v } })}
-              />
-            </div>
-          </EditorSection>
-
-          {/* 4. Reward thresholds — fully optional; a game with zero tiers
-              just shows a "thanks for playing" screen (lib/runtime/reward.ts
-              already handles an empty rewards array). */}
-          <EditorSection
-            icon={<GiftIcon className="h-4 w-4" />}
-            title="Rewards"
-            description="Optional — discount tiers unlocked by score"
-            badge={
-              <span className="shrink-0 rounded-full bg-foreground/[0.06] px-2 py-0.5 text-xs text-muted">
-                {spec.rewards.length === 0 ? "Off" : spec.rewards.length}
-              </span>
-            }
-          >
-            <div className="space-y-3">
-              {spec.rewards.length === 0 && (
-                <p className="text-xs text-muted">
-                  No reward tiers yet — players just see a &ldquo;thanks for playing&rdquo; screen.
-                  Add a tier to offer a discount instead.
-                </p>
-              )}
-              {spec.rewards.map((r, i) => (
-                <RewardRow
-                  key={i}
-                  reward={r}
-                  onCommit={(patch) => {
-                    const next = spec.rewards.map((existing, idx) =>
-                      idx === i ? { ...existing, ...patch } : existing,
-                    );
-                    patchSpec({ rewards: next });
-                  }}
-                  onRemove={() => patchSpec({ rewards: spec.rewards.filter((_, idx) => idx !== i) })}
-                />
-              ))}
-              <button
-                type="button"
-                onClick={() =>
-                  patchSpec({
-                    rewards: [...spec.rewards, { minScore: 0, label: "New tier", percentOff: 10 }],
-                  })
-                }
-                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-2 text-xs font-medium text-primary hover:border-primary/40"
-              >
-                + Add {spec.rewards.length === 0 ? "a reward tier" : "another tier"}
-              </button>
-            </div>
-          </EditorSection>
-        </div>
-
-        <a
-          href={`/games/${id}/embed`}
-          className="mt-4 block rounded-xl bg-primary px-4 py-3 text-center text-sm font-semibold text-white shadow-elevated transition active:scale-[0.98]"
-        >
-          Continue to embed &amp; publish
-        </a>
-      </aside>
+            Continue to embed &amp; publish
+          </a>
+        </aside>
+      </div>
     </div>
   );
 }
@@ -397,6 +537,41 @@ function SaveStatus({ saving, justSaved }: { saving: boolean; justSaved: boolean
     );
   }
   return null;
+}
+
+/**
+ * Static preview of the idle ("start") or reward ("end") overlay for the
+ * screen-scoped tabs. Renders via mount.ts's own renderStaticScreen() —
+ * the exact same DOM-building code the "Whole game" tab's live canvas mount
+ * uses for these two overlays — rather than a separate JSX
+ * reimplementation. That's not a style preference: a hand-rolled parallel
+ * copy previously lived here and visibly drifted from the real thing (a
+ * lighter font weight, a max-width that wrapped the subhead differently,
+ * a slightly different button size) — it's *possible* to keep such a copy
+ * pixel-synced by hand, but nothing forces it to stay that way the next
+ * time mount.ts's overlay changes, so this instead makes drift structurally
+ * impossible. Re-renders on every keystroke via `spec` (the caller passes
+ * the live copy-draft-merged spec — see `previewSpec` in the page
+ * component), which is cheap: this is a handful of DOM nodes, no game loop.
+ */
+function StaticScreenPreview({ kind, spec }: { kind: "idle" | "reward"; spec: GameSpec }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      const { renderStaticScreen } = await import("@/lib/runtime/mount");
+      if (cancelled || !ref.current) return;
+      ref.current.innerHTML = "";
+      ref.current.appendChild(renderStaticScreen(kind, spec));
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [kind, spec]);
+
+  return <div ref={ref} className="h-full w-full" style={{ minHeight: 480 }} />;
 }
 
 function RoleCompletenessBadge({ spec }: { spec: GameSpec }) {
@@ -477,10 +652,15 @@ function EditableField({
   label,
   value,
   onCommit,
+  onDraftChange,
 }: {
   label: string;
   value: string;
   onCommit: (v: string) => void;
+  /** Fires on every keystroke, before the blur-triggered save — lets the
+   * start/end screen mocks track what's being typed instantly instead of
+   * waiting for the PATCH round-trip that onCommit kicks off. */
+  onDraftChange?: (v: string) => void;
 }) {
   const [local, setLocal] = useState(value);
   useEffect(() => setLocal(value), [value]);
@@ -489,7 +669,10 @@ function EditableField({
       <span className="text-muted">{label}</span>
       <input
         value={local}
-        onChange={(e) => setLocal(e.target.value)}
+        onChange={(e) => {
+          setLocal(e.target.value);
+          onDraftChange?.(e.target.value);
+        }}
         onBlur={() => local !== value && onCommit(local)}
         className="mt-1 w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-primary/50"
       />

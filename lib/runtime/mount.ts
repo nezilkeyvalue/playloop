@@ -55,6 +55,15 @@ export interface MountOptions {
    * produces a correct telemetry call.
    */
   slug?: string;
+  /**
+   * Skip the idle screen and drop straight into gameplay once assets are
+   * loaded. Built for the editor's per-screen preview (see
+   * app/(app)/games/[id]/page.tsx's "Game screen" tab) — it wants to show
+   * the actual play canvas immediately rather than the idle overlay every
+   * other mount() caller wants first. Never used by the embed script or the
+   * hosted /play/:slug page.
+   */
+  autoStart?: boolean;
 }
 
 export interface MountHandle {
@@ -78,7 +87,7 @@ export function mount(
     return renderUnavailable(container, "This game's configuration is missing.");
   }
 
-  return mountGame(spec, container, placement, slug, capability, factory);
+  return mountGame(spec, container, placement, slug, capability, factory, options.autoStart ?? false);
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +99,7 @@ function mountGame(
   slug: string,
   capability: GameCapability,
   factory: GameModuleFactory,
+  autoStart: boolean,
 ): MountHandle {
   const brand = spec.brand;
   const copy = spec.copy;
@@ -193,12 +203,14 @@ function mountGame(
       loaded = new Map(assets.map((a) => [a.id, a]));
       runtimeCtx.roles = resolveRoles(spec, loaded);
       trackEvent("impression", { slug, template: spec.template });
-      showIdleScreen();
+      if (autoStart) startPlay(false);
+      else showIdleScreen();
     })
     .catch(() => {
       if (destroyed) return;
       runtimeCtx.roles = resolveRoles(spec, loaded);
-      showIdleScreen();
+      if (autoStart) startPlay(false);
+      else showIdleScreen();
     });
 
   function showIdleScreen() {
@@ -404,6 +416,56 @@ function loadImage(url: string, timeoutMs = 6000): Promise<HTMLImageElement | nu
 // canvas is fully visible during play).
 // ---------------------------------------------------------------------------
 
+/**
+ * Builds the idle or reward overlay exactly as mountGame() shows it
+ * mid-play — for the editor's "Start screen" / "End summary" tabs
+ * (app/(app)/games/[id]/page.tsx), which need a screen preview but have no
+ * canvas, game loop, or real score to drive an actual mount(). Reuses
+ * renderIdleState/renderRewardState directly rather than a separate
+ * hand-rolled reimplementation, specifically so this preview can never
+ * visually drift from the "Whole game" tab's live canvas mount the way a
+ * parallel copy inevitably would (font weights, wrapping width, spacing —
+ * all real bugs found the first time this existed as a JSX mock). Buttons
+ * are real but inert (wired to no-ops); the reward screen shows a
+ * representative example score since there's no live session to reveal.
+ */
+const STATIC_PREVIEW_EXAMPLE_SCORE = 128;
+
+export function renderStaticScreen(kind: "idle" | "reward", spec: GameSpec): HTMLElement {
+  const { brand, copy } = spec;
+  ensureGoogleFontLoaded(brand.fontFamily);
+
+  const shell = document.createElement("div");
+  shell.style.position = "relative";
+  shell.style.width = "100%";
+  shell.style.minHeight = "480px";
+  shell.style.display = "flex";
+  shell.style.flexDirection = "column";
+  shell.style.alignItems = "center";
+  shell.style.justifyContent = "center";
+  shell.style.gap = "12px";
+  shell.style.textAlign = "center";
+  shell.style.padding = "24px";
+  shell.style.boxSizing = "border-box";
+  shell.style.fontFamily = brand.fontFamily || "system-ui, sans-serif";
+  shell.style.color = brand.foreground;
+  shell.style.background = `linear-gradient(180deg, ${brand.background}f2, ${brand.background}f2)`;
+
+  if (kind === "idle") {
+    shell.appendChild(renderIdleState(brand, copy, () => {}));
+    return shell;
+  }
+
+  const { tier } = resolveReward(STATIC_PREVIEW_EXAMPLE_SCORE, spec.rewards);
+  const content = renderRewardState(brand, copy, tier, null, () => {}, () => {});
+  const scoreEl = content.querySelector<HTMLElement>("[data-role='score-value']");
+  if (scoreEl) scoreEl.textContent = String(STATIC_PREVIEW_EXAMPLE_SCORE);
+  const emailField = content.querySelector<HTMLInputElement>("[data-role='email-input']");
+  if (emailField) emailField.disabled = true;
+  shell.appendChild(content);
+  return shell;
+}
+
 function setOverlay(overlay: HTMLElement, content: HTMLElement | null) {
   overlay.innerHTML = "";
   if (!content) {
@@ -432,8 +494,23 @@ function renderIdleState(brand: GameSpec["brand"], copy: GameSpec["copy"], onSta
     const logo = document.createElement("img");
     logo.src = brand.logoUrl;
     logo.alt = "";
+    // Explicit, not inherited: `overlay`'s textAlign:center only centers
+    // inline-level boxes. That silently centered the logo by luck as long
+    // as <img> defaulted to display:inline — until a host page's own CSS
+    // reset (Tailwind's preflight among them, which is what this app's own
+    // editor preview loads — see renderStaticScreen()) sets `img { display:
+    // block }`, at which point text-align stops applying and the logo
+    // sticks flush-left. A block-level box needs its own centering, so set
+    // it directly rather than depending on an ancestor's text-align — this
+    // must hold on arbitrary third-party host pages the embed script runs
+    // on, not just this app's own CSS.
+    logo.style.display = "block";
     logo.style.height = "32px";
+    logo.style.width = "auto";
+    logo.style.marginTop = "0";
     logo.style.marginBottom = "8px";
+    logo.style.marginLeft = "auto";
+    logo.style.marginRight = "auto";
     logo.style.objectFit = "contain";
     wrap.appendChild(logo);
   }

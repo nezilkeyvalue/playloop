@@ -60,3 +60,48 @@ export function CheckIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+/** "Whole game" screen tab — stacked layers, since branding applies across
+ * every other screen rather than to one moment in the flow. */
+export function LayersIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M10 3l7 3.7-7 3.7-7-3.7L10 3z" />
+      <path d="M3 10.3l7 3.7 7-3.7" />
+      <path d="M3 13.7l7 3.7 7-3.7" />
+    </svg>
+  );
+}
+
+/** "Start screen" screen tab. */
+export function FlagIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M5 17V3" />
+      <path d="M5 4h9.5l-2.3 3 2.3 3H5" />
+    </svg>
+  );
+}
+
+/** "Game screen" screen tab. */
+export function ControllerIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="2.5" y="6.5" width="15" height="8" rx="4" />
+      <path d="M6.5 8.5v4M4.5 10.5h4" />
+      <circle cx="14" cy="9" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="15.5" cy="11.5" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** "End summary" screen tab. */
+export function TrophyIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M6.5 3.5h7v3.5a3.5 3.5 0 01-7 0V3.5z" />
+      <path d="M6.5 4.5H4a2 2 0 002 3.6M13.5 4.5H16a2 2 0 01-2 3.6" />
+      <path d="M10 10.5v2.5M7.5 16.5h5M8.3 16.5c0-1.4.5-2.5 1.7-3M11.7 16.5c0-1.4-.5-2.5-1.7-3" />
+    </svg>
+  );
+}
