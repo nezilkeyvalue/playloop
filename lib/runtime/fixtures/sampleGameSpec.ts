@@ -168,6 +168,64 @@ export const guessPriceGameSpec: GameSpec = {
 };
 
 // ---------------------------------------------------------------------------
+// Chain Pop — "Sweet Pop Co."
+// ---------------------------------------------------------------------------
+
+const chainPopTiles: ProcessedAsset[] = [
+  asset("candy-1", "#E8567A", "🍬", { name: "Berry Twist", priceMinor: 500 }),
+  asset("candy-2", "#F2A72E", "🍭", { name: "Citrus Pop", priceMinor: 450 }),
+  asset("candy-3", "#6A4FB6", "🍫", { name: "Choc Bar", priceMinor: 600 }),
+  asset("candy-4", "#3FAE8C", "🧁", { name: "Mint Cupcake", priceMinor: 700 }),
+  asset("candy-5", "#E8567A", "🍪", { name: "Cookie Stack", priceMinor: 550 }),
+];
+
+export const chainPopGameSpec: GameSpec = {
+  id: "demo-chain-pop",
+  version: 1,
+  template: "chain_pop",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Sweet Pop Co.",
+    accent: "#E8567A",
+    secondaryAccent: "#3FAE8C",
+    background: "#FFF7F2",
+    foreground: "#2B1A22",
+    fontFamily: "Fraunces, system-ui, sans-serif",
+    palette: ["#E8567A", "#F2A72E", "#6A4FB6", "#3FAE8C", "#FFF7F2"],
+  },
+  copy: {
+    headline: "Pop your way to a treat",
+    subhead: "Tap 3 or more matching candies to clear them — bigger chains score more.",
+    ctaStart: "Start popping",
+    ctaReplay: "Pop again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: chainPopTiles,
+  roles: {
+    tile: chainPopTiles.map((a) => a.id),
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "POP10" },
+    { minScore: 500, label: "15% off", percentOff: 15, code: "POP15" },
+    { minScore: 950, label: "20% off", percentOff: 20, code: "POP20" },
+  ],
+  durationSeconds: 45,
+  tuning: {
+    gridCols: 6,
+    gridRows: 7,
+    durationSec: 45,
+    minChainLength: 3,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Showcase skins — the same two templates restyled for different brands.
 // Used only by the marketing homepage slideshow to prove the product works
 // across verticals; real GameSpecs mounted through the real runtime, not
@@ -262,6 +320,7 @@ export const sneakerGameSpec: GameSpec = {
 export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-catch": catchGameSpec,
   "demo-guess-price": guessPriceGameSpec,
+  "demo-chain-pop": chainPopGameSpec,
   "demo-catch-lumen": skincareGameSpec,
   "demo-guess-price-kicks": sneakerGameSpec,
 };

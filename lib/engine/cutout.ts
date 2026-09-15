@@ -33,7 +33,12 @@ export interface CutoutResult {
 
 const FLOOD_TOLERANCE = 24; // per-channel Euclidean-ish distance tolerance (0-255 scale)
 const NEAR_WHITE_THRESHOLD = 235; // build spec §8: "consistently near-white"
-const MIN_UNIFORMITY_FOR_ISOLATION = 0.8; // transform catalogue §3: cutout:flood requires background.uniformity >= 0.80
+// transform catalogue §3: cutout:flood requires background.uniformity >= 0.80.
+// Exported so sprites.ts can reuse the exact same bar for a related but
+// distinct decision: whether a *non-isolated* background is nonetheless
+// uniform enough that a flat colour fill (vs. a blurred self-extend) will
+// look seamless — see ProcessedAsset.backgroundTreatment.
+export const MIN_UNIFORMITY_FOR_ISOLATION = 0.8;
 
 /**
  * Runs the flood-fill cutout described in build spec §8: sample the four

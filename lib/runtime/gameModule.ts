@@ -10,6 +10,8 @@
 // never has to touch the DOM, telemetry, or role-resolution itself.
 
 import type {
+  AssetBackgroundTreatment,
+  AssetPresentation,
   BrandKit,
   FallbackKind,
   GameCopy,
@@ -25,6 +27,11 @@ export interface LoadedAsset {
   width: number;
   height: number;
   data?: { name?: string; priceMinor?: number; currency?: string };
+  /** See ProcessedAsset/AssetPresentation in lib/engine/types.ts — how this
+   * sprite's background should be treated by a renderer that frames it. */
+  presentation?: AssetPresentation;
+  backgroundColor?: string;
+  backgroundTreatment?: AssetBackgroundTreatment;
 }
 
 /**

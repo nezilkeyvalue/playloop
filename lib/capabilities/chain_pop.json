@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "id": "chain_pop",
+  "name": "Chain Pop",
+  "summary": "A grid of products; tap a group of 3+ matching tiles to pop them before time runs out. Bigger chains score more.",
+
+  "roles": [
+    {
+      "id": "tile",
+      "purpose": "The distinct product 'kinds' filling the grid",
+      "count": { "min": 0, "ideal": 6, "max": 8 },
+      "requires": {
+        "subjectTypeIn": ["product", "lifestyle", "unknown"],
+        "minShortEdge": 200,
+        "aspectRange": [0.5, 2.0],
+        "maxTextDensity": 0.2,
+        "maxSubjectCount": 2
+      },
+      "prefers": {
+        "distinctPhash": true,
+        "coverageRange": [0.2, 0.95],
+        "uniformScale": true
+      },
+      "transforms": ["trim", "padSquare", "resize"],
+      "fallback": "generatedShape",
+      "optional": true
+    },
+    {
+      "id": "stageBackground",
+      "purpose": "Play area backdrop",
+      "count": { "min": 0, "ideal": 1, "max": 1 },
+      "requires": { "subjectTypeIn": ["lifestyle", "pattern"] },
+      "transforms": ["cropAspect", "blur", "darken", "resize"],
+      "fallback": "brandGradient",
+      "optional": true
+    }
+  ],
+
+  "data": {
+    "required": [],
+    "optional": ["name"]
+  },
+
+  "placements": {
+    "section": { "minWidth": 300, "minHeight": 440, "preferredAspect": 1.0 },
+    "fullpage": { "minWidth": 320, "minHeight": 520, "preferredAspect": 0.85 },
+    "modal": { "minWidth": 300, "minHeight": 420, "preferredAspect": 0.95 },
+    "ad": { "sizes": ["300x250", "320x480", "300x600"], "excluded": ["728x90"] }
+  },
+
+  "tuning": {
+    "gridCols": { "min": 4, "default": 6, "max": 7 },
+    "gridRows": { "min": 5, "default": 7, "max": 9 },
+    "durationSec": { "min": 20, "default": 45, "max": 60 },
+    "minChainLength": { "min": 2, "default": 3, "max": 4 }
+  },
+
+  "scoring": {
+    "maxRealistic": 1350,
+    "rewardTierHint": [0.3, 0.65]
+  },
+
+  "cost": { "buildMs": 220, "runtimeKb": 26 }
+}

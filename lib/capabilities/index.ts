@@ -10,6 +10,7 @@ import type { GameCapability, Placement, TemplateId } from "@/lib/engine/types";
 
 import catchCapability from "./catch.json";
 import guessPriceCapability from "./guess_price.json";
+import chainPopCapability from "./chain_pop.json";
 
 const roleRequirementsSchema = z.object({
   subjectTypeIn: z.array(z.string()).optional(),
@@ -49,7 +50,7 @@ const placementConstraintSchema = z.object({
 
 const gameCapabilitySchema = z.object({
   version: z.literal(1),
-  id: z.enum(["catch", "guess_price", "match", "stack"]),
+  id: z.enum(["catch", "guess_price", "chain_pop", "match", "stack"]),
   name: z.string(),
   summary: z.string(),
   roles: z.array(capabilityRoleSchema).min(1),
@@ -79,11 +80,13 @@ function validate(raw: unknown, sourceFile: string): GameCapability {
 const registry: Record<string, GameCapability> = {
   catch: validate(catchCapability, "catch.json"),
   guess_price: validate(guessPriceCapability, "guess_price.json"),
+  chain_pop: validate(chainPopCapability, "chain_pop.json"),
 };
 
-/** All templates currently implemented (MVP: catch, guess_price). Post-MVP ids
- * (match, stack) are reserved in the type system but intentionally absent here —
- * an absent capability makes a template automatically ineligible everywhere. */
+/** All templates currently implemented (catch, guess_price, chain_pop).
+ * Post-MVP ids (match, stack) are reserved in the type system but
+ * intentionally absent here — an absent capability makes a template
+ * automatically ineligible everywhere. */
 export function listCapabilities(): GameCapability[] {
   return Object.values(registry);
 }

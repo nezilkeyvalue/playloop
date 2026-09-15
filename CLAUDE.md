@@ -119,6 +119,25 @@ touching the related area.
   `fallback: "none"` roles (hard-required, e.g. `collectible`) claim assets
   before optional/fallback-able roles get a chance to grab something they
   merely prefer. Without this, a generic role can starve a required one.
+- **`isolatable: true` silently excludes most real product photography.**
+  `sprites.ts`'s `guessSubjectType()` only ever labels an image `"product"`
+  when it *also* isolated cleanly (a plain, removable background) — a
+  normal-aspect lifestyle-context photo that fails isolation lands in
+  `"unknown"`, not `"product"`, even though it's perfectly good tile/photo
+  content. Only require `isolatable` on a role if the template actually
+  floats the sprite over a stage (`catch`'s `collectible`, `guess_price`'s
+  `hero`); a role that *frames* a photo (a tile, a card) doesn't need it —
+  see `ProcessedAsset.presentation`/`docs/ARCHITECTURE.md` §3 for how to
+  render a non-isolated photo well instead.
+- **Never crop a `"photographic"` asset to make it "fit."** The first
+  attempt at the fix above filled a tile's frame with the photo's own
+  `backgroundColor` (right) but also cropped into the sprite to reduce
+  visible backdrop margin (wrong) — a subject that already filled most of
+  the frame got its head/feet/edges cut off. Always scale the *whole*
+  image in (Canvas `drawImage` "contain" semantics, no source-rect
+  cropping) and fill the leftover space with `backgroundColor` and/or a
+  pre-rendered blurred self-extension (`backgroundTreatment` — see
+  `docs/ARCHITECTURE.md` §3) instead of cropping toward it.
 - **`undici`'s default max header size is small.** Some real-world sites
   return oversized response headers that blow past Node's default and throw
   before `safeFetch.ts` even gets a body. Both fetches there use a shared
@@ -151,9 +170,9 @@ touching the related area.
 
 ## What's implemented vs. reserved
 
-Two templates are live end-to-end: `catch` and `guess_price` (see
-`lib/capabilities/*.json`, `lib/runtime/games/*.ts`). `TemplateId` in
-`types.ts` also reserves `"match"` and `"stack"` — they exist in the type
-system (and the capability-schema Zod validator) precisely so a third
-template can be added later without touching that shared contract at all.
-See `docs/ADDING_A_TEMPLATE.md`.
+Three templates are live end-to-end: `catch`, `guess_price`, and
+`chain_pop` (see `lib/capabilities/*.json`, `lib/runtime/games/*.ts`).
+`TemplateId` in `types.ts` also reserves `"match"` and `"stack"` — they
+exist in the type system (and the capability-schema Zod validator)
+precisely so more templates can be added later without touching that
+shared contract at all. See `docs/ADDING_A_TEMPLATE.md`.

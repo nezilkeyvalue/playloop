@@ -1,13 +1,18 @@
 // app/(app)/build/auto/[jobId]/page.tsx
 //
 // Polls /api/generate/:jobId and shows job.message as the progress copy
-// (spec §6: "progress messages matter more than they look"). Redirects to
-// the game preview once stage === "done".
+// (spec §6: "progress messages matter more than they look"). Once
+// extraction finishes, job.stage becomes "choosing" and job.match is
+// populated with every template's eligibility/score — this page renders
+// the eligible ones as cards and lets the user pick before any copy/AI
+// generation happens (POST /api/generate/:jobId/choose). Redirects to the
+// editor once stage === "done".
 "use client";
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import type { Job } from "@/lib/engine/types";
+import type { Job, TemplateId } from "@/lib/engine/types";
+import { getCapability } from "@/lib/capabilities";
 
 const STAGE_LABELS: Partial<Record<Job["stage"], string>> = {
   queued: "Queued…",
@@ -16,8 +21,9 @@ const STAGE_LABELS: Partial<Record<Job["stage"], string>> = {
   downloading: "Downloading images…",
   processing: "Preparing your products…",
   quality: "Checking image quality…",
-  matching: "Matching a game to your brand…",
-  thinking: "Choosing your game…",
+  matching: "Matching games to your brand…",
+  choosing: "Pick a game",
+  thinking: "Writing your game…",
   composing: "Almost there…",
   done: "Ready!",
   error: "Something went wrong",
@@ -28,6 +34,8 @@ export default function AutoBuildProgressPage() {
   const router = useRouter();
   const [job, setJob] = useState<Job | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
+  const [selecting, setSelecting] = useState<TemplateId | null>(null);
+  const [chooseError, setChooseError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,9 +69,42 @@ export default function AutoBuildProgressPage() {
     };
   }, [jobId, router]);
 
+  async function chooseTemplate(template: TemplateId) {
+    if (selecting) return;
+    setSelecting(template);
+    setChooseError(null);
+    try {
+      const res = await fetch(`/api/generate/${jobId}/choose`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template }),
+      });
+      if (!res.ok) {
+        throw new Error("That game couldn't be started — try another one.");
+      }
+      // job.stage flips to "thinking" server-side; the poll loop above
+      // (still running) picks it up on its next tick and this component
+      // re-renders into the progress view automatically.
+    } catch (err) {
+      setChooseError(err instanceof Error ? err.message : "Something went wrong.");
+      setSelecting(null);
+    }
+  }
+
   const stage = job?.stage ?? "queued";
   const label = job?.message || STAGE_LABELS[stage] || "Working…";
   const percent = job?.percent ?? 5;
+
+  if (stage === "choosing" && job?.match) {
+    return (
+      <TemplatePicker
+        match={job.match}
+        selecting={selecting}
+        error={chooseError}
+        onChoose={chooseTemplate}
+      />
+    );
+  }
 
   return (
     <div className="mx-auto max-w-lg text-center">
@@ -89,6 +130,105 @@ export default function AutoBuildProgressPage() {
           </a>
         </div>
       )}
+    </div>
+  );
+}
+
+function fitLabel(score: number): string {
+  if (score >= 0.75) return "Great fit";
+  if (score >= 0.5) return "Good fit";
+  return "Workable";
+}
+
+function TemplatePicker({
+  match,
+  selecting,
+  error,
+  onChoose,
+}: {
+  match: NonNullable<Job["match"]>;
+  selecting: TemplateId | null;
+  error: string | null;
+  onChoose: (template: TemplateId) => void;
+}) {
+  const eligible = match.results.filter((r) => r.eligible);
+
+  if (eligible.length === 0) {
+    return (
+      <div className="mx-auto max-w-lg text-center">
+        <h1 className="font-display text-2xl font-semibold tracking-tight">No game quite fits yet</h1>
+        <p className="mt-2 text-muted">
+          We couldn&apos;t find enough usable products or images on that page to build any of our games
+          automatically.
+        </p>
+        <a
+          href="/build/manual"
+          className="mt-6 inline-block rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
+        >
+          Build it manually instead
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-2xl text-center">
+      <h1 className="font-display text-2xl font-semibold tracking-tight">Pick your game</h1>
+      <p className="mt-2 text-muted">
+        Based on what we found on your site, here&apos;s what we can build — choose one to continue.
+      </p>
+
+      {error && (
+        <div className="mt-6 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+
+      <div className="mt-8 grid grid-cols-1 gap-4 text-left sm:grid-cols-2">
+        {eligible.map((result, i) => {
+          const cap = getCapability(result.template);
+          const isBest = i === 0;
+          const isSelecting = selecting === result.template;
+          const disabled = selecting !== null;
+
+          return (
+            <button
+              key={result.template}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChoose(result.template)}
+              className={`group relative flex flex-col rounded-2xl border p-5 text-left shadow-card transition ${
+                isSelecting
+                  ? "border-primary bg-primary/5"
+                  : "border-border bg-card hover:border-primary/40 hover:shadow-elevated"
+              } ${disabled && !isSelecting ? "opacity-50" : ""} disabled:cursor-not-allowed`}
+            >
+              {isBest && (
+                <span className="absolute -top-2.5 left-4 rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-semibold text-primary-foreground">
+                  Recommended
+                </span>
+              )}
+              <h2 className="font-display text-lg font-semibold tracking-tight text-foreground">
+                {cap?.name ?? result.template}
+              </h2>
+              <p className="mt-1.5 text-sm text-muted">{cap?.summary}</p>
+
+              <div className="mt-4 flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground">
+                  {fitLabel(result.score)}
+                </span>
+                <span className="text-sm font-medium text-primary opacity-0 transition group-hover:opacity-100">
+                  {isSelecting ? "Setting up…" : "Choose →"}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <a href="/build/manual" className="mt-8 inline-block text-sm text-muted underline underline-offset-4">
+        None of these? Build it manually instead
+      </a>
     </div>
   );
 }

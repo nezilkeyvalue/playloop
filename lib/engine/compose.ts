@@ -47,7 +47,12 @@ export function compose(
   }
 
   const roles = buildRoles(templateMatch?.assignments, usableIds, warnings);
-  const assets = buildProcessedAssets(inventory.assets, usableIds);
+  const assets = buildProcessedAssets(
+    inventory.assets,
+    usableIds,
+    brain.imagePresentation,
+    brain.imageBackgroundTreatment,
+  );
 
   const brand = buildBrandKit(inventory, assetsById);
   const rewards = buildRewards(brain.rewards);
@@ -107,13 +112,36 @@ function buildRoles(
   return roles;
 }
 
-function buildProcessedAssets(assets: RawAsset[], usableIds: Set<string>): ProcessedAsset[] {
+function buildProcessedAssets(
+  assets: RawAsset[],
+  usableIds: Set<string>,
+  imagePresentation: BrainResponse["imagePresentation"],
+  imageBackgroundTreatment: BrainResponse["imageBackgroundTreatment"],
+): ProcessedAsset[] {
   const out: ProcessedAsset[] = [];
   for (const asset of assets) {
     if (!usableIds.has(asset.id) || !asset.processed) continue;
     // Sync the score/flags sprites.ts left as placeholders with the real
-    // values quality.ts computed onto RawAsset.quality afterwards.
-    out.push({ ...asset.processed, score: asset.quality.score, flags: asset.quality.flags });
+    // values quality.ts computed onto RawAsset.quality afterwards. A real
+    // Gemini vision judgment of the asset's presentation/treatment
+    // (brain.ts, when a key is configured) beats sprites.ts's
+    // isolatable/uniformity-based guess.
+    const presentation = imagePresentation?.[asset.id] ?? asset.processed.presentation;
+    const backgroundTreatment =
+      presentation === "photographic"
+        ? (imageBackgroundTreatment?.[asset.id] ?? asset.processed.backgroundTreatment)
+        : undefined;
+    out.push({
+      ...asset.processed,
+      score: asset.quality.score,
+      flags: asset.quality.flags,
+      presentation,
+      // A photo AI now calls "isolated" has no meaningful backdrop to
+      // blend toward even if sprites.ts sampled one; keep it exactly when
+      // still "photographic" either way, drop it otherwise.
+      backgroundColor: presentation === "photographic" ? asset.processed.backgroundColor : undefined,
+      backgroundTreatment,
+    });
   }
   return out;
 }

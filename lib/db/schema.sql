@@ -28,6 +28,9 @@ create table if not exists jobs (
   match       jsonb,                          -- MatchReport
   spec        jsonb,                          -- GameSpec, once composed
   game_id     uuid,
+  business_name        text,                  -- carried across the "choosing" pause into composition
+  business_description text,
+  dropped_count         int,
   error       text,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()

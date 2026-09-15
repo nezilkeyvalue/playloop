@@ -30,15 +30,17 @@ import { mountStage, type StageController } from "@/lib/runtime/stage";
 import { beginSession, captureLead, endSession, trackEvent } from "@/lib/runtime/telemetry";
 import { createCatchGame } from "@/lib/runtime/games/catch";
 import { createGuessPriceGame } from "@/lib/runtime/games/guessPrice";
+import { createChainPopGame } from "@/lib/runtime/games/chainPop";
 
 type GameModuleFactory = () => GameModule;
 
-/** Only "catch" and "guess_price" are implemented for MVP (build spec §19).
- * "match" / "stack" are reserved TemplateId values with no capability JSON
- * and no runtime module yet — mount() degrades to a friendly message. */
+/** "catch", "guess_price", and "chain_pop" are implemented. "match" / "stack"
+ * are reserved TemplateId values with no capability JSON and no runtime
+ * module yet — mount() degrades to a friendly message. */
 const REGISTRY: Partial<Record<TemplateId, GameModuleFactory>> = {
   catch: createCatchGame,
   guess_price: createGuessPriceGame,
+  chain_pop: createChainPopGame,
 };
 
 export interface MountOptions {
@@ -367,6 +369,9 @@ function loadAsset(asset: GameSpec["assets"][number]): Promise<LoadedAsset> {
     width: asset.width,
     height: asset.height,
     data: asset.data,
+    presentation: asset.presentation,
+    backgroundColor: asset.backgroundColor,
+    backgroundTreatment: asset.backgroundTreatment,
   }));
 }
 

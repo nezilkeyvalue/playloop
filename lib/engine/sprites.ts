@@ -12,7 +12,7 @@ import sharp from "sharp";
 import { safeFetchImage } from "@/lib/engine/safeFetch";
 import { uploadSprite } from "@/lib/storage";
 import type { RawAsset, SubjectType } from "@/lib/engine/types";
-import { cutout, computePhash } from "./cutout";
+import { cutout, computePhash, MIN_UNIFORMITY_FOR_ISOLATION } from "./cutout";
 import { extractColours } from "./palette";
 
 const SPRITE_SIZE = Number(process.env.SPRITE_SIZE) || 256;
@@ -165,6 +165,23 @@ async function processOne(asset: RawAsset): Promise<ProcessOneResult> {
         score: 0,
         flags: transformFlags,
         data: asset.data,
+        // Deterministic today (see AssetPresentation's doc comment) — a
+        // real Gemini vision pass (brain.ts's imagePresentation) can
+        // override this per asset when a key is configured.
+        presentation: cutoutResult.isolatable ? "isolated" : "photographic",
+        backgroundColor: cutoutResult.isolatable ? undefined : cutoutResult.dominant,
+        // Same corner-uniformity signal cutout.ts uses to decide isolation
+        // eligibility, reused for a related-but-distinct call: a
+        // non-isolated backdrop that's still highly uniform (just not
+        // bright enough to count as "near-white") will look identical to
+        // a flat fill of its own sampled colour; a genuinely busy/
+        // contextual backdrop needs the blurred self-extend treatment
+        // instead — see AssetBackgroundTreatment's doc comment.
+        backgroundTreatment: cutoutResult.isolatable
+          ? undefined
+          : cutoutResult.uniformity >= MIN_UNIFORMITY_FOR_ISOLATION
+            ? "solid"
+            : "blurFill",
       },
     };
 

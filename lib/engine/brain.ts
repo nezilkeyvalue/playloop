@@ -21,7 +21,9 @@ import type { Schema } from "@google/generative-ai";
 import sharp from "sharp";
 import { safeFetchImage } from "@/lib/engine/safeFetch";
 import type {
+  AssetBackgroundTreatment,
   AssetInventory,
+  AssetPresentation,
   BrainRequest,
   BrainResponse,
   GameCapability,
@@ -29,6 +31,7 @@ import type {
   MatchReport,
   RawAsset,
   TemplateId,
+  TemplateMatch,
 } from "@/lib/engine/types";
 
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
@@ -43,10 +46,39 @@ export interface RunBrainInput {
   pageText?: string;
   businessName?: string;
   businessDescription?: string;
+  /** When set, the user has already picked their template from the
+   * eligible list (the "choose your game" step — see
+   * docs/ARCHITECTURE.md) — Gemini/the deterministic fallback only ever
+   * see this one template as "eligible" and just write copy/rewards/tuning
+   * for it, rather than picking a template themselves. Must already be one
+   * of `match`'s eligible templates; the caller (the API route) is
+   * responsible for only ever offering eligible ids in the first place. */
+  forcedTemplate?: TemplateId;
+}
+
+/** The eligible-templates list every code path below reasons about,
+ * narrowed to `forcedTemplate` when the caller already made that choice —
+ * factored out so runBrain, validateBrainResponse, and
+ * deterministicFallback can never disagree about what's actually on the
+ * table (e.g. Gemini "helpfully" returning a different, otherwise-eligible
+ * template than the one the user picked). */
+function resolveEligible(input: RunBrainInput): TemplateMatch[] {
+  const all = input.match.results.filter((r) => r.eligible).sort((a, b) => b.score - a.score);
+  if (!input.forcedTemplate) return all;
+  return all.filter((r) => r.template === input.forcedTemplate);
 }
 
 export async function runBrain(input: RunBrainInput): Promise<BrainResponse> {
-  const eligible = input.match.results.filter((r) => r.eligible).sort((a, b) => b.score - a.score);
+  if (input.forcedTemplate) {
+    const stillEligible = input.match.results.some((r) => r.eligible && r.template === input.forcedTemplate);
+    if (!stillEligible) {
+      throw new Error(
+        `runBrain: forcedTemplate "${input.forcedTemplate}" is not an eligible template for this inventory`,
+      );
+    }
+  }
+
+  const eligible = resolveEligible(input);
   const bestByScore = eligible[0]?.template;
 
   const apiKey = process.env.GEMINI_API_KEY;
@@ -115,6 +147,14 @@ const RESPONSE_SCHEMA: Schema = {
     // properties", so this is left loose and clamped hard in
     // validateBrainResponse instead of relied on for correctness.
     tuning: { type: SchemaType.OBJECT },
+    // Same free-form-object pattern as `tuning` — keys are asset ids
+    // (unknown ahead of time), values are "isolated" | "photographic".
+    // Sanitized hard in validateBrainResponse: unknown keys and any value
+    // outside that enum are dropped, never trusted as-is.
+    imagePresentation: { type: SchemaType.OBJECT },
+    // Same pattern again — values are "solid" | "blurFill", only
+    // meaningful for ids marked "photographic" above.
+    imageBackgroundTreatment: { type: SchemaType.OBJECT },
   },
   required: ["category", "template", "reason", "copy", "rewards", "tuning"],
 };
@@ -134,6 +174,21 @@ async function callGemini(apiKey: string, input: RunBrainInput, eligibleTemplate
     "You may ONLY set `template` to one of the ids listed under `eligible` below — any other value is invalid and will be discarded.",
     "Keep copy short, upbeat, and specific to the brand where possible. Respond ONLY with JSON matching the response schema.",
     "",
+    imageParts.length > 0
+      ? [
+          "The attached images are in this exact order, one per asset id:",
+          imageParts.map((p, i) => `${i + 1}. ${p.id}`).join("\n"),
+          "For `imagePresentation`, classify each by how it should be framed in a tile/grid: \"isolated\" if the product " +
+            "sits on a clean, plain, removable background (safe to float on any colour), or \"photographic\" if it's a " +
+            "real, busy, or contextual photo backdrop (should be framed to blend with its own background instead). " +
+            "For every id you marked \"photographic\", also set `imageBackgroundTreatment`: \"solid\" if its backdrop " +
+            "is itself close to one flat colour (a plain but non-white studio background), or \"blurFill\" if it's a " +
+            "real, detailed scene (a room, outdoors, a person in an environment) where a flat colour fill would look " +
+            "like an obvious patch instead of a natural extension of the photo. " +
+            "Only include ids you're actually confident about — omit any you're unsure of.",
+        ].join("\n")
+      : "",
+    "",
     input.pageText ? `Page text (may be truncated):\n${input.pageText.slice(0, 4000)}` : "",
     "",
     JSON.stringify(request, null, 2),
@@ -142,7 +197,7 @@ async function callGemini(apiKey: string, input: RunBrainInput, eligibleTemplate
     .join("\n");
 
   const result = await model.generateContent({
-    contents: [{ role: "user", parts: [{ text: promptText }, ...imageParts] }],
+    contents: [{ role: "user", parts: [{ text: promptText }, ...imageParts.map((p) => p.part)] }],
   });
 
   return JSON.parse(result.response.text());
@@ -182,15 +237,23 @@ function buildBrainRequest(input: RunBrainInput, eligibleTemplates: TemplateId[]
   };
 }
 
+interface ImagePart {
+  id: string;
+  part: { inlineData: { data: string; mimeType: string } };
+}
+
 /** Re-downloads (safeFetch-cached, so cheap on repeat runs) and downsizes
  * up to MAX_CANDIDATE_IMAGES surviving assets to 512px long edge, per
  * build spec §11: "Resize images to 512px on the long edge before
- * sending." Only assets that passed the quality gate are sent. */
-async function buildImageParts(assets: RawAsset[]): Promise<{ inlineData: { data: string; mimeType: string } }[]> {
+ * sending." Only assets that passed the quality gate are sent. Keeps each
+ * part paired with its asset id (not every candidate necessarily survives
+ * the fetch/resize) so the prompt can tell Gemini exactly which image is
+ * which — required for `imagePresentation` to come back correctly keyed. */
+async function buildImageParts(assets: RawAsset[]): Promise<ImagePart[]> {
   const candidates = assets.filter((a) => a.quality.score > 0).slice(0, MAX_CANDIDATE_IMAGES);
 
   const parts = await Promise.all(
-    candidates.map(async (asset) => {
+    candidates.map(async (asset): Promise<ImagePart | null> => {
       try {
         const res = await safeFetchImage(asset.url);
         if (!res.ok) return null;
@@ -198,14 +261,14 @@ async function buildImageParts(assets: RawAsset[]): Promise<{ inlineData: { data
           .resize(IMAGE_LONG_EDGE, IMAGE_LONG_EDGE, { fit: "inside", withoutEnlargement: true })
           .jpeg({ quality: 80 })
           .toBuffer();
-        return { inlineData: { data: resized.toString("base64"), mimeType: "image/jpeg" } };
+        return { id: asset.id, part: { inlineData: { data: resized.toString("base64"), mimeType: "image/jpeg" } } };
       } catch {
         return null;
       }
     }),
   );
 
-  return parts.filter((p): p is { inlineData: { data: string; mimeType: string } } => p !== null);
+  return parts.filter((p): p is ImagePart => p !== null);
 }
 
 // ---------------------------------------------------------------------------
@@ -213,7 +276,7 @@ async function buildImageParts(assets: RawAsset[]): Promise<{ inlineData: { data
 // ---------------------------------------------------------------------------
 
 function validateBrainResponse(raw: unknown, input: RunBrainInput): BrainResponse {
-  const eligible = input.match.results.filter((r) => r.eligible).sort((a, b) => b.score - a.score);
+  const eligible = resolveEligible(input);
   const eligibleIds = new Set(eligible.map((r) => r.template));
   const bestByScore = eligible[0]?.template;
 
@@ -248,7 +311,45 @@ function validateBrainResponse(raw: unknown, input: RunBrainInput): BrainRespons
     copy: validateCopy(obj.copy, input.businessName),
     rewards: validateRewards(obj.rewards, cap),
     tuning: clampTuning(obj.tuning, cap),
+    imagePresentation: validateAssetEnumMap(obj.imagePresentation, passedIds, isAssetPresentation),
+    imageBackgroundTreatment: validateAssetEnumMap(
+      obj.imageBackgroundTreatment,
+      passedIds,
+      isAssetBackgroundTreatment,
+    ),
   };
+}
+
+/** "Never trust the model's JSON as-is" (build spec §11) applies just as
+ * much to a free-form per-asset map as to any other field: only keys that
+ * are real asset ids that actually passed the gate, and only values in the
+ * real enum, survive. Anything else — a hallucinated id, a made-up value —
+ * is silently dropped rather than repaired, same spirit as
+ * validateRewards() dropping an unreachable tier instead of clamping it
+ * into something that was never really said. Shared by both
+ * `imagePresentation` and `imageBackgroundTreatment` — same shape, just a
+ * different enum. */
+function validateAssetEnumMap<T extends string>(
+  raw: unknown,
+  passedIds: Set<string>,
+  isValidValue: (value: unknown) => value is T,
+): Record<string, T> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, T> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!passedIds.has(id)) continue;
+    if (!isValidValue(value)) continue;
+    out[id] = value;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function isAssetPresentation(value: unknown): value is AssetPresentation {
+  return value === "isolated" || value === "photographic";
+}
+
+function isAssetBackgroundTreatment(value: unknown): value is AssetBackgroundTreatment {
+  return value === "solid" || value === "blurFill";
 }
 
 function validateCopy(raw: unknown, businessName: string | undefined): GameCopy {
@@ -365,7 +466,7 @@ function hashString(s: string): number {
 }
 
 function deterministicFallback(input: RunBrainInput, template: TemplateId | undefined): BrainResponse {
-  const eligible = input.match.results.filter((r) => r.eligible).sort((a, b) => b.score - a.score);
+  const eligible = resolveEligible(input);
   const chosenTemplate: TemplateId | undefined = template ?? eligible[0]?.template ?? input.capabilities[0]?.id;
   const cap = input.capabilities.find((c) => c.id === chosenTemplate) ?? input.capabilities[0];
 

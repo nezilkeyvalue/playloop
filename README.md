@@ -31,9 +31,9 @@ all work, real bugs found via actual browser testing have been fixed (see
 `CLAUDE.md`'s hazards list — pointer-capture click retargeting, the
 sticky-preview/scroll interaction, the logo-dropped-by-candidate-slicing
 bug, and others), and the builder UI/editor/marketing site have been through
-several rounds of real design polish. Two game templates (`catch`,
-`guess_price`) are fully implemented end-to-end; `match`/`stack` are
-reserved in the type system for future templates (see
+several rounds of real design polish. Three game templates (`catch`,
+`guess_price`, `chain_pop`) are fully implemented end-to-end; `match`/`stack`
+are reserved in the type system for future templates (see
 `docs/ADDING_A_TEMPLATE.md`).
 
 **Real, working logic:**

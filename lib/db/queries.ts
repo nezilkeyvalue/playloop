@@ -152,6 +152,9 @@ interface JobRow {
   match: Job["match"];
   spec: GameSpec | null;
   game_id: string | null;
+  business_name: string | null;
+  business_description: string | null;
+  dropped_count: number | null;
   error: string | null;
   created_at: string;
   updated_at: string;
@@ -170,6 +173,9 @@ function jobRowToRecord(row: JobRow): Job {
     match: row.match,
     spec: row.spec,
     gameId: row.game_id,
+    businessName: row.business_name,
+    businessDescription: row.business_description,
+    droppedCount: row.dropped_count,
     error: row.error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -189,6 +195,9 @@ function jobRecordToRow(rec: Partial<Job>): Record<string, unknown> {
   if (rec.match !== undefined) row.match = rec.match;
   if (rec.spec !== undefined) row.spec = rec.spec;
   if (rec.gameId !== undefined) row.game_id = rec.gameId;
+  if (rec.businessName !== undefined) row.business_name = rec.businessName;
+  if (rec.businessDescription !== undefined) row.business_description = rec.businessDescription;
+  if (rec.droppedCount !== undefined) row.dropped_count = rec.droppedCount;
   if (rec.error !== undefined) row.error = rec.error;
   if (rec.createdAt !== undefined) row.created_at = rec.createdAt;
   if (rec.updatedAt !== undefined) row.updated_at = rec.updatedAt;
@@ -505,6 +514,9 @@ export async function createJob(input: {
     match: null,
     spec: null,
     gameId: null,
+    businessName: null,
+    businessDescription: null,
+    droppedCount: null,
     error: null,
     createdAt: now,
     updatedAt: now,

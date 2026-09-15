@@ -14,7 +14,50 @@
 // ---------------------------------------------------------------------------
 
 export type Placement = "section" | "fullpage" | "modal" | "ad";
-export type TemplateId = "catch" | "guess_price" | "match" | "stack";
+export type TemplateId = "catch" | "guess_price" | "chain_pop" | "match" | "stack";
+
+/**
+ * How a sprite's background should be treated by a renderer that frames it
+ * (e.g. inside a tile/chip) rather than floating it directly over a stage —
+ * added because relaxing chain_pop's tile role to accept non-isolated real
+ * photos (see lib/capabilities/chain_pop.json) surfaced a real aesthetic
+ * bug: a photo's own studio backdrop clashing against an unrelated brand-
+ * colour frame reads as an amateur "sticker in a box", not a designed tile.
+ *
+ * - "isolated": background was cleanly cut out (real transparency) — safe
+ *   to float on any colour, or frame with a flat brand-colour chip.
+ * - "photographic": background is a real, uncut photo backdrop — a
+ *   renderer should never crop into the image to "fit" it (that cuts off
+ *   real content, e.g. a model's head or feet) — always show the full
+ *   image, and use `backgroundTreatment`/`backgroundColor` to fill
+ *   whatever space is left around it instead.
+ *
+ * Set deterministically today (sprites.ts, from the cutout step's own
+ * `isolatable` result); `brain.ts`'s `imagePresentation` lets a real
+ * Gemini vision pass override it per asset when a key is configured — same
+ * call/fallback pattern as every other AI-assisted field in this pipeline
+ * (see brain.ts's file-level comment on why that path is unverified in
+ * this sandbox but written to the same contract either way).
+ */
+export type AssetPresentation = "isolated" | "photographic";
+
+/**
+ * How to fill the space around a "photographic" image that isn't covered
+ * by the image itself (it is never cropped — see AssetPresentation):
+ * - "solid": fill with `backgroundColor` — right when the photo's own
+ *   backdrop is already close to a single flat colour (high corner
+ *   uniformity, just not white/bright enough to have isolated cleanly), so
+ *   a flat fill is indistinguishable from more of the same photo.
+ * - "blurFill": fill with a blurred, zoomed-in copy of the *same* image —
+ *   right for a busy/contextual backdrop (a real room, outdoor scene, etc.)
+ *   where a flat colour would look like an obvious patch; a blurred
+ *   self-extension reads as an intentional, professional treatment
+ *   instead (the same technique Spotify/Apple Music use for album art).
+ * Deterministic today (sprites.ts, from the cutout step's own corner-
+ * uniformity score); `brain.ts`'s `imageBackgroundTreatment` can override
+ * it per asset the same way `imagePresentation` overrides `presentation`.
+ */
+export type AssetBackgroundTreatment = "solid" | "blurFill";
 
 export interface ProcessedAsset {
   id: string;
@@ -26,6 +69,17 @@ export interface ProcessedAsset {
   score: number; // 0..1 quality gate confidence
   flags: string[];
   data?: { name?: string; priceMinor?: number; currency?: string };
+  /** Optional — absent on older/fixture specs, which a renderer should
+   * treat exactly like "isolated" (today's default, unchanged look). */
+  presentation?: AssetPresentation;
+  /** The original image's sampled dominant background colour (hex).
+   * Populated whenever `presentation` is "photographic"; meaningless (and
+   * typically absent) otherwise. */
+  backgroundColor?: string;
+  /** Populated whenever `presentation` is "photographic"; meaningless (and
+   * typically absent) otherwise. Absent-but-photographic should be treated
+   * as "solid" (the original, simpler behaviour) for backward compatibility. */
+  backgroundTreatment?: AssetBackgroundTreatment;
 }
 
 export interface BrandKit {
@@ -286,6 +340,17 @@ export interface BrainResponse {
   copy: GameCopy;
   rewards: { minScore: number; label: string; percentOff: number }[];
   tuning: Record<string, number>;
+  /** Per-asset-id override for AssetPresentation (see ProcessedAsset) —
+   * only set on a real Gemini response, since vision judgment of "does
+   * this look like a clean cutout or a real photo backdrop" beats the
+   * deterministic isolatable-based guess sprites.ts makes. Absent on the
+   * deterministic fallback; compose.ts keeps the heuristic value for any
+   * asset id not present here. */
+  imagePresentation?: Record<string, AssetPresentation>;
+  /** Per-asset-id override for AssetBackgroundTreatment (see
+   * ProcessedAsset) — same reasoning and fallback behaviour as
+   * `imagePresentation`. */
+  imageBackgroundTreatment?: Record<string, AssetBackgroundTreatment>;
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +365,7 @@ export type JobStage =
   | "processing"
   | "quality"
   | "matching"
+  | "choosing"
   | "thinking"
   | "composing"
   | "done"
@@ -317,6 +383,16 @@ export interface Job {
   match: MatchReport | null;
   spec: GameSpec | null;
   gameId: string | null;
+  /** Set once extraction finishes (auto mode only) — carried across the
+   * "choosing" pause so the composition phase can still feed brain.ts the
+   * same business context extraction found, without re-scraping the site. */
+  businessName: string | null;
+  businessDescription: string | null;
+  /** Images that failed to download/decode during extraction — carried
+   * across the "choosing" pause so the eventual GameSpec still gets its
+   * "N image(s) skipped" warning (lib/engine/index.ts's
+   * ExtractionOutput.droppedCount). */
+  droppedCount: number | null;
   error: string | null;
   createdAt: string;
   updatedAt: string;

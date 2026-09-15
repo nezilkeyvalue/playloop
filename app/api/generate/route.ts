@@ -3,30 +3,37 @@
 // POST { url } | { manualAssets } -> { jobId }. Build spec §6, §12.
 //
 // Generation is a job, not a request (spec §6): we create the job row and
-// respond with its id immediately, then run the actual pipeline via
+// respond with its id immediately, then run the extraction phase via
 // Next.js 15's `after()` so it keeps executing on this same invocation
-// after the response has been sent — maxDuration=120 covers the ~30s
-// pipeline budget. The client polls GET /api/generate/:jobId and sees the
+// after the response has been sent. The pipeline PAUSES once the matcher
+// has scored every template (job.stage becomes "choosing", with
+// job.match populated) instead of picking one itself — the client shows
+// the eligible templates and the user picks, which resumes generation via
+// POST /api/generate/:jobId/choose (see that route). maxDuration=120
+// covers this phase's ~15s budget; the composition phase after the user's
+// choice has its own budget in the choose route.
+//
+// The client polls GET /api/generate/:jobId and sees the
 // stage/percent/message fields update in near-real-time as onProgress
 // writes them, which is the whole point of the job model (a 30s spinner
 // reads as broken; "Found 14 products" reads as work happening).
 
-export const runtime = "nodejs"; // sharp runs downstream of runGeneration; never Edge.
+export const runtime = "nodejs"; // sharp runs downstream of runExtraction; never Edge.
 export const maxDuration = 120;
 
 import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 
-import { createJob, createGame, updateJob } from "@/lib/db/queries";
+import { createJob, updateJob } from "@/lib/db/queries";
 import { checkRateLimit } from "@/lib/rateLimit";
-import type { GameSpec, JobStage } from "@/lib/engine/types";
+import type { JobStage } from "@/lib/engine/types";
 // @/lib/engine is another track's module (pipeline). It is not visible to
 // this file at write time in the concurrent build, but the contract is
 // fixed (see build spec + task brief) — import and call it for real; a
 // missing/throwing module surfaces as a normal pipeline error below, which
 // lands the job in stage "error" rather than crashing the route.
 import type { GenerationCallbacks, GenerationInput } from "@/lib/engine";
-import { runGeneration } from "@/lib/engine";
+import { runExtraction } from "@/lib/engine";
 
 const manualAssetSchema = z.object({
   url: z.string().url(),
@@ -45,19 +52,7 @@ function getClientIp(req: NextRequest): string {
   return req.headers.get("x-real-ip") ?? "unknown";
 }
 
-function deriveGameName(spec: GameSpec, sourceUrl?: string | null): string {
-  if (spec.brand.name) return spec.brand.name;
-  if (sourceUrl) {
-    try {
-      return new URL(sourceUrl).hostname.replace(/^www\./, "");
-    } catch {
-      // fall through
-    }
-  }
-  return spec.copy.headline || "Untitled game";
-}
-
-async function runPipeline(
+async function runExtractionPhase(
   jobId: string,
   input: GenerationInput,
 ): Promise<void> {
@@ -72,22 +67,21 @@ async function runPipeline(
   };
 
   try {
-    const result = await runGeneration(input, callbacks);
+    const result = await runExtraction(input, callbacks);
+    const eligibleCount = result.match.results.filter((r) => r.eligible).length;
     await updateJob(jobId, {
       inventory: result.inventory,
       match: result.match,
-      spec: result.spec,
-      stage: "done",
-      percent: 100,
-      message: "Your game is ready.",
+      businessName: result.businessName ?? null,
+      businessDescription: result.businessDescription ?? null,
+      droppedCount: result.droppedCount,
+      stage: "choosing",
+      percent: 70,
+      message:
+        eligibleCount > 0
+          ? "Pick a game"
+          : "No template fit well — you can still continue in manual mode",
     });
-    const game = await createGame({
-      accountId: null,
-      name: deriveGameName(result.spec, input.sourceUrl),
-      spec: result.spec,
-      placement: result.spec.placements[0] ?? "section",
-    });
-    await updateJob(jobId, { gameId: game.id });
   } catch (err) {
     await updateJob(jobId, {
       stage: "error",
@@ -142,7 +136,7 @@ export async function POST(req: NextRequest) {
 
   const job = await createJob({ accountId: null, mode: input.mode, sourceUrl });
 
-  after(() => runPipeline(job.id, input));
+  after(() => runExtractionPhase(job.id, input));
 
   return NextResponse.json({ jobId: job.id });
 }

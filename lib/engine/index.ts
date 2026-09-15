@@ -1,18 +1,27 @@
 // lib/engine/index.ts
 //
-// runGeneration() — the pipeline orchestrator (build spec §6): fetching ->
-// extracting -> downloading -> processing -> quality -> matching ->
-// thinking -> composing, reporting progress at every stage transition
-// with the human-readable messages from the build spec's §6 table.
+// The pipeline orchestrator (build spec §6), split into two phases at the
+// "choosing" pause (see docs/ARCHITECTURE.md): fetching -> extracting ->
+// downloading -> processing -> quality -> matching (runExtraction), then —
+// once the user has picked a template from the eligible list — thinking ->
+// composing (runComposition). Reports progress at every stage transition
+// with human-readable messages from the build spec's §6 table.
 //
-// This function does NOT touch any database — a different track's API
-// route calls it and persists progress/results itself. This is the
-// integration seam between tracks; keep it clean.
+// Neither function touches any database — the API route calls them and
+// persists progress/results itself. This is the integration seam between
+// tracks; keep it clean.
 //
 // Sharp runs transitively (sprites.ts, brain.ts's image resizing) — the
 // calling route MUST declare `export const runtime = "nodejs"`.
 
-import type { AssetInventory, GameSpec, JobStage, MatchReport, RawAsset } from "@/lib/engine/types";
+import type {
+  AssetInventory,
+  GameSpec,
+  JobStage,
+  MatchReport,
+  RawAsset,
+  TemplateId,
+} from "@/lib/engine/types";
 import { listCapabilities } from "@/lib/capabilities";
 import { extractFromUrl } from "./extract";
 import { makeRawAsset } from "./extract/util";
@@ -36,16 +45,31 @@ export interface GenerationInput {
   manualAssets?: { url: string; name?: string; priceMinor?: number }[];
 }
 
-export interface GenerationOutput {
+export interface ExtractionOutput {
   inventory: AssetInventory;
   match: MatchReport;
-  spec: GameSpec;
+  /** Carried into runComposition() so brain.ts's copy generation still has
+   * the business context extraction found, without re-scraping the site
+   * after the "choosing" pause. */
+  businessName?: string;
+  businessDescription?: string;
+  /** Images that failed to download/decode during processing — an
+   * inventory-wide fact (not per-template), so it's carried alongside the
+   * match report and folded into whichever GameSpec eventually gets
+   * composed as a `meta.warnings` entry. */
+  droppedCount: number;
 }
 
-export async function runGeneration(
+/**
+ * Phase 1: everything up through the matcher. Stops right after scoring
+ * every template against what was actually found — deliberately does NOT
+ * pick a template or generate copy, so the caller can show the user the
+ * eligible list and let them choose before any AI/copy cost is spent.
+ */
+export async function runExtraction(
   input: GenerationInput,
   callbacks: GenerationCallbacks,
-): Promise<GenerationOutput> {
+): Promise<ExtractionOutput> {
   const emit = async (stage: JobStage, percent: number, message?: string) => {
     await callbacks.onProgress({ stage, percent, message });
   };
@@ -57,7 +81,7 @@ export async function runGeneration(
   let businessDescription: string | undefined;
 
   if (input.mode === "auto") {
-    if (!input.sourceUrl) throw new Error("runGeneration: auto mode requires sourceUrl");
+    if (!input.sourceUrl) throw new Error("runExtraction: auto mode requires sourceUrl");
     const extracted = await extractFromUrl(input.sourceUrl);
     inventory = extracted.inventory;
     businessName = extracted.siteName;
@@ -106,26 +130,80 @@ export async function runGeneration(
 
   const capabilities = listCapabilities();
   const match = matchAssets(inventory, capabilities);
-  await emit("matching", 68);
+  await emit("matching", 68, "Matching games to your brand…");
 
-  await emit("thinking", 75, "Choosing your game…");
-  const brain = await runBrain({ inventory, match, capabilities, businessName, businessDescription });
+  return { inventory, match, businessName, businessDescription, droppedCount: dropped.length };
+}
+
+export interface CompositionInput {
+  inventory: AssetInventory;
+  match: MatchReport;
+  /** The template the user picked from the eligible list shown after
+   * runExtraction(). Must be one of match.results' eligible templates. */
+  template: TemplateId;
+  mode: "auto" | "manual";
+  businessName?: string;
+  businessDescription?: string;
+  /** See ExtractionOutput.droppedCount — pass it straight through. */
+  droppedCount?: number;
+}
+
+export interface GenerationOutput {
+  inventory: AssetInventory;
+  match: MatchReport;
+  spec: GameSpec;
+}
+
+/**
+ * Phase 2: thinking -> composing. Runs once the user has chosen a template,
+ * generating copy/rewards/tuning for exactly that template (brain.ts never
+ * gets to pick a different one — see RunBrainInput.forcedTemplate) and
+ * assembling the final GameSpec.
+ */
+export async function runComposition(
+  input: CompositionInput,
+  callbacks: GenerationCallbacks,
+): Promise<GenerationOutput> {
+  const emit = async (stage: JobStage, percent: number, message?: string) => {
+    await callbacks.onProgress({ stage, percent, message });
+  };
+
+  const capabilities = listCapabilities();
+
+  await emit("thinking", 75, "Writing your game…");
+  const brain = await runBrain({
+    inventory: input.inventory,
+    match: input.match,
+    capabilities,
+    businessName: input.businessName,
+    businessDescription: input.businessDescription,
+    forcedTemplate: input.template,
+  });
 
   await emit("composing", 92, "Almost there…");
-  const spec = compose(inventory, match, brain, input.mode);
+  const spec = compose(input.inventory, input.match, brain, input.mode);
 
-  if (dropped.length > 0) {
-    spec.meta.warnings.push(`${dropped.length} image(s) could not be downloaded or decoded and were skipped`);
+  if (input.droppedCount) {
+    spec.meta.warnings.push(`${input.droppedCount} image(s) could not be downloaded or decoded and were skipped`);
   }
-  if (match.fallbackMode === "manual") {
+  if (input.match.fallbackMode === "manual") {
+    // fallbackMode covers two different situations (matcher.ts) — "nothing
+    // was eligible at all" vs. "something was eligible, just off a thin
+    // inventory". The user already picked a template from the eligible
+    // list by the time this runs, so the first message would flatly
+    // contradict what they just did — only show it when that's actually
+    // what happened.
+    const eligibleCount = input.match.results.filter((r) => r.eligible).length;
     spec.meta.warnings.push(
-      "No template cleared the eligibility bar with confidence — consider switching to manual mode and adding a few more images.",
+      eligibleCount > 0
+        ? "Only a few usable images were found on this site, so the game may look sparse — consider manual mode to add more."
+        : "No template cleared the eligibility bar with confidence — consider switching to manual mode and adding a few more images.",
     );
   }
 
   await emit("done", 100);
 
-  return { inventory, match, spec };
+  return { inventory: input.inventory, match: input.match, spec };
 }
 
 function buildManualInventory(manualAssets: { url: string; name?: string; priceMinor?: number }[]): AssetInventory {

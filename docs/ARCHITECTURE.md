@@ -21,13 +21,18 @@ once it exists, the runtime (`lib/runtime/`) never touches `AssetInventory`,
 `GameCapability`, or `MatchReport` again. This is why the runtime and the
 pipeline can be developed almost completely independently.
 
-## 2. Generation pipeline (`lib/engine/index.ts` → `runGeneration()`)
+## 2. Generation pipeline (`lib/engine/index.ts`)
 
-One function, called by `app/api/generate/route.ts`, which persists
+Two functions, `runExtraction()` and `runComposition()`, split at a
+deliberate pause: the pipeline scores every template against what was
+actually found, then **stops and waits for the user to pick one** — it
+never auto-selects a template on its own. Both are called by
+`app/api/generate/route.ts` (phase 1) and
+`app/api/generate/[jobId]/choose/route.ts` (phase 2), which persist
 progress via `GenerationCallbacks.onProgress` (the DB `Job` record's
 `stage`/`percent`/`message`, polled by `app/api/generate/[jobId]/route.ts`
-and the `/build/auto/[jobId]` page). `runGeneration()` itself never touches
-the DB — that's the integration seam between the pipeline and the
+and rendered by the `/build/auto/[jobId]` page). Neither function touches
+the DB itself — that's the integration seam between the pipeline and the
 builder-API track.
 
 Stages, in order (`JobStage` in `types.ts`):
@@ -66,34 +71,143 @@ Stages, in order (`JobStage` in `types.ts`):
    surviving assets, or fall back per the role's declared `fallback` kind.
    Produces a `MatchReport` with a score and eligibility per template. This
    file has **no template-specific logic** — it only reads capability JSON.
+   `runExtraction()` returns here with `{ inventory, match, businessName,
+   businessDescription, droppedCount }` — the API route stores all of it on
+   the `Job` row and flips `stage` to `"choosing"`.
 
-5. **`thinking`** — `brain.ts` (`runBrain`) calls Gemini (schema-validated
-   response) with the eligible templates and a sample of assets, asking it
-   to pick a template, write copy, and set reward tiers. If `GEMINI_API_KEY`
-   is unset, the call errors, or it times out, `deterministicFallback()`
-   runs instead — picks the matcher's top-scored template and uses
-   hand-written copy templates. Both paths return the same `BrainResponse`
-   shape, so nothing downstream needs to know which one ran.
+5. **`choosing`** (pause, not a pipeline step) — `app/api/generate/route.ts`
+   stops here on purpose. The `/build/auto/[jobId]` page renders every
+   `eligible` result from `job.match` as a card (name/summary from
+   `getCapability()`, a fit badge from the score), and the user picks one.
+   That POSTs to `app/api/generate/[jobId]/choose/route.ts`, which
+   re-validates the choice against the job's own `match.results` (never
+   trusts the client's template id blindly) and resumes the pipeline via
+   `runComposition()` — this is also the only place a `GameRecord` /
+   `after()` background task gets kicked off for phase 2, mirroring how
+   phase 1 kicks off from the original POST.
 
-6. **`composing`** — `compose.ts` merges `AssetInventory` + `MatchReport` +
+6. **`thinking`** — `brain.ts` (`runBrain`) calls Gemini (schema-validated
+   response) with a sample of assets, asking it to write copy and set
+   reward tiers. It does **not** pick the template — `runComposition()`
+   always passes `forcedTemplate: <the user's choice>`, which narrows
+   `RunBrainInput`'s eligible list to exactly that one template before
+   Gemini or the fallback ever sees it (`resolveEligible()` in `brain.ts`
+   is the single place this narrowing happens, shared by the Gemini path,
+   response validation, and the fallback, so none of the three can
+   disagree about what's actually on the table). If `GEMINI_API_KEY` is
+   unset, the call errors, or it times out, `deterministicFallback()` runs
+   instead and uses hand-written copy templates. Both paths return the
+   same `BrainResponse` shape, so nothing downstream needs to know which
+   one ran.
+
+7. **`composing`** — `compose.ts` merges `AssetInventory` + `MatchReport` +
    `BrainResponse` into the final `GameSpec` (roles, copy, rewards, tuning
    clamped to the capability's ranges, `meta.warnings`).
 
-`runGeneration()` returns `{ inventory, match, spec }`; the API route
+`runComposition()` returns `{ inventory, match, spec }`; the choose route
 persists `spec` as a new `GameRecord` (draft) and the job's `gameId` points
-to it.
+to it — the exact same tail behavior the single-phase flow used to have,
+just triggered by the user's choice instead of automatically.
 
-## 3. Runtime (`lib/runtime/`)
+## 3. Asset presentation — how an image's background should be framed
+
+Every `ProcessedAsset` (`lib/engine/types.ts`) carries two optional fields:
+`presentation: "isolated" | "photographic"`, and — only when
+`"photographic"` — `backgroundColor` (a hex) and
+`backgroundTreatment: "solid" | "blurFill"`. This exists because of a real,
+user-reported aesthetic bug, found and fixed in two rounds:
+
+1. `chain_pop`'s tile role originally required `isolatable: true` like
+   `catch`/`guess_price`'s floating-sprite roles do, which meant most real
+   product photography — anything shot in lifestyle context rather than on
+   a plain studio background — got excluded outright. Relaxing that let
+   more real photos in, but exposed the actual problem underneath: a
+   photo's own real background rendered inside a chip filled with an
+   unrelated brand colour reads as an amateur "sticker in a box."
+2. The first fix filled the chip with the photo's own sampled
+   `backgroundColor` (no more seam) but also cropped into the sprite to
+   reduce visible backdrop margin — which, for photos where the subject
+   already filled most of the frame, cut off real content (a model's head,
+   a product's edge). **A renderer must never crop a `"photographic"`
+   asset to make it fit** — always scale the *whole* image to fit (Canvas
+   `drawImage` "contain" semantics: same aspect in, same aspect out, no
+   skew, no cropping) and fill the leftover space around it instead.
+
+**`backgroundTreatment` — what fills the leftover space:**
+- `"solid"`: a flat fill of `backgroundColor` — right when the backdrop is
+  already close to one flat colour (high corner uniformity, just not
+  bright/white enough to have isolated cleanly, e.g. a light-grey or
+  pastel studio background).
+- `"blurFill"`: a blurred, zoomed-in copy of the *same* photo — right for a
+  busy/contextual backdrop (a room, outdoors, a person in an environment)
+  where a flat colour would look like an obvious patch instead of a
+  natural extension of the photo. This is the same technique
+  Spotify/Apple Music use to fill space around non-square album art.
+
+**Where these are set (deterministic today):** `sprites.ts`, from the
+cutout step's own result. `presentation` from `cutoutResult.isolatable`;
+`backgroundColor` from `cutoutResult.dominant` (corner-sampled hex,
+already computed by `cutout.ts` for its own uniformity check);
+`backgroundTreatment` from the *same* corner-uniformity score
+`cutout.ts` uses for isolation eligibility (`MIN_UNIFORMITY_FOR_ISOLATION`,
+now exported so both files share one threshold) — high uniformity but not
+isolatable (i.e. uniform but not white) → `"solid"`; low uniformity →
+`"blurFill"`.
+
+**Where they can be overridden (AI hook):** `brain.ts`'s Gemini call
+already sends resized images for template/copy decisions (build spec §11);
+the same request now also asks it to classify each attached image's
+presentation *and*, for anything it calls `"photographic"`, which
+background treatment fits best — both keyed by asset id (the prompt lists
+`"1. <assetId>"` per attached image in send order, since not every
+candidate necessarily survives the fetch/resize — see `buildImageParts`).
+`validateBrainResponse` sanitizes both the same way, through one shared
+`validateAssetEnumMap()` helper: only keys that are real, gate-passing
+asset ids and values in the real enum survive; anything else is dropped,
+never repaired. `compose.ts`'s `buildProcessedAssets` prefers the AI value
+over the deterministic one per asset when present. On the deterministic
+fallback (no key, timeout, error — see §2 stage 6), both maps are simply
+absent and every asset keeps sprites.ts's heuristic values — same
+call/fallback pattern as the rest of `brain.ts`, and equally unverified in
+this sandbox (no `GEMINI_API_KEY` configured — see that file's own
+warning).
+
+**Who reads it:** currently only `chain_pop`'s runtime module
+(`lib/runtime/games/chainPop.ts`). `catch`/`guess_price` still hard-require
+`isolatable: true` on their floating-sprite roles, so by construction they
+only ever receive `"isolated"` assets and don't need to branch on this —
+this field only matters for a template that *frames* photos rather than
+floating them. When drawing a `"photographic"` tile, `chainPop.ts`:
+1. Fills the tile's chip with `backgroundColor` (both treatments start
+   here — it's the base layer, and the only layer for `"solid"`).
+2. For `"blurFill"`, draws a blurred, zoomed-in copy of the asset's own
+   image over that fill — pre-rendered once per kind onto a small offscreen
+   canvas (`buildKinds` → `createBlurredBackdrop`), not re-blurred every
+   frame, since a live Canvas `filter: blur()` on every tile every frame
+   would be wasted per-frame cost for a result that never changes.
+3. Draws the full sprite on top, `drawImage`'d at a fixed square
+   destination with **no source-rect cropping** — this is what guarantees
+   nothing is ever cut off, regardless of treatment.
+The outer ring stroke always stays in the kind's brand colour (not
+`backgroundColor`), so tiles of the same kind are still visually
+distinguishable from each other during play even as their backdrops vary.
+
+A template with a similar "frame a photo" role in the future should read
+these fields the same way rather than re-inventing a treatment — extend
+the enums additively if a genuinely different treatment is ever needed.
+
+## 4. Runtime (`lib/runtime/`)
 
 `mount(spec, container, placement, options?) → { teardown }`
 (`mount.ts`) is the entire public surface. It:
 
 - Resolves `spec.template` to a `GameModule` factory via a small
   `REGISTRY` map (`catch` → `createCatchGame`, `guess_price` →
-  `createGuessPriceGame`) and looks up the matching `GameCapability` for
-  placement constraints and tuning ranges. An unregistered/unimplemented
-  template (currently `match`, `stack`) degrades to a friendly
-  "isn't ready yet" message rather than crashing.
+  `createGuessPriceGame`, `chain_pop` → `createChainPopGame`) and looks up
+  the matching `GameCapability` for placement constraints and tuning
+  ranges. An unregistered/unimplemented template (currently `match`,
+  `stack`) degrades to a friendly "isn't ready yet" message rather than
+  crashing.
 - Builds a DOM scaffold: a `<canvas>` (the game) and an `overlay` div
   (idle screen, reward screen, email capture) as **siblings**, both
   children of a `shell`. Input capture (`createInput`) is scoped to the
@@ -119,10 +233,11 @@ to it.
 server-side anti-cheat ceiling — see each module's own comments for how the
 constant was derived from the capability's `scoring.maxRealistic`). Every
 template's runtime module (`lib/runtime/games/catch.ts`,
-`.../guessPrice.ts`) implements exactly this and nothing else — `mount.ts`
+`.../guessPrice.ts`, `.../chainPop.ts`) implements exactly this and
+nothing else — `mount.ts`
 is the only thing that knows about DOM, input, or telemetry.
 
-## 4. Capability definitions (`lib/capabilities/`)
+## 5. Capability definitions (`lib/capabilities/`)
 
 Each template is **data**: a JSON file validated at import time by a Zod
 schema in `index.ts` against the `GameCapability` shape (roles, per-role
@@ -133,7 +248,7 @@ eligible-template list, `compose.ts`, and the editor's role-completeness UI
 are all generic over whatever's registered here. Nothing needs to change in
 any of those files to add a template; see `docs/ADDING_A_TEMPLATE.md`.
 
-## 5. Data layer (`lib/db/`)
+## 6. Data layer (`lib/db/`)
 
 `isDevMode()` (`client.ts`) is `true` whenever `SUPABASE_URL` is unset — in
 that case `queries.ts` reads/writes JSON files under `./dev-data/` instead
@@ -144,11 +259,12 @@ callers (API routes) never need to know or care which backend is active.
 set. There is currently exactly one implicit account (`accountId: null`
 everywhere) — no real auth yet (see `docs/ROADMAP.md`).
 
-## 6. API surface (`app/api/`)
+## 7. API surface (`app/api/`)
 
 | Route | Purpose |
 |---|---|
-| `POST /api/generate`, `GET /api/generate/[jobId]` | kick off + poll auto-mode generation (`runGeneration`) |
+| `POST /api/generate`, `GET /api/generate/[jobId]` | kick off auto-mode extraction + poll job progress (`runExtraction`) |
+| `POST /api/generate/[jobId]/choose` | resume a paused job with the user's chosen template (`runComposition`) |
 | `GET/PATCH /api/games/[id]` | fetch/edit a `GameRecord`'s `GameSpec` (the editor's save path) |
 | `POST /api/games` | create a game (manual mode) |
 | `POST /api/games/[id]/publish` | draft → published |
@@ -157,7 +273,7 @@ everywhere) — no real auth yet (see `docs/ROADMAP.md`).
 | `POST /api/leads` | email capture from the reward screen |
 | `POST /api/upload` | manual-mode asset upload → blob storage |
 
-## 7. App routes (`app/`)
+## 8. App routes (`app/`)
 
 - `(marketing)/` — public landing page (`page.tsx`), `gallery/`. No auth,
   no DB writes.
@@ -175,7 +291,7 @@ everywhere) — no real auth yet (see `docs/ROADMAP.md`).
 - `demo-storefront/` — a fake e-commerce page embedding the widget, for
   screenshots/demos.
 
-## 8. Design system
+## 9. Design system
 
 Tokens live in `app/globals.css` (`:root` + a `prefers-color-scheme: dark`
 block, RGB triplets) and are exposed to Tailwind via
@@ -185,5 +301,5 @@ families: `--font-sans` (Inter, body) and `--font-display` (Space Grotesk,
 headlines only, via the `font-display` class) — both loaded at build time
 via `next/font/google` in `app/layout.tsx`. This is separate from
 per-*game* brand fonts, which are arbitrary Google Fonts loaded at runtime
-by `mount.ts` (see §3) since they come from `GameSpec.brand.fontFamily`,
+by `mount.ts` (see §4) since they come from `GameSpec.brand.fontFamily`,
 not the app's own design system.
