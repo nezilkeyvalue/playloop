@@ -21,7 +21,7 @@ const gameSpecSchema = z
   .object({
     id: z.string(),
     version: z.literal(1),
-    template: z.enum(["catch", "guess_price", "chain_pop", "chomp", "match", "stack"]),
+    template: z.enum(["catch", "guess_price", "chain_pop", "chomp", "whack", "match", "stack"]),
     placements: z.array(placementSchema).min(1),
     brand: z.record(z.any()),
     copy: z.record(z.any()),

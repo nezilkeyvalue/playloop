@@ -286,6 +286,69 @@ export const chompGameSpec: GameSpec = {
 };
 
 // ---------------------------------------------------------------------------
+// Whack — "Burrow Pet Co."
+// ---------------------------------------------------------------------------
+
+const whackMoles: ProcessedAsset[] = [
+  asset("toy-1", "#C97A3E", "🦴", { name: "Rope Chew Toy", priceMinor: 1200 }),
+  asset("toy-2", "#5E8D6A", "🎾", { name: "Squeaky Ball", priceMinor: 800 }),
+  asset("toy-3", "#7A6AB6", "🧸", { name: "Plush Otter", priceMinor: 1600 }),
+  asset("toy-4", "#D6A63F", "🦆", { name: "Duck Squeaker", priceMinor: 1000 }),
+  asset("toy-5", "#4E7A9C", "🪢", { name: "Tug Rope", priceMinor: 900 }),
+  asset("toy-6", "#B6472E", "🐿️", { name: "Snuffle Mat", priceMinor: 1800 }),
+];
+
+const whackHazards: ProcessedAsset[] = [asset("hazard-sock", "#5A5A5A", "🧦", { name: "Chewed Sock" })];
+
+export const whackGameSpec: GameSpec = {
+  id: "demo-whack",
+  version: 1,
+  template: "whack",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Burrow Pet Co.",
+    accent: "#C97A3E",
+    secondaryAccent: "#5A5A5A",
+    background: "#FBF6EF",
+    foreground: "#2A211A",
+    fontFamily: "Baloo 2, system-ui, sans-serif",
+    palette: ["#C97A3E", "#5E8D6A", "#FBF6EF", "#2A211A"],
+  },
+  copy: {
+    headline: "Whack your way to a deal",
+    subhead: "Tap the toys before they duck back down. Leave the chewed sock alone.",
+    ctaStart: "Start whacking",
+    ctaReplay: "Whack again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: [...whackMoles, ...whackHazards],
+  roles: {
+    mole: whackMoles.map((a) => a.id),
+    hazard: whackHazards.map((a) => a.id),
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "WHACK10" },
+    { minScore: 400, label: "15% off", percentOff: 15, code: "WHACK15" },
+    { minScore: 800, label: "20% off", percentOff: 20, code: "WHACK20" },
+  ],
+  durationSeconds: 35,
+  tuning: {
+    holeCount: 7,
+    popRateHz: 1.1,
+    upTimeSec: 0.9,
+    durationSec: 35,
+    hazardRatio: 0.2,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Showcase skins — the same two templates restyled for different brands.
 // Used only by the marketing homepage slideshow to prove the product works
 // across verticals; real GameSpecs mounted through the real runtime, not
@@ -382,6 +445,7 @@ export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-guess-price": guessPriceGameSpec,
   "demo-chain-pop": chainPopGameSpec,
   "demo-chomp": chompGameSpec,
+  "demo-whack": whackGameSpec,
   "demo-catch-lumen": skincareGameSpec,
   "demo-guess-price-kicks": sneakerGameSpec,
 };
