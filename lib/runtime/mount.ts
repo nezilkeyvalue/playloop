@@ -31,16 +31,18 @@ import { beginSession, captureLead, endSession, trackEvent } from "@/lib/runtime
 import { createCatchGame } from "@/lib/runtime/games/catch";
 import { createGuessPriceGame } from "@/lib/runtime/games/guessPrice";
 import { createChainPopGame } from "@/lib/runtime/games/chainPop";
+import { createChompGame } from "@/lib/runtime/games/chomp";
 
 type GameModuleFactory = () => GameModule;
 
-/** "catch", "guess_price", and "chain_pop" are implemented. "match" / "stack"
- * are reserved TemplateId values with no capability JSON and no runtime
- * module yet — mount() degrades to a friendly message. */
+/** "catch", "guess_price", "chain_pop", and "chomp" are implemented.
+ * "match" / "stack" are reserved TemplateId values with no capability JSON
+ * and no runtime module yet — mount() degrades to a friendly message. */
 const REGISTRY: Partial<Record<TemplateId, GameModuleFactory>> = {
   catch: createCatchGame,
   guess_price: createGuessPriceGame,
   chain_pop: createChainPopGame,
+  chomp: createChompGame,
 };
 
 export interface MountOptions {
@@ -195,13 +197,18 @@ function mountGame(
     addScore,
     getScore,
     complete,
+    brandLogo: null,
   };
 
-  Promise.all(spec.assets.map((asset) => loadAsset(asset)))
-    .then((assets) => {
+  Promise.all([
+    Promise.all(spec.assets.map((asset) => loadAsset(asset))),
+    loadImage(brand.logoUrl ?? ""),
+  ])
+    .then(([assets, brandLogo]) => {
       if (destroyed) return;
       loaded = new Map(assets.map((a) => [a.id, a]));
       runtimeCtx.roles = resolveRoles(spec, loaded);
+      runtimeCtx.brandLogo = brandLogo;
       trackEvent("impression", { slug, template: spec.template });
       if (autoStart) startPlay(false);
       else showIdleScreen();

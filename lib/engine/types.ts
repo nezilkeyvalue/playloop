@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 export type Placement = "section" | "fullpage" | "modal" | "ad";
-export type TemplateId = "catch" | "guess_price" | "chain_pop" | "match" | "stack";
+export type TemplateId = "catch" | "guess_price" | "chain_pop" | "chomp" | "match" | "stack";
 
 /**
  * How a sprite's background should be treated by a renderer that frames it

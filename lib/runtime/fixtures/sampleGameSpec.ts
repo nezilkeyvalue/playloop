@@ -226,6 +226,66 @@ export const chainPopGameSpec: GameSpec = {
 };
 
 // ---------------------------------------------------------------------------
+// Chomp — "Corner Grocer"
+// ---------------------------------------------------------------------------
+
+const chompPellets: ProcessedAsset[] = [
+  asset("grocery-1", "#D64545", "🍎", { name: "Honeycrisp Apple", priceMinor: 150 }),
+  asset("grocery-2", "#E2A233", "🧀", { name: "Aged Cheddar Block", priceMinor: 900 }),
+  asset("grocery-3", "#7A9E4C", "🥑", { name: "Avocado", priceMinor: 200 }),
+  asset("grocery-4", "#C97A3E", "🥐", { name: "Butter Croissant", priceMinor: 350 }),
+  asset("grocery-5", "#5E8D6A", "🥦", { name: "Broccoli Crown", priceMinor: 250 }),
+  asset("grocery-6", "#B6472E", "🍅", { name: "Vine Tomatoes", priceMinor: 300 }),
+];
+
+export const chompGameSpec: GameSpec = {
+  id: "demo-chomp",
+  version: 1,
+  template: "chomp",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Corner Grocer",
+    accent: "#3F8F5E",
+    secondaryAccent: "#D64545",
+    background: "#FBF8F0",
+    foreground: "#22301F",
+    fontFamily: "Nunito, system-ui, sans-serif",
+    palette: ["#3F8F5E", "#D64545", "#FBF8F0", "#22301F"],
+  },
+  copy: {
+    headline: "Chomp your way through the aisle",
+    subhead: "Steer around the board and eat the groceries before their clock runs out.",
+    ctaStart: "Start chomping",
+    ctaReplay: "Chomp again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: chompPellets,
+  roles: {
+    pellet: chompPellets.map((a) => a.id),
+    chaser: { fallback: "generatedShape" },
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "CHOMP10" },
+    { minScore: 450, label: "15% off", percentOff: 15, code: "CHOMP15" },
+    { minScore: 850, label: "20% off", percentOff: 20, code: "CHOMP20" },
+  ],
+  durationSeconds: 40,
+  tuning: {
+    pelletCount: 10,
+    moveSpeed: 260,
+    pelletLifetimeSec: 4,
+    durationSec: 40,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Showcase skins — the same two templates restyled for different brands.
 // Used only by the marketing homepage slideshow to prove the product works
 // across verticals; real GameSpecs mounted through the real runtime, not
@@ -321,6 +381,7 @@ export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-catch": catchGameSpec,
   "demo-guess-price": guessPriceGameSpec,
   "demo-chain-pop": chainPopGameSpec,
+  "demo-chomp": chompGameSpec,
   "demo-catch-lumen": skincareGameSpec,
   "demo-guess-price-kicks": sneakerGameSpec,
 };

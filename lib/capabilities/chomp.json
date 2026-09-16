@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "id": "chomp",
+  "name": "Chomp",
+  "summary": "Steer a chaser around the board to gulp down products before their clock runs out.",
+
+  "roles": [
+    {
+      "id": "pellet",
+      "purpose": "Products scattered on the board that the player eats",
+      "count": { "min": 4, "ideal": 10, "max": 14 },
+      "requires": {
+        "subjectTypeIn": ["product"],
+        "isolatable": true,
+        "minShortEdge": 300,
+        "aspectRange": [0.5, 2.0],
+        "maxTextDensity": 0.15,
+        "maxSubjectCount": 1
+      },
+      "prefers": {
+        "distinctPhash": true,
+        "coverageRange": [0.25, 0.85],
+        "uniformScale": true,
+        "contrastAgainst": "stage.background"
+      },
+      "transforms": ["cutout", "trim", "padSquare", "resize", "outline", "shadow"],
+      "fallback": "none"
+    },
+    {
+      "id": "chaser",
+      "purpose": "The player-controlled token",
+      "count": { "min": 0, "ideal": 1, "max": 1 },
+      "requires": { "subjectTypeIn": ["product", "logo"] },
+      "prefers": { "aspectRange": [0.8, 1.25] },
+      "transforms": ["cutout", "trim", "resize"],
+      "fallback": "generatedShape",
+      "optional": true
+    },
+    {
+      "id": "stageBackground",
+      "purpose": "Play area backdrop",
+      "count": { "min": 0, "ideal": 1, "max": 1 },
+      "requires": { "subjectTypeIn": ["lifestyle", "pattern"] },
+      "transforms": ["cropAspect", "blur", "darken", "resize"],
+      "fallback": "brandGradient",
+      "optional": true
+    }
+  ],
+
+  "data": {
+    "required": [],
+    "optional": ["name", "priceMinor"]
+  },
+
+  "placements": {
+    "section": { "minWidth": 320, "minHeight": 420, "preferredAspect": 0.85 },
+    "fullpage": { "minWidth": 320, "minHeight": 480, "preferredAspect": 0.7 },
+    "modal": { "minWidth": 300, "minHeight": 400, "preferredAspect": 0.85 },
+    "ad": { "sizes": ["300x250", "320x480", "300x600"], "excluded": ["728x90"] }
+  },
+
+  "tuning": {
+    "pelletCount": { "min": 4, "default": 10, "max": 14 },
+    "moveSpeed": { "min": 160, "default": 260, "max": 420 },
+    "pelletLifetimeSec": { "min": 2, "default": 4, "max": 8 },
+    "durationSec": { "min": 20, "default": 40, "max": 60 }
+  },
+
+  "scoring": {
+    "maxRealistic": 1260,
+    "rewardTierHint": [0.3, 0.65]
+  },
+
+  "cost": { "buildMs": 400, "runtimeKb": 34 }
+}
