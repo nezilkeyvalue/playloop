@@ -29,6 +29,7 @@
 // a player has no way to see whether their swipe is registering at all.
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
+import { drawAssetContain } from "@/lib/runtime/games/spriteRender";
 
 // Scoring constants. Chosen so maxRealisticScore() at the capability's
 // *default* tuning (launchRateHz 1.1, durationSec 35, hazardRatio 0.18)
@@ -287,7 +288,7 @@ class SliceGame implements GameModule {
     const half = item.size / 2;
 
     if (item.asset?.image) {
-      c.drawImage(item.asset.image, item.x - half, item.y - half, item.size, item.size);
+      drawAssetContain(c, item.asset, item.x - half, item.y - half, item.size, item.size);
       return;
     }
 

@@ -77,6 +77,12 @@ const PREFERS_WEIGHT = 0.1;
 const FALLBACK_FILL_RATIO = 0.6;
 const FALLBACK_ASSET_QUALITY = 0.6;
 
+/** Small post-score nudges for named catalogue inventories — keeps product-
+ * interaction templates above Sweet Spot when real photos fill hard roles. */
+const CATALOGUE_RICHNESS_BONUS = 0.05;
+const DISTINCT_PRODUCT_BONUS = 0.03;
+const PRODUCT_INTERACTION_BONUS = 0.02;
+
 export function matchAssets(inventory: AssetInventory, capabilities: GameCapability[]): MatchReport {
   const results: TemplateMatch[] = capabilities.map((cap) => matchOneTemplate(inventory, cap));
 
@@ -184,11 +190,15 @@ function matchOneTemplate(inventory: AssetInventory, cap: GameCapability): Templ
   // schema §4's own example shows an ineligible template scored 0.0) —
   // don't let a well-filled optional role make a template that's missing a
   // hard-required role look like a viable, nearly-eligible option.
-  const score = ineligible
+  let score = ineligible
     ? 0
     : totalWeight > 0
       ? roleScores.reduce((sum, r) => sum + r.score * r.weight, 0) / totalWeight
       : 0;
+
+  if (!ineligible) {
+    score += catalogueRankingBonus(inventory, cap, assignments);
+  }
 
   return {
     template: cap.id,
@@ -377,6 +387,55 @@ function describeRoleSubject(role: CapabilityRole): string {
   const types = role.requires.subjectTypeIn;
   if (types && types.length > 0) return `a ${types.join("/")} image`;
   return "a suitable image";
+}
+
+/** Bonus applied after the base weighted role score when the inventory is
+ * clearly a named product catalogue — nudges Whack/Catch/etc. above Sweet
+ * Spot on SPA storefronts that lack prices or packshot isolation. */
+function catalogueRankingBonus(
+  inventory: AssetInventory,
+  cap: GameCapability,
+  assignments: Record<string, string[] | { fallback: string } | string>,
+): number {
+  if (cap.data.required.includes("priceMinor")) return 0;
+  if (inventory.dataCoverage.withName < 4) return 0;
+
+  const primary = cap.roles.find((r) => r.fallback === "none") ?? cap.roles[0];
+  if (!primary || primary.fallback !== "none") return 0;
+
+  const assigned = assignments[primary.id];
+  if (!assigned || typeof assigned !== "object" || !Array.isArray(assigned)) return 0;
+
+  const assets = inventory.assets.filter((a) => assigned.includes(a.id));
+  if (assets.length === 0) return 0;
+
+  let bonus = CATALOGUE_RICHNESS_BONUS * Math.min(1, assets.length / primary.count.ideal);
+
+  const named = assets.filter((a) => a.data?.name);
+  if (named.length >= 3 && countDistinctByPhash(named) >= 3) {
+    bonus += DISTINCT_PRODUCT_BONUS;
+  }
+
+  if (primary.count.min > 0) {
+    bonus += PRODUCT_INTERACTION_BONUS;
+  }
+
+  return bonus;
+}
+
+function countDistinctByPhash(assets: RawAsset[]): number {
+  const kept: RawAsset[] = [];
+  for (const asset of assets) {
+    if (!asset.phash) {
+      kept.push(asset);
+      continue;
+    }
+    const duplicate = kept.some(
+      (existing) => existing.phash && hammingDistanceSafe(existing.phash, asset.phash) < 6,
+    );
+    if (!duplicate) kept.push(asset);
+  }
+  return kept.length;
 }
 
 function mean(nums: number[]): number {

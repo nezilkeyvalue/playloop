@@ -22,6 +22,7 @@
 //   stageBackground — optional; brand gradient if unfilled
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
+import { drawAssetContain } from "@/lib/runtime/games/spriteRender";
 
 // Scoring constants. Chosen so maxRealisticScore() at the capability's
 // *default* tuning (durationSec 40) lands at chomp.json's scoring.maxRealistic
@@ -255,7 +256,7 @@ class ChompGame implements GameModule {
     c.save();
     c.globalAlpha = 0.35 + 0.65 * fade;
     if (pellet.asset?.image) {
-      c.drawImage(pellet.asset.image, pellet.x - half, pellet.y - half, size, size);
+      drawAssetContain(c, pellet.asset, pellet.x - half, pellet.y - half, size, size);
     } else {
       c.fillStyle = this.ctx.brand.accent;
       c.beginPath();

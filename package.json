@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test:extract": "tsx scripts/test-extract.ts"
+    "test:extract": "tsx scripts/test-extract.ts",
+    "test:matcher": "tsx scripts/test-matcher.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",

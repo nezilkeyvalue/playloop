@@ -15,8 +15,9 @@ import { makeRawAsset, resolveUrl } from "./util";
 
 const SKIP_PATTERN =
   /(sprite|icon|favicon|logo|pixel|tracking|badge|payment|visa|mastercard|paypal|swatch|thumb-?nav|banner|mobile-cms|cms-content|\/storage\/mobile)/i;
-const PRODUCT_HINT_PATTERN =
-  /(product|item-card|grid-item|catalog\/product|collection|shop-item|uploads\/catalog)/i;
+import { CATALOGUE_PRODUCT_URL_PATTERN } from "@/lib/engine/catalogue";
+
+const PRODUCT_HINT_PATTERN = CATALOGUE_PRODUCT_URL_PATTERN;
 const MAX_DOM_CANDIDATES = 30;
 const MIN_MARKUP_DIMENSION = 150;
 
@@ -65,7 +66,14 @@ export function extractDom(html: string, pageUrl: string): RawAsset[] {
   for (const c of candidates) {
     if (seen.has(c.url)) continue;
     seen.add(c.url);
-    assets.push(makeRawAsset({ url: c.url, origin: "dom", name: c.alt }));
+    assets.push(
+      makeRawAsset({
+        url: c.url,
+        origin: "dom",
+        name: c.alt,
+        subjectTypeHint: "product",
+      }),
+    );
     if (assets.length >= MAX_DOM_CANDIDATES) break;
   }
   return assets;

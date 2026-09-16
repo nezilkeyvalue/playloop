@@ -10,11 +10,10 @@
       "purpose": "Products that pop up and duck back down for the player to tap",
       "count": { "min": 3, "ideal": 6, "max": 10 },
       "requires": {
-        "subjectTypeIn": ["product"],
-        "isolatable": true,
-        "minShortEdge": 300,
+        "subjectTypeIn": ["product", "lifestyle", "unknown"],
+        "minShortEdge": 200,
         "aspectRange": [0.5, 2.0],
-        "maxTextDensity": 0.15,
+        "maxTextDensity": 0.2,
         "maxSubjectCount": 1
       },
       "prefers": {
@@ -23,7 +22,7 @@
         "uniformScale": true,
         "contrastAgainst": "stage.background"
       },
-      "transforms": ["cutout", "trim", "padSquare", "resize", "outline", "shadow"],
+      "transforms": ["trim", "padSquare", "resize"],
       "fallback": "none"
     },
     {
