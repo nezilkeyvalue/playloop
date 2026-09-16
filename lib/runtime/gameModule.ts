@@ -62,6 +62,12 @@ export interface RuntimeContext {
   random: () => number;
   addScore(delta: number): void;
   getScore(): number;
+  /** Game module calls this whenever the player genuinely engages with a
+   * real product asset (a catch, a popped chain, a hit, a round shown) —
+   * never for hazards/decoys/generated-shape fallbacks/synthesized filler.
+   * mount.ts accumulates these (deduped) to show a recap gallery of the
+   * products actually played with on the reward screen. */
+  recordEngagement(assetId: string): void;
   /** Game module calls this the instant it knows the round/session is over. */
   complete(): void;
 }

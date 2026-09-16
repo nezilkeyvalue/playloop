@@ -313,6 +313,13 @@ function sumTransformDeltas(role: CapabilityRole, chosen: RawAsset[]): number {
       const shadowedFraction =
         chosen.length > 0 ? chosen.filter((a) => a.quality.flags.includes("transform:shadow")).length / chosen.length : 0;
       total += TRANSFORM_CATALOGUE.shadow.qualityDelta * shadowedFraction;
+    } else if (transformId === "outline") {
+      // Same real-signal treatment as shadow above — only counted for
+      // assets sprites.ts actually outlined (addOutline is gated on
+      // isolatable, same as addSoftShadow).
+      const outlinedFraction =
+        chosen.length > 0 ? chosen.filter((a) => a.quality.flags.includes("transform:outline")).length / chosen.length : 0;
+      total += TRANSFORM_CATALOGUE.outline.qualityDelta * outlinedFraction;
     } else {
       total += TRANSFORM_CATALOGUE[transformId].qualityDelta;
     }

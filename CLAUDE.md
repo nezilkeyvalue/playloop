@@ -43,7 +43,8 @@ lib/capabilities/      One JSON per template (data, not code) + index.ts loader/
 lib/runtime/            Client-side game player
   mount.ts                mount(spec, container, placement) → { teardown } — the runtime entry point
   gameModule.ts            GameModule contract every template implements
-  games/                   one file per template (catch.ts, guessPrice.ts)
+  games/                   one file per template (catch.ts, guessPrice.ts, chainPop.ts, shooter.ts)
+    spriteRender.ts          shared subject-aware draw helpers + the celebrate primitive — see hazards list
   stage.ts, loop.ts, input.ts, reward.ts, telemetry.ts   shared runtime services
   fixtures/sampleGameSpec.ts   hand-written GameSpecs for offline dev/demo (no pipeline needed)
 
@@ -144,6 +145,44 @@ touching the related area.
   exists specifically to mark the part of the frame that's genuinely unsafe
   to touch, so cropping to it (never into it) removes only padding, never
   content.
+- **Subject-aware sprite rendering lives in `lib/runtime/games/spriteRender.ts`
+  — reuse it, don't re-derive it.** `containFit`, `colorAdjustFilterString`,
+  `drawAssetContain`, `createBlurredBackdrop`, `drawArcText`, and the
+  `Celebration`/`updateCelebrations`/`drawCelebration` primitive are shared
+  across every template's runtime module. This used to be copy-pasted
+  between `chainPop.ts` and `shooter.ts` before it was extracted here — a
+  new template needing subject-cropped rendering, a blurred backdrop, or
+  curved text should import from this file, not write a fourth copy.
+- **Every game module must call `ctx.recordEngagement(assetId)` when the
+  player genuinely interacts with a real product asset.** `mount.ts`
+  accumulates these (deduped) and shows a recap gallery of the actual
+  products played with on the reward screen — the highest-attention moment
+  of the whole session (the peak-end rule: players remember the peak and
+  the end of an experience most, and the reward screen previously showed
+  zero product imagery). Call it only for a *real* asset a player
+  succeeded on — never for hazards/decoys/generated-shape fallbacks/
+  synthesized filler (a synthesized brand-colour gem in `chainPop.ts`, a
+  hazard in `catch.ts`, a missed/wrong shot in `shooter.ts`). See
+  `catch.ts`'s catch branch, `chainPop.ts`'s `popGroup()`, `shooter.ts`'s
+  `resolveHit()`, and `guessPrice.ts`'s `startRound()` (every round shows a
+  real hero regardless of guess accuracy, so recording happens there
+  unconditionally) for the four existing patterns — pick whichever matches
+  your template's "moment of success." The same primitive from
+  `spriteRender.ts` (above) is the natural pairing: a `Celebration` pushed
+  at the same call site gives the player a brief grow-and-fade look at what
+  they just engaged with, instead of it just vanishing.
+- **A game module calling `ctx.complete()` synchronously from `update()`
+  used to crash `chainPop.ts`'s next `render()` call in the same frame.**
+  `mount.ts`'s `onGameComplete()` runs synchronously up to its first
+  `await`, which includes `gameModule.teardown()` — so state a template
+  clears in `teardown()` (e.g. `chainPop.ts`'s `this.grid = []`) could still
+  get read by one more `render()` call before the loop actually stopped,
+  since `loop.ts` unconditionally called `update()` then `render()` every
+  tick. Fixed centrally in `loop.ts` (it now checks `running` again right
+  after `update()`, since `loop.stop()` sets that synchronously in the same
+  call chain) — new templates don't need to guard against this themselves,
+  but don't remove that check, and don't assume `render()` can't run after
+  `teardown()` clears something without re-verifying against this fix.
 - **`undici`'s default max header size is small.** Some real-world sites
   return oversized response headers that blow past Node's default and throw
   before `safeFetch.ts` even gets a body. Both fetches there use a shared

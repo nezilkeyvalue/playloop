@@ -28,6 +28,15 @@
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
 import type { BrandKit } from "@/lib/engine/types";
+import {
+  containFit,
+  colorAdjustFilterString,
+  createBlurredBackdrop,
+  drawArcText,
+  updateCelebrations,
+  drawCelebration,
+  type Celebration,
+} from "@/lib/runtime/games/spriteRender";
 
 // Scoring constants, chosen so maxRealisticScore() at the capability's
 // default tuning (spawnRateHz 1.0, durationSec 40, targetRatio 0.4) lands
@@ -123,11 +132,13 @@ class ShooterGame implements GameModule {
 
   private targetAsset: LoadedAsset | null = null;
   private decoyPool: LoadedAsset[] = [];
+  private blurredBackdrops = new Map<string, HTMLCanvasElement | null>();
 
   private items: FallingItem[] = [];
   private projectiles: Projectile[] = [];
   private particles: Particle[] = [];
   private stars: Star[] = [];
+  private celebrations: Celebration[] = [];
 
   private lives = MAX_LIVES;
   private elapsed = 0;
@@ -152,6 +163,7 @@ class ShooterGame implements GameModule {
     this.items = [];
     this.projectiles = [];
     this.particles = [];
+    this.celebrations = [];
 
     const productPool = ctx.roles.product?.assets ?? [];
     if (productPool.length > 0) {
@@ -161,6 +173,18 @@ class ShooterGame implements GameModule {
     } else {
       this.targetAsset = null;
       this.decoyPool = [];
+    }
+
+    // Pre-rendered once per asset (see createBlurredBackdrop's own doc
+    // comment on why not per-frame) — parity with chainPop.ts's tile
+    // treatment for the same "photographic" + "blurFill" combination, so a
+    // busy/contextual product photo gets its own backdrop extended outward
+    // instead of a flat colour patch.
+    this.blurredBackdrops = new Map();
+    for (const asset of productPool) {
+      if (asset.image && asset.presentation === "photographic" && asset.backgroundTreatment === "blurFill") {
+        this.blurredBackdrops.set(asset.id, createBlurredBackdrop(asset.image, asset.colorAdjust));
+      }
     }
 
     this.stars = buildStarfield(ctx.stage.width, ctx.stage.height, ctx.random, STAR_COUNT);
@@ -264,6 +288,7 @@ class ShooterGame implements GameModule {
       survivingParticles.push(particle);
     }
     this.particles = survivingParticles;
+    this.celebrations = updateCelebrations(this.celebrations, dt);
 
     if (!this.ended) {
       const durationSec = tuning.durationSec ?? 40;
@@ -304,6 +329,10 @@ class ShooterGame implements GameModule {
     this.drawShip(c, stage, brand);
     this.drawLives(c, stage.width, brand);
 
+    for (const celebration of this.celebrations) {
+      drawCelebration(c, celebration, ITEM_SIZE * 1.6, brand.accent);
+    }
+
     if (this.hitFlashT > 0) {
       const alpha = (this.hitFlashT / HIT_FLASH_DURATION) * 0.28;
       c.fillStyle = `rgba(230, 60, 60, ${alpha})`;
@@ -315,6 +344,7 @@ class ShooterGame implements GameModule {
     this.items = [];
     this.projectiles = [];
     this.particles = [];
+    this.celebrations = [];
   }
 
   maxRealisticScore(tuning: Record<string, number>): number {
@@ -328,6 +358,10 @@ class ShooterGame implements GameModule {
     if (item.isTarget) {
       this.ctx.addScore(POINTS_PER_HIT);
       this.spawnParticles(item.x, item.y, brand.accent);
+      if (item.asset?.image) {
+        this.ctx.recordEngagement(item.asset.id);
+        this.celebrations.push({ asset: item.asset, x: item.x, y: item.y, t: 0 });
+      }
     } else {
       this.lives -= 1;
       this.hitFlashT = HIT_FLASH_DURATION;
@@ -432,14 +466,21 @@ class ShooterGame implements GameModule {
     // fixed light for the same reason the starfield itself is fixed dark.
     c.fillStyle = SPACE_TEXT_COLOR;
 
-    c.globalAlpha = 0.75;
-    c.font = `600 15px ${font}`;
-    c.fillText("YOUR TARGET", centerX, centerY - INTRO_ITEM_SIZE / 2 - 34);
-    c.globalAlpha = 1;
-
+    // Curved name badge — only when there's a real name to show (skipped
+    // silently otherwise, no invented placeholder ring); this doubles as
+    // the "look here" framing "YOUR TARGET" otherwise provides, so the two
+    // are alternatives rather than both showing at once.
     const name = this.targetAsset?.data?.name;
-    c.font = `700 22px ${font}`;
-    c.fillText(name || "This one!", centerX, centerY + INTRO_ITEM_SIZE / 2 + 44);
+    if (name) {
+      drawArcText(c, name.toUpperCase(), centerX, centerY, INTRO_ITEM_SIZE / 2 + 34, `700 15px ${font}`, SPACE_TEXT_COLOR);
+    } else {
+      c.globalAlpha = 0.75;
+      c.font = `600 15px ${font}`;
+      c.fillText("YOUR TARGET", centerX, centerY - INTRO_ITEM_SIZE / 2 - 34);
+      c.globalAlpha = 1;
+      c.font = `700 22px ${font}`;
+      c.fillText("This one!", centerX, centerY + INTRO_ITEM_SIZE / 2 + 44);
+    }
 
     c.globalAlpha = 0.75;
     c.font = `500 14px ${font}`;
@@ -477,6 +518,11 @@ class ShooterGame implements GameModule {
       const isPhotographic = asset.presentation === "photographic" && Boolean(asset.backgroundColor);
       c.fillStyle = isPhotographic ? asset.backgroundColor! : shade(brand.accent, 0.78);
       c.fillRect(x - half, y - half, size, size);
+
+      const blurredBackdrop = isPhotographic ? this.blurredBackdrops.get(asset.id) : undefined;
+      if (blurredBackdrop) {
+        c.drawImage(blurredBackdrop, x - half, y - half, size, size);
+      }
 
       const img = asset.image;
       const bounds = asset.subjectBounds;
@@ -647,28 +693,6 @@ function drawStarShape(c: CanvasRenderingContext2D, cx: number, cy: number, radi
   c.fillStyle = fill;
   c.fill();
   c.restore();
-}
-
-/** "Contain" fit of a `srcW`x`srcH` rect into a `boxW`x`boxH` box: the
- * largest size that preserves the source's own aspect ratio, centred. A
- * subjectBounds sub-rect is generally not square even though the sprite's
- * own canvas is — see lib/engine/types.ts's SubjectBounds doc comment. */
-function containFit(srcW: number, srcH: number, boxW: number, boxH: number): { w: number; h: number; x: number; y: number } {
-  if (srcW <= 0 || srcH <= 0) return { w: boxW, h: boxH, x: 0, y: 0 };
-  const srcAspect = srcW / srcH;
-  const boxAspect = boxW / boxH;
-  const w = srcAspect > boxAspect ? boxW : boxH * srcAspect;
-  const h = srcAspect > boxAspect ? boxW / srcAspect : boxH;
-  return { w, h, x: (boxW - w) / 2, y: (boxH - h) / 2 };
-}
-
-/** `ColorAdjust` → a canvas `ctx.filter` string; "none" when absent or
- * numerically neutral — see lib/engine/types.ts's ColorAdjust doc comment. */
-function colorAdjustFilterString(adjust: LoadedAsset["colorAdjust"]): string {
-  if (!adjust) return "none";
-  const { brightness, contrast, saturation } = adjust;
-  if (brightness === 1 && contrast === 1 && saturation === 1) return "none";
-  return `brightness(${brightness}) contrast(${contrast}) saturate(${saturation})`;
 }
 
 function roundedRect(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {

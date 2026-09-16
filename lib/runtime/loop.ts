@@ -45,6 +45,16 @@ export function startLoop(
 
     if (!paused) {
       update(dt);
+      // `update()` can synchronously trigger `ctx.complete()` (every game
+      // module's normal end-of-round path), which runs mount.ts's
+      // onGameComplete() up to its first `await` — including
+      // `gameModule.teardown()` — before returning here. Rendering one more
+      // frame against now-torn-down state (e.g. chainPop.ts's `this.grid`
+      // reset to `[]`) throws. `stop()` sets `running = false` synchronously
+      // in that same call chain, so checking it here skips the doomed frame
+      // instead of every game module having to defensively guard render()
+      // against mid-teardown state.
+      if (!running) return;
       render();
     }
 

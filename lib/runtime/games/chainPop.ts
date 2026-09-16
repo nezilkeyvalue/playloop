@@ -26,7 +26,15 @@
 // phone inside someone else's page.
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
-import type { BrandKit, ColorAdjust } from "@/lib/engine/types";
+import type { BrandKit } from "@/lib/engine/types";
+import {
+  containFit,
+  colorAdjustFilterString,
+  createBlurredBackdrop,
+  updateCelebrations,
+  drawCelebration,
+  type Celebration,
+} from "@/lib/runtime/games/spriteRender";
 
 // Scoring constants, chosen so maxRealisticScore() at the capability's
 // default tuning (durationSec 45, minChainLength 3) lands close to
@@ -47,17 +55,6 @@ const DEFAULT_KIND_COUNT = 5;
 const GRID_PADDING = 14;
 const CELL_GUTTER = 4;
 const TILE_CORNER_RADIUS_FACTOR = 0.26; // fraction of tile size — deliberately rounded, "sticker" look
-// Blurred backdrop for "photographic" + "blurFill" tiles (see Kind.blurredBackdrop) —
-// pre-rendered once per kind at a fixed resolution, not full sprite
-// resolution, since it's shown blurred; keeps it cheap regardless of the
-// final on-screen tile size. Zoomed in specifically to crop OUT the
-// sprite's own transparent letterbox margin (every sprite is pipeline-
-// normalized to a square canvas via "contain" fit — see sprites.ts's
-// SPRITE_SIZE resize) — this cropping only ever affects the blurred decor
-// layer, never the sharp foreground image, so no real content is lost.
-const BLUR_BACKDROP_RESOLUTION = 96;
-const BLUR_BACKDROP_ZOOM = 1.3;
-const BLUR_BACKDROP_RADIUS_PX = 12;
 const FALL_EASE_RATE = 14; // higher = snappier settle
 const SQUASH_DURATION = 0.16;
 const POP_DURATION = 0.22;
@@ -146,6 +143,7 @@ class ChainPopGame implements GameModule {
   private grid: Cell[][] = [];
   private particles: Particle[] = [];
   private floatingTexts: FloatingText[] = [];
+  private celebrations: Celebration[] = [];
 
   private cellSize = 40;
   private originX = 0;
@@ -165,6 +163,7 @@ class ChainPopGame implements GameModule {
     this.ended = false;
     this.particles = [];
     this.floatingTexts = [];
+    this.celebrations = [];
     this.hasStageBackgroundFallback = !ctx.roles.stageBackground?.assets.length;
 
     this.kinds = buildKinds(ctx.roles.tile?.assets ?? [], ctx.brand, ctx.random);
@@ -253,6 +252,7 @@ class ChainPopGame implements GameModule {
       t.life -= dt;
       return t.life > 0;
     });
+    this.celebrations = updateCelebrations(this.celebrations, dt);
 
     if (this.elapsed >= this.durationSec) {
       this.ended = true;
@@ -320,12 +320,17 @@ class ChainPopGame implements GameModule {
       c.fillText(t.text, t.x, t.y - (1 - lifeRatio) * FLOAT_RISE_PX);
       c.restore();
     }
+
+    for (const celebration of this.celebrations) {
+      drawCelebration(c, celebration, this.cellSize * 1.6, brand.accent);
+    }
   }
 
   teardown(): void {
     this.grid = [];
     this.particles = [];
     this.floatingTexts = [];
+    this.celebrations = [];
   }
 
   maxRealisticScore(tuning: Record<string, number>): number {
@@ -429,6 +434,15 @@ class ChainPopGame implements GameModule {
 
     const points = pointsForChain(group.length, this.minChainLength);
     this.ctx.addScore(points);
+
+    // Only a kind backed by a real product photo is worth celebrating/
+    // recording — the synthesized brand-gem kinds padding out MIN_KINDS
+    // have nothing real behind them to show or recall.
+    if (kind?.asset?.image) {
+      this.ctx.recordEngagement(kind.asset.id);
+      this.celebrations.push({ asset: kind.asset, x: cx, y: cy, t: 0 });
+    }
+
     this.floatingTexts.push({
       x: cx,
       y: cy,
@@ -626,34 +640,6 @@ function buildKinds(tileAssets: LoadedAsset[], brand: BrandKit, random: () => nu
   return kinds;
 }
 
-/** Pre-renders a blurred, zoomed-in copy of `image` onto a small offscreen
- * canvas — once per kind (see buildKinds), not per frame: applying a CSS
- * blur filter live in drawCell for every tile every frame (up to
- * MAX_KINDS distinct blurs, each potentially drawn many times across the
- * board) would be needless per-frame cost for a result that never
- * changes. Returns null in non-DOM environments (SSR) or if 2D context
- * creation fails — callers already treat a null backdrop as "no blur
- * decoration", never a hard failure. */
-function createBlurredBackdrop(image: HTMLImageElement, colorAdjust: ColorAdjust | undefined): HTMLCanvasElement | null {
-  if (typeof document === "undefined") return null;
-  const canvas = document.createElement("canvas");
-  canvas.width = BLUR_BACKDROP_RESOLUTION;
-  canvas.height = BLUR_BACKDROP_RESOLUTION;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
-
-  // Baked in at pre-render time (this only ever runs once per kind, not
-  // per frame) rather than left for the live foreground draw to apply —
-  // the corrected colour should show through the blurred decor layer too,
-  // not just the sharp image on top of it.
-  const adjust = colorAdjustFilterString(colorAdjust);
-  ctx.filter = adjust === "none" ? `blur(${BLUR_BACKDROP_RADIUS_PX}px)` : `blur(${BLUR_BACKDROP_RADIUS_PX}px) ${adjust}`;
-  const d = BLUR_BACKDROP_RESOLUTION * BLUR_BACKDROP_ZOOM;
-  const offset = (BLUR_BACKDROP_RESOLUTION - d) / 2;
-  ctx.drawImage(image, offset, offset, d, d);
-  return canvas;
-}
-
 function buildPaletteColors(brand: BrandKit, count: number, random: () => number): string[] {
   const seed = [brand.accent, brand.secondaryAccent, ...brand.palette].filter(isHexColor);
   const uniq: string[] = [];
@@ -679,38 +665,6 @@ function isHexColor(value: string | undefined): value is string {
 
 function clampInt(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(n)));
-}
-
-/** "Contain" fit of a `srcW`x`srcH` rect into a `boxW`x`boxH` box: the
- * largest size that preserves the source's own aspect ratio without
- * exceeding either box dimension, centred. Needed because a subjectBounds
- * sub-rect (see drawCell) is generally NOT square even though every sprite
- * itself is (sprites.ts always pads to a square canvas) — drawing that
- * sub-rect straight into a square destination without this would stretch
- * a tall/wide subject out of proportion. */
-function containFit(
-  srcW: number,
-  srcH: number,
-  boxW: number,
-  boxH: number,
-): { w: number; h: number; x: number; y: number } {
-  if (srcW <= 0 || srcH <= 0) return { w: boxW, h: boxH, x: 0, y: 0 };
-  const srcAspect = srcW / srcH;
-  const boxAspect = boxW / boxH;
-  const w = srcAspect > boxAspect ? boxW : boxH * srcAspect;
-  const h = srcAspect > boxAspect ? boxW / srcAspect : boxH;
-  return { w, h, x: (boxW - w) / 2, y: (boxH - h) / 2 };
-}
-
-/** `ColorAdjust` → a canvas `ctx.filter` string. "none" both when there's
- * no adjustment at all and when one is present but numerically neutral
- * (1,1,1) — either way, skip the filter entirely rather than pay for a
- * no-op canvas filter graph on every draw. */
-function colorAdjustFilterString(adjust: ColorAdjust | undefined): string {
-  if (!adjust) return "none";
-  const { brightness, contrast, saturation } = adjust;
-  if (brightness === 1 && contrast === 1 && saturation === 1) return "none";
-  return `brightness(${brightness}) contrast(${contrast}) saturate(${saturation})`;
 }
 
 function lerp(a: number, b: number, t: number): number {
