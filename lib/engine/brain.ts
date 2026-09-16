@@ -20,6 +20,7 @@ import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import type { Schema } from "@google/generative-ai";
 import sharp from "sharp";
 import { safeFetchImage } from "@/lib/engine/safeFetch";
+import { normalizeRewardTier, validateRewardTier } from "@/lib/engine/specRules";
 import type {
   AssetBackgroundTreatment,
   AssetInventory,
@@ -482,10 +483,22 @@ function validateRewards(raw: unknown, cap: GameCapability): BrainResponse["rewa
     const minScore = typeof obj.minScore === "number" ? obj.minScore : undefined;
     const label = typeof obj.label === "string" ? obj.label : undefined;
     const percentOff = typeof obj.percentOff === "number" ? obj.percentOff : undefined;
-    if (minScore === undefined || !label || percentOff === undefined) continue;
-    if (minScore >= maxRealistic) continue; // nobody can reach it — drop it
-    if (minScore < 0 || percentOff <= 0 || percentOff > 90) continue;
-    parsed.push({ minScore: Math.round(minScore), label, percentOff: Math.round(percentOff) });
+    if (minScore === undefined || label === undefined || percentOff === undefined) continue;
+
+    // Normalize BEFORE validating, which is the whole reason this goes
+    // through specRules rather than open-coding the checks: the old order
+    // tested the raw number and rounded afterwards, so minScore 1399.6 passed
+    // a `< 1400` ceiling and was then stored as 1400 — above the very ceiling
+    // it had just been checked against. The rules themselves are unchanged;
+    // they now just live in one place the editor and the PATCH route share.
+    const tier = normalizeRewardTier({ minScore, label, percentOff });
+    if (validateRewardTier(tier, { maxScore: maxRealistic }).length > 0) continue;
+
+    // Narrowing, not a rule: RewardTier allows percentOff: null for a
+    // thank-you tier, but BrainResponse only ever carries discount tiers and
+    // the loop above already refused a non-numeric percentOff.
+    if (tier.percentOff === null) continue;
+    parsed.push({ minScore: tier.minScore, label: tier.label, percentOff: tier.percentOff });
   }
 
   parsed.sort((a, b) => a.minScore - b.minScore);

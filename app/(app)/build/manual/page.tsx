@@ -309,7 +309,7 @@ export default function ManualBuildPage() {
                 onClick={() => setTemplate(cap.id)}
                 className={`rounded-xl border p-4 text-left text-sm transition ${
                   (template ?? eligible[0]?.id) === cap.id
-                    ? "border-transparent bg-primary text-white"
+                    ? "border-transparent bg-primary text-primary-foreground"
                     : "border-border hover:border-primary/30 hover:bg-primary/[0.03]"
                 }`}
               >
@@ -419,7 +419,7 @@ export default function ManualBuildPage() {
           type="button"
           disabled={!canSubmit}
           onClick={handleSubmit}
-          className="flex-1 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-40"
+          className="flex-1 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition active:scale-[0.98] disabled:opacity-40"
         >
           {submitting ? "Creating…" : "Create game"}
         </button>

@@ -21,7 +21,7 @@ import { nanoid, customAlphabet } from "nanoid";
 
 import { getSupabaseServerClient, isDevMode } from "./client";
 import { generateSlug } from "@/lib/slug";
-import { getCapability } from "@/lib/capabilities";
+import { resolveMaxRealisticScoreForSpec } from "@/lib/engine/scoreCeiling";
 import type {
   GameRecord,
   GameSpec,
@@ -695,12 +695,13 @@ const generateRewardCode = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 8)
 /**
  * Server-side anti-forgery gate (build spec §12, §17). `sessionToken` is
  * single-use and expires 10 minutes after startPlay(); the reported score is
- * checked against the template capability's `scoring.maxRealistic` and an
- * elapsed-time floor so a play that reports a real-looking score in an
- * impossibly short time is not rewarded. A forged/implausible submission
- * still consumes the token (so it can't be retried into something that
- * passes) but is scored as 0 with no tier — it is not a hard error, so a
- * legitimate slow network doesn't error out the whole request.
+ * checked against this game's own realistic score ceiling (tuning-aware —
+ * see lib/engine/scoreCeiling.ts) and an elapsed-time floor, so a play that
+ * reports a real-looking score in an impossibly short time is not rewarded.
+ * A forged/implausible submission still consumes the token (so it can't be
+ * retried into something that passes) but is scored as 0 with no tier — it
+ * is not a hard error, so a legitimate slow network doesn't error out the
+ * whole request.
  */
 export async function finishPlay(
   sessionToken: string,
@@ -718,8 +719,14 @@ export async function finishPlay(
   if (!game) throw new Error("game_not_found");
 
   const elapsedSeconds = (now - startedAtMs) / 1000;
-  const capability = getCapability(game.spec.template);
-  const maxRealistic = capability?.scoring.maxRealistic ?? Number.POSITIVE_INFINITY;
+  // Resolved from this game's tuning, not from the template's static
+  // capability.scoring.maxRealistic: the editor can raise durationSec /
+  // spawnRateHz, and a fixed per-template constant would then read honest
+  // scores as forged and silently stop paying rewards out. The resolver falls
+  // back to that same constant whenever it can't load a runtime module, so
+  // the worst case here is the behaviour this replaced.
+  const maxRealistic =
+    (await resolveMaxRealisticScoreForSpec(game.spec)) ?? Number.POSITIVE_INFINITY;
   const minPlausibleSeconds = Math.max(
     MIN_PLAY_SECONDS_FLOOR,
     game.spec.durationSeconds * 0.2,

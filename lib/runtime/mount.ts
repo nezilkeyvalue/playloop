@@ -435,7 +435,11 @@ function loadImage(url: string, timeoutMs = 6000): Promise<HTMLImageElement | nu
  */
 const STATIC_PREVIEW_EXAMPLE_SCORE = 128;
 
-export function renderStaticScreen(kind: "idle" | "reward", spec: GameSpec): HTMLElement {
+export function renderStaticScreen(
+  kind: "idle" | "reward",
+  spec: GameSpec,
+  exampleScore: number = STATIC_PREVIEW_EXAMPLE_SCORE,
+): HTMLElement {
   const { brand, copy } = spec;
   ensureGoogleFontLoaded(brand.fontFamily);
 
@@ -460,10 +464,10 @@ export function renderStaticScreen(kind: "idle" | "reward", spec: GameSpec): HTM
     return shell;
   }
 
-  const { tier } = resolveReward(STATIC_PREVIEW_EXAMPLE_SCORE, spec.rewards);
+  const { tier } = resolveReward(exampleScore, spec.rewards);
   const content = renderRewardState(brand, copy, tier, null, () => {}, () => {});
   const scoreEl = content.querySelector<HTMLElement>("[data-role='score-value']");
-  if (scoreEl) scoreEl.textContent = String(STATIC_PREVIEW_EXAMPLE_SCORE);
+  if (scoreEl) scoreEl.textContent = String(exampleScore);
   const emailField = content.querySelector<HTMLInputElement>("[data-role='email-input']");
   if (emailField) emailField.disabled = true;
   shell.appendChild(content);
@@ -595,7 +599,12 @@ function renderRewardState(
   emailInput.style.flex = "1 1 160px";
   emailRow.appendChild(emailInput);
 
-  const emailButton = makeButton(copy.emailPrompt, brand.accent, brand.background);
+  // Fixed string, not copy.emailPrompt: that field is the input's
+  // placeholder, and a natural placeholder ("Enter your email for your
+  // code") makes a button wider than the card. A dedicated button label
+  // would mean adding a GameCopy field in lib/engine/types.ts — a shared
+  // contract change for pure cosmetics — so the verb is hardcoded here.
+  const emailButton = makeButton("Get my code", brand.accent, brand.background);
   emailButton.style.padding = "8px 14px";
   emailButton.addEventListener("click", onSubmitEmail);
   emailRow.appendChild(emailButton);

@@ -8,7 +8,11 @@ export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getCapability, supportsPlacement } from "@/lib/capabilities";
+import {
+  findIncompleteRoles,
+  getCapability,
+  supportsPlacement,
+} from "@/lib/capabilities";
 import { publishGame, getGameById } from "@/lib/db/queries";
 
 const bodySchema = z.object({
@@ -46,6 +50,20 @@ export async function POST(
   if (capability && !supportsPlacement(capability, parsed.data.placement)) {
     return NextResponse.json(
       { error: "unsupported_placement", template: game.spec.template },
+      { status: 400 },
+    );
+  }
+
+  // Publishing is the last boundary in front of real players. The pipeline
+  // never emits a spec with an unfilled `fallback: "none"` role (matcher.ts
+  // marks the template ineligible instead) and the PATCH schema refuses to
+  // write one, so this catches only a spec that got here some other way — but
+  // an unplayable game on a live storefront is the one failure worth checking
+  // twice.
+  const gaps = findIncompleteRoles(game.spec);
+  if (gaps.length > 0) {
+    return NextResponse.json(
+      { error: "incomplete_roles", gaps },
       { status: 400 },
     );
   }

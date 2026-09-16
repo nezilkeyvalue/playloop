@@ -54,7 +54,7 @@ export default function BuildPage() {
         <button
           type="submit"
           disabled={loading || !rightsConfirmed}
-          className="rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-50"
+          className="rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition active:scale-[0.98] disabled:opacity-50"
         >
           {loading ? "Starting…" : "Generate"}
         </button>

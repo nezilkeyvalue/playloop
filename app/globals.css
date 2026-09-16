@@ -18,6 +18,11 @@
   --destructive: 220 38 38;
   --ring: 130 71 255;
 
+  /* The builder panel is mostly native controls (colour wells, number
+     spinners, the opened <select> popup, scrollbars). Without this they are
+     painted by the UA in light chrome regardless of our tokens. */
+  color-scheme: light;
+
   /* Legacy tokens — see tailwind.config.ts */
   --ink: #0b0b0f;
   --paper: #fafaf8;
@@ -39,6 +44,7 @@
     --warning: 250 204 21;
     --destructive: 248 113 113;
     --ring: 154 110 255;
+    color-scheme: dark;
   }
 }
 
@@ -57,6 +63,7 @@
   --warning: 250 204 21;
   --destructive: 248 113 113;
   --ring: 154 110 255;
+  color-scheme: dark;
 }
 
 html,
@@ -70,10 +77,15 @@ body {
   color: rgb(var(--foreground));
 }
 
+/* Deliberately sets no border-radius: this rule applies to the *element*,
+   not to the outline, and (specificity 0,1,0, emitted after @tailwind
+   utilities) it beat every Tailwind radius utility — focusing a rounded-full
+   pill visibly squared it off mid-focus. All three engines already draw the
+   outline following the element's own radius, so there is nothing to
+   restate here. */
 :focus-visible {
   outline: 2px solid rgb(var(--ring));
   outline-offset: 2px;
-  border-radius: 4px;
 }
 
 body {
