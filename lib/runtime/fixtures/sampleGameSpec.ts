@@ -474,7 +474,14 @@ const simonTiles: ProcessedAsset[] = [
   asset("speaker", "#3E8FB0", "🔊", { name: "Mini Speaker" }),
   asset("turntable", "#E2A233", "🎚️", { name: "USB Turntable" }),
   asset("headphones", "#5B4B8A", "🎵", { name: "Studio Headphones" }),
+  asset("mic", "#C97A3E", "🎤", { name: "Podcast Mic" }),
+  asset("amp", "#B6472E", "🔈", { name: "Desktop Amp" }),
+  asset("cable", "#E2A233", "🔌", { name: "Braided Aux Cable" }),
+  asset("case", "#8A5AA8", "🧳", { name: "Hardshell Case" }),
 ];
+// The remaining 8 of the pad's 16 tiles fall back to generated brand-colour
+// chips (see simon.ts's buildTiles) — a deliberate mix, not a thin fixture,
+// so this demo also proves the fallback path renders well.
 
 export const simonGameSpec: GameSpec = {
   id: "demo-simon",
@@ -510,7 +517,7 @@ export const simonGameSpec: GameSpec = {
   ],
   durationSeconds: 60,
   tuning: {
-    tileCount: 4,
+    tileCount: 16,
     flashDurationSec: 0.55,
     gapDurationSec: 0.28,
     maxRounds: 12,
