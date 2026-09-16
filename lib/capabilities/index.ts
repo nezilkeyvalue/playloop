@@ -98,20 +98,14 @@ const registry: Record<string, GameCapability> = {
   whack: validate(whackCapability, "whack.json"),
   simon: validate(simonCapability, "simon.json"),
   slice: validate(sliceCapability, "slice.json"),
-
-/** All templates currently implemented (catch, guess_price, chain_pop,
- * chomp, whack, simon, slice). Post-MVP ids (match, stack) are reserved in
- * the type system but intentionally absent here — an absent capability
- * makes a template automatically ineligible everywhere. */
   shooter: validate(shooterCapability, "shooter.json"),
   sweet_spot: validate(sweetSpotCapability, "sweet_spot.json"),
 };
 
 /** All templates currently implemented (catch, guess_price, chain_pop,
- * shooter, sweet_spot). Post-MVP ids (match, stack) are reserved in the
- * type system but
- * intentionally absent here — an absent capability makes a template
- * automatically ineligible everywhere. */
+ * chomp, whack, simon, slice, shooter, sweet_spot). Post-MVP ids (match,
+ * stack) are reserved in the type system but intentionally absent here —
+ * an absent capability makes a template automatically ineligible everywhere. */
 export function listCapabilities(): GameCapability[] {
   return Object.values(registry);
 }
@@ -119,6 +113,29 @@ export function listCapabilities(): GameCapability[] {
 export function getCapability(id: TemplateId): GameCapability | undefined {
   return registry[id];
 }
+
+/** Name + summary for the auto-build template picker. Falls back to the
+ * capability JSON imports so a card never renders a bare template id when
+ * the registry lookup misses (stale client bundle, etc.). */
+export function getTemplatePickerMeta(id: TemplateId): { name: string; summary: string } {
+  const cap = registry[id];
+  if (cap) return { name: cap.name, summary: cap.summary };
+  const fallback = PICKER_META_FALLBACK[id];
+  if (fallback) return fallback;
+  return { name: id, summary: "" };
+}
+
+const PICKER_META_FALLBACK: Partial<Record<TemplateId, { name: string; summary: string }>> = {
+  catch: { name: catchCapability.name, summary: catchCapability.summary },
+  guess_price: { name: guessPriceCapability.name, summary: guessPriceCapability.summary },
+  chain_pop: { name: chainPopCapability.name, summary: chainPopCapability.summary },
+  chomp: { name: chompCapability.name, summary: chompCapability.summary },
+  whack: { name: whackCapability.name, summary: whackCapability.summary },
+  simon: { name: simonCapability.name, summary: simonCapability.summary },
+  slice: { name: sliceCapability.name, summary: sliceCapability.summary },
+  shooter: { name: shooterCapability.name, summary: shooterCapability.summary },
+  sweet_spot: { name: sweetSpotCapability.name, summary: sweetSpotCapability.summary },
+};
 
 export function requireCapability(id: TemplateId): GameCapability {
   const cap = registry[id];
