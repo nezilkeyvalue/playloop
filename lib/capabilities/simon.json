@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "id": "simon",
+  "name": "Simon",
+  "summary": "Watch the sequence light up on the product tiles, then repeat it back in order. Gets one step longer every round.",
+
+  "roles": [
+    {
+      "id": "tile",
+      "purpose": "The distinct product tiles arranged in the pad",
+      "count": { "min": 0, "ideal": 4, "max": 6 },
+      "requires": {
+        "subjectTypeIn": ["product", "lifestyle", "unknown"],
+        "minShortEdge": 200,
+        "aspectRange": [0.5, 2.0],
+        "maxTextDensity": 0.2,
+        "maxSubjectCount": 2
+      },
+      "prefers": {
+        "distinctPhash": true,
+        "coverageRange": [0.2, 0.95],
+        "uniformScale": true
+      },
+      "transforms": ["trim", "padSquare", "resize"],
+      "fallback": "generatedShape",
+      "optional": true
+    },
+    {
+      "id": "stageBackground",
+      "purpose": "Play area backdrop",
+      "count": { "min": 0, "ideal": 1, "max": 1 },
+      "requires": { "subjectTypeIn": ["lifestyle", "pattern"] },
+      "transforms": ["cropAspect", "blur", "darken", "resize"],
+      "fallback": "brandGradient",
+      "optional": true
+    }
+  ],
+
+  "data": {
+    "required": [],
+    "optional": ["name"]
+  },
+
+  "placements": {
+    "section": { "minWidth": 300, "minHeight": 420, "preferredAspect": 0.95 },
+    "fullpage": { "minWidth": 320, "minHeight": 480, "preferredAspect": 0.8 },
+    "modal": { "minWidth": 300, "minHeight": 400, "preferredAspect": 0.9 },
+    "ad": { "sizes": ["300x250", "320x480", "300x600"], "excluded": ["728x90"] }
+  },
+
+  "tuning": {
+    "tileCount": { "min": 3, "default": 4, "max": 6 },
+    "flashDurationSec": { "min": 0.3, "default": 0.55, "max": 0.9 },
+    "gapDurationSec": { "min": 0.12, "default": 0.28, "max": 0.5 },
+    "maxRounds": { "min": 5, "default": 12, "max": 20 },
+    "durationSec": { "min": 30, "default": 60, "max": 90 }
+  },
+
+  "scoring": {
+    "maxRealistic": 960,
+    "rewardTierHint": [0.3, 0.65]
+  },
+
+  "cost": { "buildMs": 250, "runtimeKb": 24 }
+}

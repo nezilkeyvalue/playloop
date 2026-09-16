@@ -349,6 +349,64 @@ export const whackGameSpec: GameSpec = {
 };
 
 // ---------------------------------------------------------------------------
+// Simon — "Bright Beat Audio"
+// ---------------------------------------------------------------------------
+
+const simonTiles: ProcessedAsset[] = [
+  asset("earbuds", "#E24E6B", "🎧", { name: "Wireless Earbuds" }),
+  asset("speaker", "#3E8FB0", "🔊", { name: "Mini Speaker" }),
+  asset("turntable", "#E2A233", "🎚️", { name: "USB Turntable" }),
+  asset("headphones", "#5B4B8A", "🎵", { name: "Studio Headphones" }),
+];
+
+export const simonGameSpec: GameSpec = {
+  id: "demo-simon",
+  version: 1,
+  template: "simon",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Bright Beat Audio",
+    accent: "#E24E6B",
+    secondaryAccent: "#3E8FB0",
+    background: "#F5F1FA",
+    foreground: "#231B33",
+    fontFamily: "Space Grotesk, system-ui, sans-serif",
+    palette: ["#E24E6B", "#3E8FB0", "#E2A233", "#5B4B8A"],
+  },
+  copy: {
+    headline: "Remember the beat",
+    subhead: "Watch the sequence, then tap it back. It gets longer — and faster — every round.",
+    ctaStart: "Start listening",
+    ctaReplay: "Play again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: simonTiles,
+  roles: {
+    tile: simonTiles.map((a) => a.id),
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "BEAT10" },
+    { minScore: 350, label: "15% off", percentOff: 15, code: "BEAT15" },
+    { minScore: 700, label: "20% off", percentOff: 20, code: "BEAT20" },
+  ],
+  durationSeconds: 60,
+  tuning: {
+    tileCount: 4,
+    flashDurationSec: 0.55,
+    gapDurationSec: 0.28,
+    maxRounds: 12,
+    durationSec: 60,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Showcase skins — the same two templates restyled for different brands.
 // Used only by the marketing homepage slideshow to prove the product works
 // across verticals; real GameSpecs mounted through the real runtime, not
@@ -446,6 +504,7 @@ export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-chain-pop": chainPopGameSpec,
   "demo-chomp": chompGameSpec,
   "demo-whack": whackGameSpec,
+  "demo-simon": simonGameSpec,
   "demo-catch-lumen": skincareGameSpec,
   "demo-guess-price-kicks": sneakerGameSpec,
 };

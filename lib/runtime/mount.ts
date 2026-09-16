@@ -33,10 +33,11 @@ import { createGuessPriceGame } from "@/lib/runtime/games/guessPrice";
 import { createChainPopGame } from "@/lib/runtime/games/chainPop";
 import { createChompGame } from "@/lib/runtime/games/chomp";
 import { createWhackGame } from "@/lib/runtime/games/whack";
+import { createSimonGame } from "@/lib/runtime/games/simon";
 
 type GameModuleFactory = () => GameModule;
 
-/** "catch", "guess_price", "chain_pop", "chomp", and "whack" are
+/** "catch", "guess_price", "chain_pop", "chomp", "whack", and "simon" are
  * implemented. "match" / "stack" are reserved TemplateId values with no
  * capability JSON and no runtime module yet — mount() degrades to a
  * friendly message. */
@@ -46,6 +47,7 @@ const REGISTRY: Partial<Record<TemplateId, GameModuleFactory>> = {
   chain_pop: createChainPopGame,
   chomp: createChompGame,
   whack: createWhackGame,
+  simon: createSimonGame,
 };
 
 export interface MountOptions {
