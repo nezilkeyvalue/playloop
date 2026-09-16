@@ -21,7 +21,7 @@ import { extractShopify } from "./shopify";
 import { extractJsonLd } from "./jsonld";
 import { extractOpenGraph } from "./opengraph";
 import { extractDom } from "./dom";
-import { renderWithBrowser, looksLikeUnrenderedShell } from "./render";
+import { renderWithBrowser, needsBrowserRender } from "./render";
 import { extractLogo } from "./logo";
 import { dedupeByUrl } from "./util";
 
@@ -122,14 +122,15 @@ export async function extractFromUrl(sourceUrl: string): Promise<ExtractResult> 
   }
 
   // 6 — Rendered-DOM fallback (render.ts). Only when the ladder above is
-  // still short *and* the fetched markup looks like an unrendered CSR
-  // shell rather than a site that's simply sparse or actively blocking us
-  // (a block already surfaced as a thrown fetch error above, not a 200
-  // with thin content — see render.ts's own doc comment on why this is
-  // not the same thing as routing around that). Spawns a real browser, so
-  // it's gated behind both conditions, not just the asset count — this
-  // step alone can cost several real seconds.
-  if (html && assets.length < ENOUGH_ASSETS && looksLikeUnrenderedShell(html)) {
+  // still short *and* the static HTML looks like a CSR shell (classic empty
+  // mount, or a logo/nav wrapper with no server-rendered products — see
+  // needsBrowserRender in render.ts). Spawns a real browser, so it's gated
+  // behind both conditions, not just the asset count — this step alone can
+  // cost several real seconds.
+  const structuredAssetCount = assets.filter(
+    (a) => a.origin === "products_json" || a.origin === "jsonld",
+  ).length;
+  if (html && assets.length < ENOUGH_ASSETS && needsBrowserRender(html, structuredAssetCount)) {
     const rendered = await tryStep(() => renderWithBrowser(pageUrl));
     if (rendered) {
       html = rendered.html;
@@ -209,21 +210,52 @@ async function extractSitemapLite(origin: string): Promise<RawAsset[]> {
     return [];
   }
 
-  const urls = Array.from(sitemapXml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi))
-    .map((m) => m[1])
-    .filter((u): u is string => Boolean(u))
-    .filter((u) => /\/products?\//i.test(u));
+  const allUrls = Array.from(sitemapXml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi))
+    .map((m) => m[1]?.trim())
+    .filter((u): u is string => Boolean(u));
+
+  const productUrls = allUrls.filter((u) => SITEMAP_PRODUCT_PATH.test(u));
+  const catalogueUrls = allUrls.filter(
+    (u) => !SITEMAP_PRODUCT_PATH.test(u) && SITEMAP_CATALOGUE_PATH.test(u),
+  );
 
   const assets: RawAsset[] = [];
-  for (const productUrl of urls.slice(0, MAX_SITEMAP_PAGES)) {
-    try {
-      const res = await safeFetch(productUrl);
-      if (!res.ok) continue;
-      const { assets: pageAssets } = extractJsonLd(res.text(), res.finalUrl);
-      assets.push(...pageAssets);
-    } catch {
-      // one bad product page must not abort the whole sitemap pass
+
+  for (const pageUrl of productUrls.slice(0, MAX_SITEMAP_PAGES)) {
+    assets.push(...(await extractSitemapPage(pageUrl)));
+    if (assets.length >= ENOUGH_ASSETS) return assets;
+  }
+
+  // Non-Shopify stores often list category URLs (/men/t-shirts, /explore/…)
+  // rather than /products/slug — try a few with JSON-LD + DOM when the
+  // product-url pass came up empty.
+  if (assets.length < ENOUGH_ASSETS) {
+    for (const pageUrl of catalogueUrls.slice(0, MAX_SITEMAP_PAGES)) {
+      assets.push(...(await extractSitemapPage(pageUrl)));
+      if (assets.length >= ENOUGH_ASSETS) break;
     }
   }
+
   return assets;
+}
+
+/** Product-detail paths across common commerce platforms (/product/slug,
+ * /products/handle, …). */
+const SITEMAP_PRODUCT_PATH = /\/products?\//i;
+
+/** Category/listing paths worth a cheap fetch when product URLs are absent. */
+const SITEMAP_CATALOGUE_PATH =
+  /\/(men|women|kids|explore|collections|shop|catalog|category|categories)\//i;
+
+async function extractSitemapPage(pageUrl: string): Promise<RawAsset[]> {
+  try {
+    const res = await safeFetch(pageUrl);
+    if (!res.ok) return [];
+    const html = res.text();
+    const jsonld = extractJsonLd(html, res.finalUrl);
+    const dom = extractDom(html, res.finalUrl);
+    return [...jsonld.assets, ...dom];
+  } catch {
+    return [];
+  }
 }
