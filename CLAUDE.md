@@ -43,7 +43,8 @@ lib/capabilities/      One JSON per template (data, not code) + index.ts loader/
 lib/runtime/            Client-side game player
   mount.ts                mount(spec, container, placement) → { teardown } — the runtime entry point
   gameModule.ts            GameModule contract every template implements
-  games/                   one file per template (catch.ts, guessPrice.ts)
+  games/                   one file per template (catch.ts, guessPrice.ts,
+                           chainPop.ts, shooter.ts, sweetSpot.ts)
   stage.ts, loop.ts, input.ts, reward.ts, telemetry.ts   shared runtime services
   fixtures/sampleGameSpec.ts   hand-written GameSpecs for offline dev/demo (no pipeline needed)
 
@@ -199,9 +200,17 @@ touching the related area.
 
 ## What's implemented vs. reserved
 
-Four templates are live end-to-end: `catch`, `guess_price`, `chain_pop`, and
-`shooter` (see `lib/capabilities/*.json`, `lib/runtime/games/*.ts`).
-`TemplateId` in `types.ts` also reserves `"match"` and `"stack"` — they
-exist in the type system (and the capability-schema Zod validator)
-precisely so more templates can be added later without touching that
-shared contract at all. See `docs/ADDING_A_TEMPLATE.md`.
+Five templates are live end-to-end: `catch`, `guess_price`, `chain_pop`,
+`shooter`, and `sweet_spot` (see `lib/capabilities/*.json`,
+`lib/runtime/games/*.ts`). `TemplateId` in `types.ts` also reserves
+`"match"` and `"stack"` — they exist in the type system (and the
+capability-schema Zod validator) precisely so more templates can be added
+later without touching that shared contract at all. See
+`docs/ADDING_A_TEMPLATE.md`.
+
+**`sweet_spot` is the eligibility floor.** It is the only template with no
+`fallback: "none"` role, so it stays eligible on sites where extraction
+yields almost nothing — verified live against deathwishcoffee.com, whose
+two surviving assets leave `catch` (needs 4 isolatable collectibles) and
+`guess_price` (needs a priced hero) both ineligible. Don't add a
+hard-required role to it; that floor is the whole reason it exists.

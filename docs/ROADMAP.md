@@ -10,6 +10,12 @@ committed schedule — a map of what's next and who'd naturally pick it up.
 `TemplateId` reserves `match` and `stack`; neither has a capability JSON or
 runtime module yet. Follow `docs/ADDING_A_TEMPLATE.md`.
 
+`sweet_spot` (tap to stop a sweeping marker in a shrinking zone) shipped and
+covers the thin-extraction case this track kept hitting: it declares no
+`fallback: "none"` role, so it stays eligible when a site yields almost no
+usable images. The spin-the-wheel idea below is now largely redundant with
+it — both were aimed at the same "few usable product photos" gap.
+
 - **`match`** — pairs-matching/memory game. Likely roles: `card` (needs an
   even, larger pool than `catch`'s collectibles — probably `count.ideal`
   around 6-8 *pairs*), maybe `stageBackground`. Good fit for sites with

@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "id": "sweet_spot",
+  "name": "Sweet Spot",
+  "summary": "A marker sweeps across a bar; tap to stop it inside the shrinking target zone.",
+
+  "roles": [
+    {
+      "id": "prize",
+      "purpose": "Product shown above the bar as the thing being played for",
+      "count": { "min": 0, "ideal": 4, "max": 8 },
+      "requires": { "minShortEdge": 120 },
+      "prefers": { "distinctPhash": true, "coverageRange": [0.15, 0.95] },
+      "transforms": ["trim", "resize"],
+      "fallback": "logo",
+      "optional": true
+    },
+    {
+      "id": "stageBackground",
+      "purpose": "Play area backdrop",
+      "count": { "min": 0, "ideal": 1, "max": 1 },
+      "requires": { "subjectTypeIn": ["lifestyle", "pattern"] },
+      "transforms": ["cropAspect", "blur", "darken", "resize"],
+      "fallback": "brandGradient",
+      "optional": true
+    }
+  ],
+
+  "data": {
+    "required": [],
+    "optional": ["name"]
+  },
+
+  "placements": {
+    "section": { "minWidth": 280, "minHeight": 360, "preferredAspect": 0.8 },
+    "fullpage": { "minWidth": 280, "minHeight": 420, "preferredAspect": 0.6 },
+    "modal": { "minWidth": 280, "minHeight": 360, "preferredAspect": 0.8 },
+    "ad": { "sizes": ["300x250", "320x480", "300x600", "728x90"], "excluded": [] }
+  },
+
+  "tuning": {
+    "sweepSpeedHz": { "min": 0.3, "default": 0.7, "max": 1.6 },
+    "zoneWidth": { "min": 0.08, "default": 0.2, "max": 0.4 },
+    "zoneShrink": { "min": 0.75, "default": 0.9, "max": 1.0 },
+    "lives": { "min": 1, "default": 3, "max": 5 },
+    "durationSec": { "min": 20, "default": 40, "max": 60 }
+  },
+
+  "scoring": {
+    "maxRealistic": 800,
+    "rewardTierHint": [0.3, 0.65]
+  },
+
+  "cost": { "buildMs": 180, "runtimeKb": 22 }
+}
