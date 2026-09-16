@@ -12,7 +12,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import type { Job, TemplateId } from "@/lib/engine/types";
-import { getCapability } from "@/lib/capabilities";
+import { getTemplatePickerMeta } from "@/lib/capabilities";
 
 const STAGE_LABELS: Partial<Record<Job["stage"], string>> = {
   queued: "Queued…",
@@ -186,7 +186,7 @@ function TemplatePicker({
 
       <div className="mt-8 grid grid-cols-1 gap-4 text-left sm:grid-cols-2">
         {eligible.map((result, i) => {
-          const cap = getCapability(result.template);
+          const meta = getTemplatePickerMeta(result.template);
           const isBest = i === 0;
           const isSelecting = selecting === result.template;
           const disabled = selecting !== null;
@@ -209,9 +209,9 @@ function TemplatePicker({
                 </span>
               )}
               <h2 className="font-display text-lg font-semibold tracking-tight text-foreground">
-                {cap?.name ?? result.template}
+                {meta.name}
               </h2>
-              <p className="mt-1.5 text-sm text-muted">{cap?.summary}</p>
+              <p className="mt-1.5 text-sm text-muted">{meta.summary}</p>
 
               <div className="mt-4 flex items-center justify-between">
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground">
