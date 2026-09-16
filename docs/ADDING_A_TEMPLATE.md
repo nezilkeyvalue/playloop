@@ -104,7 +104,16 @@ class MyTemplateGame implements GameModule {
   render(c: CanvasRenderingContext2D) {
     // draw against this.ctx.stage.width/height every frame; for any role
     // with no real asset, draw a generated fallback (shape/gradient/solid)
-    // per that role's declared `fallback` — never assume a sprite exists
+    // per that role's declared `fallback` — never assume a sprite exists.
+    //
+    // For any role that draws a real sprite, prefer
+    // lib/runtime/games/spriteRender.ts's drawAssetContain() (or the lower-
+    // level containFit/colorAdjustFilterString/createBlurredBackdrop it's
+    // built from) over a raw drawImage — it crops toward SubjectBounds and
+    // applies ColorAdjust for you, which is most of what makes a product
+    // read clearly instead of a stretched, padded sprite. Also draw
+    // `this.celebrations` (if you're using the Celebration primitive) last,
+    // after everything else, so it reads as the clear focal point.
   }
 
   teardown() {
@@ -134,6 +143,12 @@ Ground rules (see `CLAUDE.md`'s hazards list for the *why*):
   `role.assets.length > 0 ? draw sprite : draw fallback`.
 - Colors come from `ctx.brand` (hex strings) — no hardcoded colors, this is
   what makes the same template look right for every brand.
+- Call `ctx.recordEngagement(assetId)` for every real product asset the
+  player succeeds against, and only those — never for hazards, decoys, or
+  generated-shape/synthesized fallbacks. This isn't optional polish: the
+  reward screen's recap gallery is built entirely from what each template
+  reports here, so skipping it means your template's reward screen shows no
+  products at all, silently, with no error to catch it.
 
 ## Step 4 — register the runtime module (`lib/runtime/mount.ts`)
 
@@ -177,7 +192,18 @@ for the temp-install pattern): mount your fixture via `/play/<id>` or
 `GamePreviewModal`, and click through idle → play → complete → reward for
 every role-fallback combination you care about (e.g. zero hazard assets,
 zero background asset) — `mount.ts` won't catch a fallback rendering bug,
-only a missing-role crash.
+only a missing-role crash. Actually succeed against a real product asset at
+least once (catch it/pop it/hit it/whatever your mechanic's win condition
+is) and confirm the reward screen's recap gallery shows it — a template
+that never calls `ctx.recordEngagement()` fails silently here (an empty
+gallery looks identical to "nothing was engaged," not an error), so this
+needs an actual look, not just a passing typecheck. Also watch the browser
+console for uncaught errors while the round transitions from play to
+reward — a template whose `render()` isn't defensive against state
+`teardown()` just cleared can throw there (see `CLAUDE.md`'s hazards list
+entry on `loop.ts`'s `running` check for the general fix; this only bites a
+template that keeps render()-time state your `teardown()` clears down to
+something `render()` still reads unconditionally).
 
 Nothing in `matcher.ts`, `brain.ts`, `compose.ts`, or the editor needs
 changes for a well-behaved template. If you find yourself wanting to edit

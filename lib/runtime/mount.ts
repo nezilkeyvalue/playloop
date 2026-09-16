@@ -174,6 +174,7 @@ function mountGame(
   let loop: LoopHandle | null = null;
   let gameModule: GameModule | null = null;
   let score = 0;
+  let engagedAssetIds = new Set<string>();
   let activeSessionToken: Promise<string | null> | null = null;
   let destroyed = false;
 
@@ -182,6 +183,9 @@ function mountGame(
   }
   function getScore() {
     return score;
+  }
+  function recordEngagement(assetId: string) {
+    engagedAssetIds.add(assetId);
   }
   function complete() {
     if (destroyed) return;
@@ -199,6 +203,7 @@ function mountGame(
     random: Math.random,
     addScore,
     getScore,
+    recordEngagement,
     complete,
   };
 
@@ -224,6 +229,7 @@ function mountGame(
 
   function startPlay(isReplay: boolean) {
     score = 0;
+    engagedAssetIds = new Set();
     setOverlay(overlay, null); // hide chrome; the game renders on canvas
     activeSessionToken = beginSession(slug);
     trackEvent(isReplay ? "replay" : "start", { slug });
@@ -257,13 +263,17 @@ function mountGame(
     gameModule?.teardown();
 
     const finalScore = score;
+    const engagedAssets = Array.from(engagedAssetIds)
+      .map((id) => loaded.get(id))
+      .filter((a): a is LoadedAsset => Boolean(a?.image))
+      .map((a) => ({ spriteUrl: a.image!.src, name: a.data?.name }));
     const sessionToken = activeSessionToken ? await activeSessionToken : null;
     const server = await endSession(sessionToken, finalScore);
     const resolved = resolveReward(finalScore, spec.rewards);
 
     setOverlay(
       overlay,
-      renderRewardState(brand, copy, resolved.tier, server.code, () => {
+      renderRewardState(brand, copy, resolved.tier, server.code, engagedAssets, () => {
         void submitLead(sessionToken);
       }, () => {
         startPlay(true);
@@ -467,8 +477,14 @@ export function renderStaticScreen(
     return shell;
   }
 
-  const { tier } = resolveReward(exampleScore, spec.rewards);
-  const content = renderRewardState(brand, copy, tier, null, () => {}, () => {});
+  const { tier } = resolveReward(STATIC_PREVIEW_EXAMPLE_SCORE, spec.rewards);
+  // No live session to draw a real engagement list from here — a
+  // representative sample of the spec's own assets stands in, same spirit
+  // as STATIC_PREVIEW_EXAMPLE_SCORE faking a score for this same preview.
+  const engagedSample = spec.assets
+    .slice(0, 4)
+    .map((a) => ({ spriteUrl: a.spriteUrl, name: a.data?.name }));
+  const content = renderRewardState(brand, copy, tier, null, engagedSample, () => {}, () => {});
   const scoreEl = content.querySelector<HTMLElement>("[data-role='score-value']");
   if (scoreEl) scoreEl.textContent = String(exampleScore);
   const emailField = content.querySelector<HTMLInputElement>("[data-role='email-input']");
@@ -547,11 +563,96 @@ function renderIdleState(brand: GameSpec["brand"], copy: GameSpec["copy"], onSta
   return wrap;
 }
 
+/** One product the player engaged with this round — plain data (a URL
+ * string, not a live LoadedAsset/HTMLImageElement) so the exact same
+ * gallery renderer works both from a real session (mount.ts's own
+ * engagedAssetIds, mapped through `loaded`) and from renderStaticScreen's
+ * editor preview, which only ever has ProcessedAsset.spriteUrl strings and
+ * no live session to draw a real list from. */
+interface EngagedAsset {
+  spriteUrl: string;
+  name?: string;
+}
+
+const ENGAGED_GALLERY_MAX = 6;
+
+/** A row of small thumbnails of the products the player actually engaged
+ * with this round — the highest-attention moment of the whole session
+ * (the reward screen) previously showed zero product imagery. Returns null
+ * (render nothing) when `engaged` is empty, matching the "skip silently"
+ * convention already used elsewhere for missing per-asset data — an empty
+ * gallery block would read as a bug, not a deliberate absence. */
+const ENGAGED_THUMB_SIZE = 52; // px — the caption column below is the same width
+
+function renderEngagedGallery(engaged: EngagedAsset[], brand: GameSpec["brand"]): HTMLElement | null {
+  if (engaged.length === 0) return null;
+
+  const row = document.createElement("div");
+  row.style.display = "flex";
+  row.style.gap = "10px";
+  row.style.margin = "4px 0";
+  row.style.overflowX = "auto";
+  row.style.maxWidth = "100%";
+  row.style.justifyContent = "center";
+  // Captions can wrap to two lines and thumbnails don't, so items are
+  // naturally uneven heights — align to the top rather than stretching or
+  // centering, which would otherwise misalign every image vertically.
+  row.style.alignItems = "flex-start";
+
+  for (const asset of engaged.slice(0, ENGAGED_GALLERY_MAX)) {
+    const item = document.createElement("div");
+    item.style.display = "flex";
+    item.style.flexDirection = "column";
+    item.style.alignItems = "center";
+    item.style.gap = "3px";
+    item.style.flex = "0 0 auto";
+    item.style.width = `${ENGAGED_THUMB_SIZE}px`;
+
+    const thumb = document.createElement("img");
+    thumb.src = asset.spriteUrl;
+    thumb.alt = asset.name ?? "";
+    thumb.style.width = `${ENGAGED_THUMB_SIZE}px`;
+    thumb.style.height = `${ENGAGED_THUMB_SIZE}px`;
+    thumb.style.objectFit = "contain";
+    thumb.style.borderRadius = "10px";
+    thumb.style.background = `${brand.foreground}11`;
+    item.appendChild(thumb);
+
+    // The name is the point (per the request: it needs to actually be
+    // readable, not hidden behind a hover-only `title`) — skipped
+    // entirely, not shown as a blank line, when there's no real name to
+    // show, matching the "skip silently" convention used elsewhere for
+    // missing per-asset data.
+    if (asset.name) {
+      const caption = document.createElement("span");
+      caption.textContent = asset.name;
+      caption.title = asset.name;
+      caption.style.fontSize = "10px";
+      caption.style.lineHeight = "1.25";
+      caption.style.textAlign = "center";
+      caption.style.color = brand.foreground;
+      caption.style.opacity = "0.85";
+      caption.style.width = "100%";
+      caption.style.display = "-webkit-box";
+      caption.style.setProperty("-webkit-line-clamp", "2");
+      caption.style.setProperty("-webkit-box-orient", "vertical");
+      caption.style.overflow = "hidden";
+      caption.style.wordBreak = "break-word";
+      item.appendChild(caption);
+    }
+
+    row.appendChild(item);
+  }
+
+  return row;
+}
+
 function renderRewardState(
   brand: GameSpec["brand"],
   copy: GameSpec["copy"],
   tier: GameSpec["rewards"][number],
   serverCode: string | null,
+  engaged: EngagedAsset[],
   onSubmitEmail: () => void,
   onReplay: () => void,
 ): HTMLElement {
@@ -582,6 +683,9 @@ function renderRewardState(
   tierLine.style.fontWeight = "600";
   tierLine.style.color = brand.accent;
   wrap.appendChild(tierLine);
+
+  const gallery = renderEngagedGallery(engaged, brand);
+  if (gallery) wrap.appendChild(gallery);
 
   const emailRow = document.createElement("div");
   emailRow.style.display = "flex";

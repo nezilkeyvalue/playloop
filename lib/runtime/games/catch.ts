@@ -21,6 +21,12 @@
 //   stageBackground — optional; brand gradient if unfilled
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
+import {
+  drawAssetContain,
+  updateCelebrations,
+  drawCelebration,
+  type Celebration,
+} from "@/lib/runtime/games/spriteRender";
 
 // Scoring constants. Chosen so maxRealisticScore() at the capability's
 // *default* tuning (spawnRateHz 1.2, durationSec 40, hazardRatio 0.2) lands
@@ -67,6 +73,7 @@ class CatchGame implements GameModule {
 
   private ctx!: RuntimeContext;
   private items: FallingItem[] = [];
+  private celebrations: Celebration[] = [];
   private basketX = 0;
   private spawnTimer = 0;
   private elapsed = 0;
@@ -80,6 +87,7 @@ class CatchGame implements GameModule {
   init(ctx: RuntimeContext): void {
     this.ctx = ctx;
     this.items = [];
+    this.celebrations = [];
     this.spawnTimer = 0;
     this.elapsed = 0;
     this.ended = false;
@@ -129,8 +137,15 @@ class CatchGame implements GameModule {
         Math.abs(item.x - this.basketX) <= halfBasket + item.size / 2;
 
       if (caught) {
-        if (item.kind === "collectible") this.ctx.addScore(POINTS_PER_CATCH);
-        else this.ctx.addScore(-HAZARD_PENALTY);
+        if (item.kind === "collectible") {
+          this.ctx.addScore(POINTS_PER_CATCH);
+          if (item.asset?.image) {
+            this.ctx.recordEngagement(item.asset.id);
+            this.celebrations.push({ asset: item.asset, x: item.x, y: item.y, t: 0 });
+          }
+        } else {
+          this.ctx.addScore(-HAZARD_PENALTY);
+        }
         continue; // consumed
       }
 
@@ -140,6 +155,7 @@ class CatchGame implements GameModule {
       // else: fell past the bottom unmissed — no penalty for a missed collectible
     }
     this.items = survivors;
+    this.celebrations = updateCelebrations(this.celebrations, dt);
 
     const durationSec = tuning.durationSec ?? 40;
     if (this.elapsed >= durationSec) {
@@ -170,10 +186,17 @@ class CatchGame implements GameModule {
 
     // Basket
     this.drawBasket(c);
+
+    // Celebrations (a brief grow-and-fade on the just-caught product) draw
+    // last so they read as the clear focal point.
+    for (const celebration of this.celebrations) {
+      drawCelebration(c, celebration, ITEM_SIZE * 1.6, brand.accent);
+    }
   }
 
   teardown(): void {
     this.items = [];
+    this.celebrations = [];
   }
 
   maxRealisticScore(tuning: Record<string, number>): number {
@@ -202,7 +225,7 @@ class CatchGame implements GameModule {
     const half = item.size / 2;
 
     if (item.asset?.image) {
-      c.drawImage(item.asset.image, item.x - half, item.y - half, item.size, item.size);
+      drawAssetContain(c, item.asset, item.x - half, item.y - half, item.size, item.size);
       return;
     }
 
@@ -227,7 +250,7 @@ class CatchGame implements GameModule {
     const y = stage.height - BASKET_HEIGHT - 8;
 
     if (this.catcherAsset?.image) {
-      c.drawImage(this.catcherAsset.image, x, y, BASKET_WIDTH, BASKET_HEIGHT);
+      drawAssetContain(c, this.catcherAsset, x, y, BASKET_WIDTH, BASKET_HEIGHT);
       return;
     }
 

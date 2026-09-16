@@ -28,6 +28,12 @@
 //   stageBackground — optional; brand gradient if unfilled
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
+import {
+  drawAssetContain,
+  updateCelebrations,
+  drawCelebration,
+  type Celebration,
+} from "@/lib/runtime/games/spriteRender";
 
 // Scoring constants. Chosen so maxRealisticScore() at the capability's
 // *default* tuning (sweepSpeedHz 0.7, zoneWidth 0.2, zoneShrink 0.9,
@@ -89,6 +95,7 @@ class SweetSpotGame implements GameModule {
   private hits = 0;
   private streak = 0;
   private feedback: { kind: "hit" | "miss"; t: number; at: number } | null = null;
+  private celebrations: Celebration[] = [];
   private prizePool: LoadedAsset[] = [];
   private prizeIndex = 0;
   private ended = false;
@@ -104,6 +111,7 @@ class SweetSpotGame implements GameModule {
     this.hits = 0;
     this.streak = 0;
     this.feedback = null;
+    this.celebrations = [];
     this.ended = false;
     this.prizePool = ctx.roles.prize?.assets ?? [];
     this.prizeIndex = 0;
@@ -123,6 +131,7 @@ class SweetSpotGame implements GameModule {
     const { input, tuning } = this.ctx;
 
     this.elapsed += dt;
+    this.celebrations = updateCelebrations(this.celebrations, dt);
     if (this.feedback) {
       this.feedback.t -= dt;
       if (this.feedback.t <= 0) this.feedback = null;
@@ -157,6 +166,21 @@ class SweetSpotGame implements GameModule {
       this.hits += 1;
       this.streak += 1;
       this.feedback = { kind: "hit", t: FEEDBACK_SEC, at: this.markerPos };
+
+      // The moment of success: the prize on screen is what the player just
+      // won, so that is the asset worth recording and celebrating. Guard on
+      // a real loaded image — never record the logo/accent-medallion
+      // fallback, which is not a product (see CLAUDE.md's hazards list).
+      const won = this.prizePool[this.prizeIndex];
+      if (won?.image) {
+        this.ctx.recordEngagement(won.id);
+        this.celebrations.push({
+          asset: won,
+          x: this.ctx.stage.width / 2,
+          y: this.ctx.stage.height * 0.38,
+          t: 0,
+        });
+      }
 
       // Ramp: tighter zone, faster sweep, new target position.
       this.zoneWidth = Math.max(
@@ -220,6 +244,11 @@ class SweetSpotGame implements GameModule {
       c.fill();
       c.globalAlpha = 1;
     }
+
+    // Last, so the thing the player just won is the clear focal point.
+    for (const cel of this.celebrations) {
+      drawCelebration(c, cel, prizeSize * 0.7, brand.accent);
+    }
   }
 
   private renderBackground(c: CanvasRenderingContext2D, w: number, h: number): void {
@@ -269,10 +298,9 @@ class SweetSpotGame implements GameModule {
     c.fillRect(x, y, size, size);
 
     if (asset?.image) {
-      const scale = Math.min(size / asset.width, size / asset.height);
-      const dw = asset.width * scale;
-      const dh = asset.height * scale;
-      c.drawImage(asset.image, x + (size - dw) / 2, y + (size - dh) / 2, dw, dh);
+      // Shared helper, not a local contain-fit: it honours subjectBounds and
+      // colorAdjust, which a hand-rolled drawImage silently ignores.
+      drawAssetContain(c, asset, x, y, size, size);
     } else {
       // "logo" fallback had nothing to give — a plain accent medallion.
       c.fillStyle = brand.accent;
@@ -367,6 +395,7 @@ class SweetSpotGame implements GameModule {
 
   teardown(): void {
     this.prizePool = [];
+    this.celebrations = [];
     this.feedback = null;
   }
 
