@@ -62,6 +62,7 @@ export function extractJsonLd(html: string, pageUrl: string): JsonLdExtractResul
         priceMinor: parsePriceMinor(offer?.price),
         category: product.category,
         sku: product.sku,
+        subjectTypeHint: "product",
       }),
     );
   }

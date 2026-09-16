@@ -20,6 +20,7 @@
 //   stageBackground — optional; brand gradient if unfilled
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
+import { drawAssetContain } from "@/lib/runtime/games/spriteRender";
 
 // Scoring constants. Chosen so maxRealisticScore() at the capability's
 // *default* tuning (popRateHz 1.1, durationSec 35, hazardRatio 0.2) lands
@@ -297,7 +298,7 @@ class WhackGame implements GameModule {
     const cy = hole.cy - holeRadius * 0.15;
 
     if (hole.occupant.asset?.image) {
-      c.drawImage(hole.occupant.asset.image, hole.cx - half, cy - half, size, size);
+      drawAssetContain(c, hole.occupant.asset, hole.cx - half, cy - half, size, size);
       return;
     }
 

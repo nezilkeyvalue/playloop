@@ -19,6 +19,7 @@
 // only applies the reject/flag thresholds against that already-computed
 // asset.content.textDensity.
 
+import { isCatalogueProductAsset } from "@/lib/engine/catalogue";
 import type { RawAsset } from "@/lib/engine/types";
 import { contrastRatioFromLuminance, luminanceOfHex } from "./palette";
 import { hammingDistance } from "./cutout";
@@ -66,6 +67,7 @@ const MAX_ASPECT_RATIO = 3.0; // "beyond ~3:1 either way"
 const MIN_UNIFORMITY_FOR_ISOLATION = 0.6; // below this the cutout is unreliable even if it "succeeded"
 const DUPLICATE_HAMMING_THRESHOLD = 6; // "within Hamming distance 6" — i.e. distance < 6 is a duplicate
 const HIGH_TEXT_DENSITY = 0.3; // hard reject — see estimateTextDensity()
+const CATALOGUE_TEXT_DENSITY_HARD = 0.38; // lifestyle thumbnails can false-positive above 0.30
 const POSSIBLE_TEXT_DENSITY = HIGH_TEXT_DENSITY / 2; // soft flag only
 const MIN_STAGE_CONTRAST = 1.6; // soft luminance-distance signal, not full WCAG (that's palette.ts's job for copy text)
 
@@ -115,7 +117,9 @@ export function runQualityGate(assets: RawAsset[], options: QualityGateOptions =
     }
 
     const textDensity = asset.content.textDensity;
-    if (textDensity > HIGH_TEXT_DENSITY) {
+    const catalogueProduct = isCatalogueProductAsset(asset);
+    const textHardThreshold = catalogueProduct ? CATALOGUE_TEXT_DENSITY_HARD : HIGH_TEXT_DENSITY;
+    if (textDensity > textHardThreshold) {
       reasons.push(`estimated text density ${textDensity.toFixed(2)} looks like a burned-in badge/label`);
     } else if (textDensity > POSSIBLE_TEXT_DENSITY) {
       flags.push("possible_text_overlay");

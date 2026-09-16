@@ -151,7 +151,9 @@ function TemplatePicker({
   error: string | null;
   onChoose: (template: TemplateId) => void;
 }) {
-  const eligible = match.results.filter((r) => r.eligible);
+  const eligible = match.results.filter((r) => r.eligible).sort((a, b) => b.score - a.score);
+  const ineligible = match.results.filter((r) => !r.eligible);
+  const [showNearMiss, setShowNearMiss] = useState(false);
 
   if (eligible.length === 0) {
     return (
@@ -225,6 +227,38 @@ function TemplatePicker({
           );
         })}
       </div>
+
+      {ineligible.length > 0 && (
+        <div className="mt-10 text-left">
+          <button
+            type="button"
+            onClick={() => setShowNearMiss((v) => !v)}
+            className="text-sm font-medium text-muted underline underline-offset-4 hover:text-foreground"
+          >
+            {showNearMiss ? "Hide" : "Show"} games that need more from your site ({ineligible.length})
+          </button>
+          {showNearMiss && (
+            <ul className="mt-4 space-y-3">
+              {ineligible.map((result) => {
+                const meta = getTemplatePickerMeta(result.template);
+                const gapSummary =
+                  result.gaps?.[0]?.reason ??
+                  result.warnings[0] ??
+                  "Not enough matching product images on this page.";
+                return (
+                  <li
+                    key={result.template}
+                    className="rounded-xl border border-border bg-card/50 px-4 py-3 text-left"
+                  >
+                    <p className="font-medium text-foreground">{meta.name}</p>
+                    <p className="mt-1 text-sm text-muted">{gapSummary}</p>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
 
       <a href="/build/manual" className="mt-8 inline-block text-sm text-muted underline underline-offset-4">
         None of these? Build it manually instead

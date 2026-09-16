@@ -79,6 +79,7 @@ export async function extractShopify(origin: string): Promise<ShopifyExtractResu
         priceMinor: parsePriceMinor(firstVariant?.price),
         category: product.product_type || undefined,
         sku: firstVariant?.sku,
+        subjectTypeHint: "product",
       }),
     );
   }

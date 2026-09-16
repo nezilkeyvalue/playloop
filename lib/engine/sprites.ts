@@ -11,6 +11,7 @@
 import sharp from "sharp";
 import { safeFetchImage } from "@/lib/engine/safeFetch";
 import { uploadSprite } from "@/lib/storage";
+import { isCatalogueProductAsset } from "@/lib/engine/catalogue";
 import type { RawAsset, SubjectBounds, SubjectType } from "@/lib/engine/types";
 import { cutout, computePhash, MIN_UNIFORMITY_FOR_ISOLATION } from "./cutout";
 import { extractColours } from "./palette";
@@ -153,10 +154,13 @@ async function processOne(asset: RawAsset): Promise<ProcessOneResult> {
     const uploadResult = await uploadSprite(finalSprite, "image/png");
     const aspect = originalHeight > 0 ? originalWidth / originalHeight : 1;
 
-    const subjectType: SubjectType =
+    let subjectType: SubjectType =
       asset.content.subjectType !== "unknown"
         ? asset.content.subjectType // e.g. "logo", set structurally by the logo ladder — trust it
         : guessSubjectType({ isolatable: cutoutResult.isolatable, coverage, aspect });
+    if (subjectType === "unknown" && isCatalogueProductAsset(asset)) {
+      subjectType = "product";
+    }
 
     const updated: RawAsset = {
       ...asset,
