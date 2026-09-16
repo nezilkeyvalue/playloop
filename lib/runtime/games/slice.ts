@@ -123,7 +123,7 @@ class SliceGame implements GameModule {
 
   update(dt: number): void {
     if (this.ended) return;
-    const { tuning, input, stage, random } = this.ctx;
+    const { tuning, input, stage } = this.ctx;
 
     this.elapsed += dt;
 

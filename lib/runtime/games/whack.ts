@@ -114,7 +114,7 @@ class WhackGame implements GameModule {
 
   update(dt: number): void {
     if (this.ended) return;
-    const { tuning, input, random } = this.ctx;
+    const { tuning, input } = this.ctx;
 
     this.elapsed += dt;
 
