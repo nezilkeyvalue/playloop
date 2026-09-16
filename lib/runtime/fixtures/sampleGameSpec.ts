@@ -407,6 +407,69 @@ export const simonGameSpec: GameSpec = {
 };
 
 // ---------------------------------------------------------------------------
+// Slice — "Squeeze Co."
+// ---------------------------------------------------------------------------
+
+const sliceCollectibles: ProcessedAsset[] = [
+  asset("juice-1", "#E8A93E", "🍊", { name: "Cold-Pressed Orange", priceMinor: 600 }),
+  asset("juice-2", "#6FAE4A", "🥝", { name: "Kiwi Lime Blend", priceMinor: 700 }),
+  asset("juice-3", "#D6456B", "🍓", { name: "Strawberry Basil", priceMinor: 650 }),
+  asset("juice-4", "#E2C93E", "🍍", { name: "Pineapple Ginger", priceMinor: 700 }),
+  asset("juice-5", "#8A5AA8", "🫐", { name: "Blueberry Beet", priceMinor: 750 }),
+  asset("juice-6", "#4FA88A", "🥬", { name: "Green Detox", priceMinor: 680 }),
+];
+
+const sliceHazards: ProcessedAsset[] = [asset("hazard-cup", "#5A5A5A", "🗑️", { name: "Empty Cup" })];
+
+export const sliceGameSpec: GameSpec = {
+  id: "demo-slice",
+  version: 1,
+  template: "slice",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Squeeze Co.",
+    accent: "#E8A93E",
+    secondaryAccent: "#5A5A5A",
+    background: "#FBFAF3",
+    foreground: "#233421",
+    fontFamily: "Poppins, system-ui, sans-serif",
+    palette: ["#E8A93E", "#6FAE4A", "#D6456B", "#FBFAF3"],
+  },
+  copy: {
+    headline: "Slice into savings",
+    subhead: "Swipe across the bottles before they drop. Leave the empty cups alone.",
+    ctaStart: "Start slicing",
+    ctaReplay: "Slice again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: [...sliceCollectibles, ...sliceHazards],
+  roles: {
+    collectible: sliceCollectibles.map((a) => a.id),
+    hazard: sliceHazards.map((a) => a.id),
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "SLICE10" },
+    { minScore: 400, label: "15% off", percentOff: 15, code: "SLICE15" },
+    { minScore: 800, label: "20% off", percentOff: 20, code: "SLICE20" },
+  ],
+  durationSeconds: 35,
+  tuning: {
+    launchRateHz: 1.1,
+    launchSpeed: 650,
+    gravity: 1400,
+    durationSec: 35,
+    hazardRatio: 0.18,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Showcase skins — the same two templates restyled for different brands.
 // Used only by the marketing homepage slideshow to prove the product works
 // across verticals; real GameSpecs mounted through the real runtime, not
@@ -505,6 +568,7 @@ export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-chomp": chompGameSpec,
   "demo-whack": whackGameSpec,
   "demo-simon": simonGameSpec,
+  "demo-slice": sliceGameSpec,
   "demo-catch-lumen": skincareGameSpec,
   "demo-guess-price-kicks": sneakerGameSpec,
 };

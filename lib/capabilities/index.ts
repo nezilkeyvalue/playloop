@@ -14,6 +14,7 @@ import chainPopCapability from "./chain_pop.json";
 import chompCapability from "./chomp.json";
 import whackCapability from "./whack.json";
 import simonCapability from "./simon.json";
+import sliceCapability from "./slice.json";
 
 const roleRequirementsSchema = z.object({
   subjectTypeIn: z.array(z.string()).optional(),
@@ -53,7 +54,7 @@ const placementConstraintSchema = z.object({
 
 const gameCapabilitySchema = z.object({
   version: z.literal(1),
-  id: z.enum(["catch", "guess_price", "chain_pop", "chomp", "whack", "simon", "match", "stack"]),
+  id: z.enum(["catch", "guess_price", "chain_pop", "chomp", "whack", "simon", "slice", "match", "stack"]),
   name: z.string(),
   summary: z.string(),
   roles: z.array(capabilityRoleSchema).min(1),
@@ -87,12 +88,13 @@ const registry: Record<string, GameCapability> = {
   chomp: validate(chompCapability, "chomp.json"),
   whack: validate(whackCapability, "whack.json"),
   simon: validate(simonCapability, "simon.json"),
+  slice: validate(sliceCapability, "slice.json"),
 };
 
 /** All templates currently implemented (catch, guess_price, chain_pop,
- * chomp, whack, simon). Post-MVP ids (match, stack) are reserved in the
- * type system but intentionally absent here — an absent capability makes a
- * template automatically ineligible everywhere. */
+ * chomp, whack, simon, slice). Post-MVP ids (match, stack) are reserved in
+ * the type system but intentionally absent here — an absent capability
+ * makes a template automatically ineligible everywhere. */
 export function listCapabilities(): GameCapability[] {
   return Object.values(registry);
 }
