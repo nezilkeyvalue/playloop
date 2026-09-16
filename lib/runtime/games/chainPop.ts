@@ -27,6 +27,14 @@
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
 import type { BrandKit } from "@/lib/engine/types";
+import {
+  containFit,
+  colorAdjustFilterString,
+  createBlurredBackdrop,
+  updateCelebrations,
+  drawCelebration,
+  type Celebration,
+} from "@/lib/runtime/games/spriteRender";
 
 // Scoring constants, chosen so maxRealisticScore() at the capability's
 // default tuning (durationSec 45, minChainLength 3) lands close to
@@ -47,17 +55,6 @@ const DEFAULT_KIND_COUNT = 5;
 const GRID_PADDING = 14;
 const CELL_GUTTER = 4;
 const TILE_CORNER_RADIUS_FACTOR = 0.26; // fraction of tile size — deliberately rounded, "sticker" look
-// Blurred backdrop for "photographic" + "blurFill" tiles (see Kind.blurredBackdrop) —
-// pre-rendered once per kind at a fixed resolution, not full sprite
-// resolution, since it's shown blurred; keeps it cheap regardless of the
-// final on-screen tile size. Zoomed in specifically to crop OUT the
-// sprite's own transparent letterbox margin (every sprite is pipeline-
-// normalized to a square canvas via "contain" fit — see sprites.ts's
-// SPRITE_SIZE resize) — this cropping only ever affects the blurred decor
-// layer, never the sharp foreground image, so no real content is lost.
-const BLUR_BACKDROP_RESOLUTION = 96;
-const BLUR_BACKDROP_ZOOM = 1.3;
-const BLUR_BACKDROP_RADIUS_PX = 12;
 const FALL_EASE_RATE = 14; // higher = snappier settle
 const SQUASH_DURATION = 0.16;
 const POP_DURATION = 0.22;
@@ -146,6 +143,7 @@ class ChainPopGame implements GameModule {
   private grid: Cell[][] = [];
   private particles: Particle[] = [];
   private floatingTexts: FloatingText[] = [];
+  private celebrations: Celebration[] = [];
 
   private cellSize = 40;
   private originX = 0;
@@ -165,6 +163,7 @@ class ChainPopGame implements GameModule {
     this.ended = false;
     this.particles = [];
     this.floatingTexts = [];
+    this.celebrations = [];
     this.hasStageBackgroundFallback = !ctx.roles.stageBackground?.assets.length;
 
     this.kinds = buildKinds(ctx.roles.tile?.assets ?? [], ctx.brand, ctx.random);
@@ -253,6 +252,7 @@ class ChainPopGame implements GameModule {
       t.life -= dt;
       return t.life > 0;
     });
+    this.celebrations = updateCelebrations(this.celebrations, dt);
 
     if (this.elapsed >= this.durationSec) {
       this.ended = true;
@@ -320,12 +320,17 @@ class ChainPopGame implements GameModule {
       c.fillText(t.text, t.x, t.y - (1 - lifeRatio) * FLOAT_RISE_PX);
       c.restore();
     }
+
+    for (const celebration of this.celebrations) {
+      drawCelebration(c, celebration, this.cellSize * 1.6, brand.accent);
+    }
   }
 
   teardown(): void {
     this.grid = [];
     this.particles = [];
     this.floatingTexts = [];
+    this.celebrations = [];
   }
 
   maxRealisticScore(tuning: Record<string, number>): number {
@@ -429,6 +434,15 @@ class ChainPopGame implements GameModule {
 
     const points = pointsForChain(group.length, this.minChainLength);
     this.ctx.addScore(points);
+
+    // Only a kind backed by a real product photo is worth celebrating/
+    // recording — the synthesized brand-gem kinds padding out MIN_KINDS
+    // have nothing real behind them to show or recall.
+    if (kind?.asset?.image) {
+      this.ctx.recordEngagement(kind.asset.id);
+      this.celebrations.push({ asset: kind.asset, x: cx, y: cy, t: 0 });
+    }
+
     this.floatingTexts.push({
       x: cx,
       y: cy,
@@ -546,6 +560,7 @@ class ChainPopGame implements GameModule {
 
     if (kind.asset?.image) {
       const inset = size * 0.1;
+      const boxSize = size - inset * 2;
       c.save();
       roundedRect(c, 0, 0, size, size, radius);
       c.clip();
@@ -556,10 +571,25 @@ class ChainPopGame implements GameModule {
         // (pre-rendered once in buildKinds, not re-blurred every frame).
         c.drawImage(kind.blurredBackdrop, 0, 0, size, size);
       }
-      // The full sprite, always — "contain" scaling only (fit entirely
-      // within the inset box, preserving aspect), never a source crop, so
-      // no real content is ever cut off regardless of treatment.
-      c.drawImage(kind.asset.image, inset, inset, size - inset * 2, size - inset * 2);
+      // Smart zoom toward the real subject (SubjectBounds — see
+      // lib/engine/types.ts) rather than always drawing the whole square
+      // sprite: a product that's small/off-centre in its own source photo
+      // otherwise renders small/off-centre here too. Still "contain"
+      // scaling, still never a source crop *into* the subject — bounds
+      // are asserted safe by construction (sprites.ts's exact trim-derived
+      // rect, or brain.ts's validated, clamped AI estimate) — falls back
+      // to the whole image when no bounds are known (no AI, no clean
+      // cutout to trim), identical to the pre-subjectBounds behaviour.
+      const img = kind.asset.image;
+      const bounds = kind.asset.subjectBounds;
+      const sx = bounds ? bounds.x * img.naturalWidth : 0;
+      const sy = bounds ? bounds.y * img.naturalHeight : 0;
+      const sw = bounds ? bounds.width * img.naturalWidth : img.naturalWidth;
+      const sh = bounds ? bounds.height * img.naturalHeight : img.naturalHeight;
+      const fit = containFit(sw, sh, boxSize, boxSize);
+      c.filter = colorAdjustFilterString(kind.asset.colorAdjust);
+      c.drawImage(img, sx, sy, sw, sh, inset + fit.x, inset + fit.y, fit.w, fit.h);
+      c.filter = "none";
       c.restore();
     } else {
       c.fillStyle = kind.color;
@@ -603,34 +633,11 @@ function buildKinds(tileAssets: LoadedAsset[], brand: BrandKit, random: () => nu
       color: colors[i % colors.length] ?? brand.accent,
       blurredBackdrop:
         asset?.image && asset.presentation === "photographic" && asset.backgroundTreatment === "blurFill"
-          ? createBlurredBackdrop(asset.image)
+          ? createBlurredBackdrop(asset.image, asset.colorAdjust)
           : null,
     });
   }
   return kinds;
-}
-
-/** Pre-renders a blurred, zoomed-in copy of `image` onto a small offscreen
- * canvas — once per kind (see buildKinds), not per frame: applying a CSS
- * blur filter live in drawCell for every tile every frame (up to
- * MAX_KINDS distinct blurs, each potentially drawn many times across the
- * board) would be needless per-frame cost for a result that never
- * changes. Returns null in non-DOM environments (SSR) or if 2D context
- * creation fails — callers already treat a null backdrop as "no blur
- * decoration", never a hard failure. */
-function createBlurredBackdrop(image: HTMLImageElement): HTMLCanvasElement | null {
-  if (typeof document === "undefined") return null;
-  const canvas = document.createElement("canvas");
-  canvas.width = BLUR_BACKDROP_RESOLUTION;
-  canvas.height = BLUR_BACKDROP_RESOLUTION;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
-
-  ctx.filter = `blur(${BLUR_BACKDROP_RADIUS_PX}px)`;
-  const d = BLUR_BACKDROP_RESOLUTION * BLUR_BACKDROP_ZOOM;
-  const offset = (BLUR_BACKDROP_RESOLUTION - d) / 2;
-  ctx.drawImage(image, offset, offset, d, d);
-  return canvas;
 }
 
 function buildPaletteColors(brand: BrandKit, count: number, random: () => number): string[] {

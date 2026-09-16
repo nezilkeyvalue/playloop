@@ -34,7 +34,7 @@ export default function GamesListPage() {
         <h1 className="font-display text-2xl font-semibold tracking-tight">My games</h1>
         <Link
           href="/build"
-          className="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white transition active:scale-[0.98]"
+          className="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition active:scale-[0.98]"
         >
           New game
         </Link>

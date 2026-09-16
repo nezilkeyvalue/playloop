@@ -1,0 +1,128 @@
+// lib/engine/extract/render.ts
+//
+// Ladder step 6 (build spec §7, extended): a last-resort fallback for sites
+// whose product/asset markup only exists after client-side JS runs — a
+// plain safeFetch() gets back an unrendered CSR shell (e.g. a bare
+// `<div id="root">` with everything injected by a bundle afterward), so
+// jsonld.ts/opengraph.ts/dom.ts have nothing to find, not because the site
+// is blocking us, just because nothing is server-rendered. This launches a
+// real, honestly-identified browser, waits for it to settle, and hands the
+// *rendered* HTML back through the same downstream extractors.
+//
+// Deliberately does NOT try to look more human than it actually is: no
+// navigator.webdriver masking, no fingerprint spoofing, no custom
+// User-Agent override — Playwright's default is simply whatever the real
+// browser binary honestly reports itself as. A site whose bot-detection
+// also catches automated browsers (the same category as uniqlo.com's
+// User-Agent block, just a different signal) degrades the exact same way:
+// an empty/thin render, not a workaround. See CLAUDE.md's hazards list for
+// why that line exists — it applies here unchanged.
+//
+// Only ever invoked from extract/index.ts when the cheap ladder already
+// came up short AND the fetched HTML looks like an unrendered shell (see
+// looksLikeUnrenderedShell below) — this is slow (a real page load + JS
+// execution) and heavy (spawns a full Chromium process), never the default
+// path for every site.
+
+import type { Browser } from "playwright-core";
+import { assertSafeUrl, isUrlAllowedByRobots } from "@/lib/engine/safeFetch";
+
+const NAV_TIMEOUT_MS = 9000;
+// Guards against a runaway/infinite page (e.g. a live-updating feed) —
+// page.content() returning something absurdly large isn't useful markup,
+// it's a resource leak waiting to happen downstream in cheerio.
+const MAX_RENDER_BYTES = 5 * 1024 * 1024;
+
+export interface RenderResult {
+  html: string;
+  finalUrl: string;
+}
+
+async function launchBrowser(): Promise<Browser> {
+  const { chromium } = await import("playwright-core");
+  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  if (isServerless) {
+    // @sparticuz/chromium ships a Chromium binary built for AWS Lambda /
+    // Vercel's serverless function environment — playwright-core's own
+    // bundled browser download doesn't fit that environment at all.
+    const sparticuzChromium = (await import("@sparticuz/chromium")).default;
+    return chromium.launch({
+      args: sparticuzChromium.args,
+      executablePath: await sparticuzChromium.executablePath(),
+      headless: true,
+    });
+  }
+  // Local dev: a real installed Chrome — same `channel: "chrome"` pattern
+  // CLAUDE.md documents for the Playwright UI-verification workflow.
+  return chromium.launch({ headless: true, channel: "chrome" });
+}
+
+/** Renders `url` in a real browser and returns the settled HTML, or null on
+ * any failure (timeout, blocked, browser unavailable) — this step must
+ * degrade exactly like every other ladder step in extract/index.ts, never
+ * throw the whole generation over. */
+export async function renderWithBrowser(url: string): Promise<RenderResult | null> {
+  try {
+    await assertSafeUrl(url);
+    if (!(await isUrlAllowedByRobots(url))) return null;
+  } catch {
+    return null;
+  }
+
+  let browser: Browser | undefined;
+  try {
+    browser = await launchBrowser();
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    // A real browser can be redirected, or told by its own JS, to load
+    // absolutely anything — the single check above only covers the URL we
+    // started with. Every request this page makes (the navigation itself,
+    // any redirect hop, any sub-resource the page's JS fetches) gets the
+    // same private/loopback/link-local IP check safeFetch() applies to
+    // every hop of a plain fetch, so a rendered page can't be used to pivot
+    // this server into hitting an internal address.
+    await page.route("**/*", async (route) => {
+      try {
+        await assertSafeUrl(route.request().url());
+        await route.continue();
+      } catch {
+        await route.abort();
+      }
+    });
+
+    const response = await page.goto(url, { waitUntil: "networkidle", timeout: NAV_TIMEOUT_MS });
+    if (!response || !response.ok()) return null;
+
+    const html = await page.content();
+    if (html.length > MAX_RENDER_BYTES) return null;
+    return { html, finalUrl: page.url() };
+  } catch {
+    return null;
+  } finally {
+    await browser?.close().catch(() => {});
+  }
+}
+
+/** Cheap heuristic gate for the expensive step above: does this HTML look
+ * like an unrendered CSR shell, rather than a page that's simply sparse or
+ * one that's actively blocking us (which safeFetch already reports as a
+ * thrown fetch error upstream, not a 200 with thin content)? Strips
+ * script/style tags and measures what textual content and images are left
+ * in <body> — a real server-rendered page, even a sparse one, has
+ * meaningfully more than a bare mount point once scripts are stripped; a
+ * CSR shell is just the mount div and bundler tags. Not exact — just cheap
+ * enough to gate a step that costs several real seconds. */
+export function looksLikeUnrenderedShell(html: string): boolean {
+  const withoutScriptsAndStyles = html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "");
+  const bodyMatch = withoutScriptsAndStyles.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  const body = bodyMatch ? bodyMatch[1]! : withoutScriptsAndStyles;
+  const text = body
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const imgCount = (body.match(/<img\b/gi) ?? []).length;
+  return text.length < 200 && imgCount === 0;
+}

@@ -209,7 +209,12 @@ export default function ManualBuildPage() {
       const res = await fetch("/api/games", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: headline || "Untitled game", placement, spec }),
+        body: JSON.stringify({
+          name: headline || "Untitled game",
+          placement,
+          spec,
+          rightsConfirmed,
+        }),
       });
       if (!res.ok) throw new Error("Could not create the game.");
       const { id } = (await res.json()) as { id: string };
@@ -304,7 +309,7 @@ export default function ManualBuildPage() {
                 onClick={() => setTemplate(cap.id)}
                 className={`rounded-xl border p-4 text-left text-sm transition ${
                   (template ?? eligible[0]?.id) === cap.id
-                    ? "border-transparent bg-primary text-white"
+                    ? "border-transparent bg-primary text-primary-foreground"
                     : "border-border hover:border-primary/30 hover:bg-primary/[0.03]"
                 }`}
               >
@@ -392,7 +397,10 @@ export default function ManualBuildPage() {
             onChange={(e) => setRightsConfirmed(e.target.checked)}
             className="mt-0.5 accent-primary"
           />
-          <span>I have the rights to use these images in this game.</span>
+          <span>
+            I own these images, or have permission to use them, and give PlayLoop permission
+            to use them to build this game.
+          </span>
         </label>
       </section>
 
@@ -411,7 +419,7 @@ export default function ManualBuildPage() {
           type="button"
           disabled={!canSubmit}
           onClick={handleSubmit}
-          className="flex-1 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-40"
+          className="flex-1 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition active:scale-[0.98] disabled:opacity-40"
         >
           {submitting ? "Creating…" : "Create game"}
         </button>

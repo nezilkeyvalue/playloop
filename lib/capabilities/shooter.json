@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "id": "shooter",
+  "name": "Space Shooter",
+  "summary": "One product is shown as the target; the player pilots a ship and shoots only that product as it — and decoys — fall and wiggle past.",
+
+  "roles": [
+    {
+      "id": "product",
+      "purpose": "The pool one target and several decoys are drawn from",
+      "count": { "min": 0, "ideal": 8, "max": 12 },
+      "requires": {
+        "subjectTypeIn": ["product", "lifestyle", "unknown"],
+        "minShortEdge": 180,
+        "aspectRange": [0.5, 2.0],
+        "maxTextDensity": 0.2,
+        "maxSubjectCount": 2
+      },
+      "prefers": {
+        "distinctPhash": true,
+        "coverageRange": [0.2, 0.95],
+        "uniformScale": true
+      },
+      "transforms": ["trim", "padSquare", "resize"],
+      "fallback": "generatedShape",
+      "optional": true
+    },
+    {
+      "id": "ship",
+      "purpose": "The player-controlled ship",
+      "count": { "min": 0, "ideal": 1, "max": 1 },
+      "requires": { "subjectTypeIn": ["product", "logo", "shape"] },
+      "prefers": { "aspectRange": [0.8, 2.0] },
+      "transforms": ["cutout", "trim", "resize", "tint"],
+      "fallback": "generatedShape",
+      "optional": true
+    }
+  ],
+
+  "data": {
+    "required": [],
+    "optional": ["name"]
+  },
+
+  "placements": {
+    "section": { "minWidth": 320, "minHeight": 440, "preferredAspect": 0.75 },
+    "fullpage": { "minWidth": 320, "minHeight": 520, "preferredAspect": 0.6 },
+    "modal": { "minWidth": 300, "minHeight": 420, "preferredAspect": 0.75 },
+    "ad": { "sizes": ["300x250", "320x480", "300x600"], "excluded": ["728x90"] }
+  },
+
+  "tuning": {
+    "fireRateHz": { "min": 1, "default": 2.2, "max": 4 },
+    "spawnRateHz": { "min": 0.5, "default": 1.0, "max": 1.8 },
+    "fallSpeed": { "min": 70, "default": 120, "max": 220 },
+    "targetRatio": { "min": 0.25, "default": 0.4, "max": 0.6 },
+    "durationSec": { "min": 20, "default": 40, "max": 60 }
+  },
+
+  "scoring": {
+    "maxRealistic": 800,
+    "rewardTierHint": [0.3, 0.65]
+  },
+
+  "cost": { "buildMs": 300, "runtimeKb": 30 }
+}

@@ -20,6 +20,7 @@
 //   stageBackground — optional; brand gradient if unfilled.
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
+import { drawAssetContain } from "@/lib/runtime/games/spriteRender";
 
 // Scoring constants, chosen so maxRealisticScore() at the capability's
 // default tuning (roundCount 6) lands close to guess_price.json's
@@ -159,7 +160,7 @@ class GuessPriceGame implements GameModule {
     const hero = this.roundOrder[this.roundIndex];
     if (hero?.image) {
       const size = Math.min(stage.width, stage.height) * 0.5;
-      c.drawImage(hero.image, stage.width / 2 - size / 2, stage.height * 0.16, size, size);
+      drawAssetContain(c, hero, stage.width / 2 - size / 2, stage.height * 0.16, size, size);
     }
 
     this.drawSlider(c);
@@ -199,6 +200,11 @@ class GuessPriceGame implements GameModule {
     const roundSeconds = this.ctx.tuning.roundSeconds ?? 7;
     this.roundTimeLeft = roundSeconds;
     this.guessMinor = Math.round(this.sliderMax / 2);
+
+    // Every round shows a real hero regardless of guess accuracy, so
+    // showing it at all is a genuine engagement — not gated on scoring.
+    const hero = this.roundOrder[this.roundIndex];
+    if (hero) this.ctx.recordEngagement(hero.id);
   }
 
   private lockInRound(): void {

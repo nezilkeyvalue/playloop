@@ -49,6 +49,25 @@ Stages, in order (`JobStage` in `types.ts`):
    Manual mode skips this and builds an `AssetInventory` directly from
    already-uploaded URLs (`buildManualInventory` in `index.ts`).
 
+   Every step past the root document fetch is wrapped in `tryStep()` (a
+   step throws → treated as "found nothing", never crashes extraction) —
+   the root fetch itself is now wrapped the same way too, so a site that
+   refuses even that first request degrades to an empty `AssetInventory`
+   (which the matcher correctly scores as zero eligible templates, routing
+   the user to "no template fit — try manual mode") instead of throwing all
+   the way up to a raw job error. `safeFetch.ts` also remembers, for 5
+   minutes, any origin that just hard-failed (a timeout or connection
+   error — never a clean non-2xx response) so that every other fetch to
+   that same origin later in the same run — the Shopify probe, the sitemap
+   probe, the robots.txt lookup itself — fails immediately instead of each
+   independently re-discovering the same dead end. Confirmed live against
+   uniqlo.com (whose WAF silently drops any request identifying itself as
+   a bot): this took a single `extractFromUrl()` call from ~40s down to
+   ~11s — see CLAUDE.md's hazards list for the full story. This is
+   resilience against a site being unreachable, not a tool for evading a
+   site's deliberate bot-blocking — this codebase does not spoof a browser
+   identity to get past one.
+
 2. **`downloading` / `processing`** — `sprites.ts` (`processSprites`)
    downloads each candidate (capped at `MAX_CANDIDATE_IMAGES`, with the
    detected logo's asset id force-included via the `alwaysInclude` option so
@@ -109,7 +128,7 @@ persists `spec` as a new `GameRecord` (draft) and the job's `gameId` points
 to it — the exact same tail behavior the single-phase flow used to have,
 just triggered by the user's choice instead of automatically.
 
-## 3. Asset presentation — how an image's background should be framed
+## 3. Asset presentation and treatment — how an image should be framed, cropped, and colour-corrected
 
 Every `ProcessedAsset` (`lib/engine/types.ts`) carries two optional fields:
 `presentation: "isolated" | "photographic"`, and — only when
@@ -195,6 +214,82 @@ distinguishable from each other during play even as their backdrops vary.
 A template with a similar "frame a photo" role in the future should read
 these fields the same way rather than re-inventing a treatment — extend
 the enums additively if a genuinely different treatment is ever needed.
+
+**Smart zoom — `subjectBounds`, cropping toward the subject, never into
+it.** Even with `backgroundTreatment` solved, a product photographed small
+and centered against a huge plain backdrop (common — many brands shoot
+with generous margin for their own site's layout needs) still renders
+small and lost inside a tile: the *whole* image is correctly never
+cropped, but "whole image" can itself be mostly empty padding. A second
+optional `ProcessedAsset` field, `subjectBounds: { x, y, width, height }`
+(normalized 0..1, relative to the sprite's own square canvas), names the
+part of the frame that's real content — everything outside it is safe
+padding. This *refines* the "never crop" rule from above rather than
+weakening it: a renderer may crop toward `subjectBounds`, but never into
+it. `{x:0,y:0,width:1,height:1}` (the whole frame) is always a safe,
+inert value — a renderer or asset that ignores this field entirely
+behaves exactly as before it existed.
+
+- **Where it's set (deterministic today):** for free, in `sprites.ts`.
+  `buildSprite()`'s existing trim step (`sharp().trim()`, already run for
+  every asset to tighten an alpha cutout before the pad-to-square step)
+  already computes the exact trimmed content rect — this just reads it
+  back out as normalized fractions instead of discarding it. Only trusted
+  for an `"isolated"` asset (a real alpha silhouette, not a guess); for a
+  `"photographic"` asset there's no reliable way to segment subject from
+  backdrop without real vision judgment, so it's left unset (full-frame
+  fallback) rather than asserting a boundary sprites.ts doesn't actually
+  know.
+- **Where it can be overridden (AI hook):** `brain.ts`'s `imageSubjectBounds`
+  — this is the field that matters most for a `"photographic"` asset,
+  since that's exactly the case with no deterministic source at all.
+  Validated by `parseSubjectBoundsValue`: a box that would claim more than
+  the actual frame is clamped down to what's left, never trusted as-is.
+- **Who reads it:** `chainPop.ts`'s `drawCell()` — computes a source rect
+  from `subjectBounds` (falling back to the whole image when absent), then
+  `containFit()`s that rect's own aspect ratio into the tile's inset box
+  (a subject rect is usually *not* square even though every sprite's outer
+  canvas is, so this step matters — a naive stretch would distort it) before
+  the same never-crop-into-the-subject `drawImage` as before.
+
+**Colour consistency — `colorAdjust`.** A site's product photos rarely
+share one consistent exposure/colour grade (different photographers,
+lighting, years) — a grid of otherwise well-framed tiles with visibly
+inconsistent brightness still reads as scraped, not designed. A third
+optional field, `colorAdjust: { brightness, contrast, saturation }`
+(multipliers, 1 = no change), is meant to be applied as a cheap canvas
+filter (`ctx.filter = "brightness(b) contrast(c) saturate(s)"`) at draw
+time.
+
+- **Where it's set:** nowhere deterministic — there is no heuristic here at
+  all, deliberately. Guessing "correct" exposure from pixel statistics
+  alone is as likely to make an image worse as better without real
+  judgment, which is worse than doing nothing, so the only fallback is the
+  neutral no-op (equivalently: the field is just absent).
+- **Where it can be overridden (AI hook):** `brain.ts`'s `imageColorAdjust`
+  — the *only* source of a real value, ever. The prompt asks Gemini to set
+  it only for an image that's noticeably under/over-exposed relative to the
+  rest of the set, framed as "a correction, not a re-edit"; each channel is
+  clamped to `[0.5, 1.5]` by `parseColorAdjustValue` regardless of what the
+  model returns.
+- **Who reads it:** `chainPop.ts` — applied to the live foreground sprite
+  draw (skipped entirely, not just set to a no-op filter string, when
+  absent — avoids paying for a canvas filter graph on every frame for the
+  common case where nothing needs correcting) and baked into the
+  `blurFill` backdrop at its one-time pre-render (`createBlurredBackdrop`),
+  so the corrected colour shows through the blurred decor layer too.
+
+`imagePresentation`, `imageBackgroundTreatment`, `imageSubjectBounds`, and
+`imageColorAdjust` all share one validation shape in `brain.ts`: a
+per-asset-id map, keys restricted to ids that actually passed the quality
+gate, values sanitized hard (`validateAssetEnumMap` for the two string
+enums, `validateAssetObjectMap` + a `parse*Value` function for the two
+structured ones) — never trusted as-is, same "non-negotiable" discipline
+build spec §11 established for `copy`/`rewards`/`tuning`. A future
+AI-assisted image field should follow the same shape: a per-asset-id map
+on `BrainResponse`, a deterministic (even if trivially "absent") fallback
+elsewhere, and a dedicated parse/validate function that drops rather than
+repairs anything that doesn't hold up.
 
 ## 4. Runtime (`lib/runtime/`)
 

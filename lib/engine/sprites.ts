@@ -11,7 +11,7 @@
 import sharp from "sharp";
 import { safeFetchImage } from "@/lib/engine/safeFetch";
 import { uploadSprite } from "@/lib/storage";
-import type { RawAsset, SubjectType } from "@/lib/engine/types";
+import type { RawAsset, SubjectBounds, SubjectType } from "@/lib/engine/types";
 import { cutout, computePhash, MIN_UNIFORMITY_FOR_ISOLATION } from "./cutout";
 import { extractColours } from "./palette";
 
@@ -117,12 +117,31 @@ async function processOne(asset: RawAsset): Promise<ProcessOneResult> {
     transformFlags.push(cutoutResult.alreadyHadAlpha ? "transform:alpha_passthrough" : "transform:cutout:flood");
     if (!cutoutResult.isolatable) transformFlags.push("transform:cutout:failed");
 
-    const { buffer: spriteBuffer, coverage } = await buildSprite(cutoutResult.rgba, cutoutResult.width, cutoutResult.height);
+    const { buffer: spriteBuffer, coverage, subjectBounds: trimmedBounds } = await buildSprite(
+      cutoutResult.rgba,
+      cutoutResult.width,
+      cutoutResult.height,
+    );
+    // Only trust the trim-derived rect as real subject bounds for an
+    // isolated cutout, where trim() is finding an actual alpha silhouette —
+    // for a photographic asset (fully opaque input), a near-full-frame trim
+    // result is common but not a segmentation, so leave it unset and let
+    // SubjectBounds' documented absent-means-full-frame default apply
+    // instead of asserting a boundary this pipeline doesn't really know.
+    const subjectBounds: SubjectBounds | undefined = cutoutResult.isolatable ? trimmedBounds : undefined;
 
     let finalSprite = spriteBuffer;
     if (cutoutResult.isolatable) {
       try {
-        finalSprite = await addSoftShadow(spriteBuffer, SPRITE_SIZE);
+        finalSprite = await addOutline(finalSprite, SPRITE_SIZE, cutoutResult.dominant);
+        transformFlags.push("transform:outline");
+      } catch {
+        // Outline compositing is a nice-to-have (+0.05 qualityDelta in the
+        // transform catalogue) — never let a compositing hiccup break
+        // sprite processing for this asset.
+      }
+      try {
+        finalSprite = await addSoftShadow(finalSprite, SPRITE_SIZE);
         transformFlags.push("transform:shadow");
       } catch {
         // Shadow compositing is a nice-to-have (+0.05 qualityDelta in the
@@ -182,6 +201,19 @@ async function processOne(asset: RawAsset): Promise<ProcessOneResult> {
           : cutoutResult.uniformity >= MIN_UNIFORMITY_FOR_ISOLATION
             ? "solid"
             : "blurFill",
+        // Computed exactly (not guessed) from the trim step just above —
+        // see the subjectBounds assignment and SubjectBounds' doc comment.
+        subjectBounds,
+        // Deterministic default nudge for a real product cutout — without
+        // it, ColorAdjust has no producer at all except Gemini's optional
+        // imageColorAdjust (brain.ts), so "no API key" would mean zero
+        // visual enhancement for every asset. Modest and empirical (no
+        // labeled dataset to calibrate against, same caveat as
+        // estimateTextDensity's scale factor above), well inside
+        // ColorAdjust's documented [0.5, 1.5] clamp range. Left undefined
+        // for photographic/non-isolated assets — a real lifestyle backdrop
+        // shouldn't have its colours shifted by a blanket rule.
+        colorAdjust: cutoutResult.isolatable ? { brightness: 1.0, contrast: 1.08, saturation: 1.12 } : undefined,
       },
     };
 
@@ -197,12 +229,18 @@ async function processOne(asset: RawAsset): Promise<ProcessOneResult> {
 }
 
 /** Trim to alpha bbox → pad square → resize SPRITE_SIZE. Returns the final
- * PNG buffer and its alpha coverage (non-transparent fraction, 0..1). */
+ * PNG buffer, its alpha coverage (non-transparent fraction, 0..1), and the
+ * trimmed content's normalized rect within the final square canvas
+ * (SubjectBounds shape — this IS an exact subject bbox when the input came
+ * from a real alpha cutout, since the pad-square step centers the trimmed
+ * content and the two proportional resizes afterward don't change the
+ * normalized fractions). Callers decide whether to trust it as such — see
+ * the `cutoutResult.isolatable` gate at the processOne() call site. */
 async function buildSprite(
   rgba: Buffer,
   width: number,
   height: number,
-): Promise<{ buffer: Buffer; coverage: number }> {
+): Promise<{ buffer: Buffer; coverage: number; subjectBounds: SubjectBounds }> {
   const rawPng = await sharp(rgba, { raw: { width, height, channels: 4 } }).png().toBuffer();
 
   let trimmedBuffer: Buffer;
@@ -243,7 +281,16 @@ async function buildSprite(
     .toBuffer();
 
   const coverage = await computeAlphaCoverage(finalSprite);
-  return { buffer: finalSprite, coverage };
+  // `side` is exactly the pad-square canvas both proportional resizes below
+  // preserve the aspect of, so these fractions describe the trimmed content
+  // rect in both the padded square AND the final SPRITE_SIZE canvas alike.
+  const subjectBounds: SubjectBounds = {
+    x: (side - trimmedWidth) / 2 / side,
+    y: (side - trimmedHeight) / 2 / side,
+    width: trimmedWidth / side,
+    height: trimmedHeight / side,
+  };
+  return { buffer: finalSprite, coverage, subjectBounds };
 }
 
 async function computeAlphaCoverage(pngBuffer: Buffer): Promise<number> {
@@ -288,6 +335,72 @@ async function addSoftShadow(spritePng: Buffer, size: number): Promise<Buffer> {
     ])
     .png()
     .toBuffer();
+}
+
+const OUTLINE_WIDTH_FACTOR = 0.018; // fraction of sprite size — a thin defining edge, not a thick border
+
+/** Composites a thin solid-colour outline around the sprite's own alpha
+ * silhouette — the declared-but-previously-unimplemented `outline`
+ * transform (lib/capabilities/catch.json's `collectible` role,
+ * `TRANSFORM_CATALOGUE.outline` in matcher.ts). This is exactly what
+ * `prefers.contrastAgainst: "stage.background"` on that role calls for: a
+ * falling product needs to read clearly against whatever gradient/photo
+ * backdrop the stage renders, and `addSoftShadow` alone doesn't give it a
+ * defining edge.
+ *
+ * Sharp has no direct morphological dilate op, so this approximates one:
+ * blurring the alpha channel spreads opacity outward, and re-thresholding
+ * that blur turns the spread back into a hard mask slightly larger than
+ * the original silhouette. Filling that larger mask with a flat colour and
+ * compositing the original sprite on top leaves only the "ring" of the
+ * larger mask visible around the real edges — the same layered-composite
+ * shape as addSoftShadow above, just with a hard-edged, undilated-offset
+ * layer instead of a blurred, offset one.
+ *
+ * `backgroundHex` is the backdrop this sprite was cut out of
+ * (`cutoutResult.dominant`) — used only to pick a contrasting outline
+ * colour (near-black vs. near-white), since the actual render-time stage
+ * background varies per game/brand and isn't known here. */
+async function addOutline(spritePng: Buffer, size: number, backgroundHex: string): Promise<Buffer> {
+  const width = Math.max(1, Math.round(size * OUTLINE_WIDTH_FACTOR));
+  const blurSigma = Math.max(1, width * 0.9);
+
+  const alphaChannel = await sharp(spritePng).ensureAlpha().extractChannel(3).toBuffer();
+  const dilatedAlpha = await sharp(alphaChannel).blur(blurSigma).threshold(10).toBuffer();
+
+  const solidRgb = await sharp({
+    create: { width: size, height: size, channels: 3, background: hexToRgb(pickOutlineColor(backgroundHex)) },
+  })
+    .png()
+    .toBuffer();
+
+  const outlineLayer = await sharp(solidRgb).joinChannel(dilatedAlpha).png().toBuffer();
+
+  return sharp({
+    create: { width: size, height: size, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  })
+    .composite([
+      { input: outlineLayer, top: 0, left: 0 },
+      { input: spritePng, top: 0, left: 0 },
+    ])
+    .png()
+    .toBuffer();
+}
+
+/** Near-black or near-white, whichever contrasts more against `hex` — same
+ * relative-luminance formula as app/(app) UI's bestTextColor, applied here
+ * to an outline colour instead of button text. */
+function pickOutlineColor(hex: string): string {
+  const { r, g, b } = hexToRgb(hex);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? "#111111" : "#ffffff";
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const clean = hex.replace("#", "");
+  if (clean.length !== 6) return { r: 255, g: 255, b: 255 };
+  const num = Number.parseInt(clean, 16);
+  return { r: (num >> 16) & 0xff, g: (num >> 8) & 0xff, b: num & 0xff };
 }
 
 const TEXT_EDGE_THRESHOLD = 40; // Laplacian magnitude (0-255) counted as a "strong" edge

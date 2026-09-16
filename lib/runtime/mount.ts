@@ -36,12 +36,20 @@ import { createWhackGame } from "@/lib/runtime/games/whack";
 import { createSimonGame } from "@/lib/runtime/games/simon";
 import { createSliceGame } from "@/lib/runtime/games/slice";
 
-type GameModuleFactory = () => GameModule;
 
 /** "catch", "guess_price", "chain_pop", "chomp", "whack", "simon", and
  * "slice" are implemented. "match" / "stack" are reserved TemplateId
  * values with no capability JSON and no runtime module yet — mount()
  * degrades to a friendly message. */
+import { createShooterGame } from "@/lib/runtime/games/shooter";
+import { createSweetSpotGame } from "@/lib/runtime/games/sweetSpot";
+
+type GameModuleFactory = () => GameModule;
+
+/** "catch", "guess_price", "chain_pop", "shooter" and "sweet_spot" are
+ * implemented. "match" / "stack" are reserved TemplateId values with no
+ * capability JSON and no runtime module yet — mount() degrades to a
+ * friendly message. */
 const REGISTRY: Partial<Record<TemplateId, GameModuleFactory>> = {
   catch: createCatchGame,
   guess_price: createGuessPriceGame,
@@ -50,6 +58,8 @@ const REGISTRY: Partial<Record<TemplateId, GameModuleFactory>> = {
   whack: createWhackGame,
   simon: createSimonGame,
   slice: createSliceGame,
+  shooter: createShooterGame,
+  sweet_spot: createSweetSpotGame,
 };
 
 export interface MountOptions {
@@ -120,6 +130,7 @@ function mountGame(
   shell.style.position = "relative";
   shell.style.width = "100%";
   shell.style.overflow = "hidden";
+  shell.style.isolation = "isolate";
   shell.style.fontFamily = brand.fontFamily || "system-ui, sans-serif";
   shell.style.background = "transparent";
   shell.style.userSelect = "none";
@@ -128,6 +139,7 @@ function mountGame(
   const canvas = document.createElement("canvas");
   canvas.style.position = "absolute";
   canvas.style.inset = "0";
+  canvas.style.zIndex = "0";
   canvas.style.display = "block";
   canvas.style.touchAction = "none";
 
@@ -143,14 +155,14 @@ function mountGame(
   overlay.style.padding = "24px";
   overlay.style.boxSizing = "border-box";
   overlay.style.color = brand.foreground;
-  overlay.style.background = `linear-gradient(180deg, ${brand.background}f2, ${brand.background}f2)`;
+  overlay.style.zIndex = "1";
+  const overlayBackdrop = opaqueOverlayBackdrop(brand.background);
+  overlay.style.background = overlayBackdrop;
 
   shell.appendChild(canvas);
   shell.appendChild(overlay);
   container.innerHTML = "";
   container.appendChild(shell);
-
-  setOverlay(overlay, renderLoadingState());
 
   // --- stage sizing --------------------------------------------------------
   const constraint = capability.placements[placement];
@@ -158,6 +170,8 @@ function mountGame(
     shell.style.height = `${stageController.size.height}px`;
   });
   shell.style.height = `${stageController.size.height}px`;
+
+  setOverlay(overlay, canvas, stageController, renderLoadingState(), overlayBackdrop);
 
   // --- input ----------------------------------------------------------------
   // Bound to the canvas, not the shell: the shell also contains the overlay
@@ -178,6 +192,7 @@ function mountGame(
   let loop: LoopHandle | null = null;
   let gameModule: GameModule | null = null;
   let score = 0;
+  let engagedAssetIds = new Set<string>();
   let activeSessionToken: Promise<string | null> | null = null;
   let destroyed = false;
 
@@ -186,6 +201,9 @@ function mountGame(
   }
   function getScore() {
     return score;
+  }
+  function recordEngagement(assetId: string) {
+    engagedAssetIds.add(assetId);
   }
   function complete() {
     if (destroyed) return;
@@ -203,6 +221,7 @@ function mountGame(
     random: Math.random,
     addScore,
     getScore,
+    recordEngagement,
     complete,
     brandLogo: null,
   };
@@ -228,12 +247,13 @@ function mountGame(
     });
 
   function showIdleScreen() {
-    setOverlay(overlay, renderIdleState(brand, copy, () => startPlay(false)));
+    setOverlay(overlay, canvas, stageController, renderIdleState(brand, copy, () => startPlay(false)), overlayBackdrop);
   }
 
   function startPlay(isReplay: boolean) {
     score = 0;
-    setOverlay(overlay, null); // hide chrome; the game renders on canvas
+    engagedAssetIds = new Set();
+    setOverlay(overlay, canvas, stageController, null, overlayBackdrop); // hide chrome; the game renders on canvas
     activeSessionToken = beginSession(slug);
     trackEvent(isReplay ? "replay" : "start", { slug });
 
@@ -266,18 +286,38 @@ function mountGame(
     gameModule?.teardown();
 
     const finalScore = score;
-    const sessionToken = activeSessionToken ? await activeSessionToken : null;
-    const server = await endSession(sessionToken, finalScore);
+    const engagedAssets = Array.from(engagedAssetIds)
+      .map((id) => loaded.get(id))
+      .filter((a): a is LoadedAsset => Boolean(a?.image))
+      .map((a) => ({ spriteUrl: a.image!.src, name: a.data?.name }));
     const resolved = resolveReward(finalScore, spec.rewards);
+    let sessionToken: string | null = null;
 
+    // Paint the reward overlay immediately — don't wait on network. The last
+    // game frame (sweet-spot bar, falling products, etc.) otherwise sits on
+    // the canvas under semi-transparent chrome and reads as broken overlap.
     setOverlay(
       overlay,
-      renderRewardState(brand, copy, resolved.tier, server.code, () => {
+      canvas,
+      stageController,
+      renderRewardState(brand, copy, resolved.tier, null, engagedAssets, () => {
         void submitLead(sessionToken);
       }, () => {
         startPlay(true);
       }),
+      overlayBackdrop,
     );
+
+    sessionToken = activeSessionToken ? await activeSessionToken : null;
+    const server = await endSession(sessionToken, finalScore);
+
+    if (server.code) {
+      const tierLine = overlay.querySelector<HTMLElement>("[data-role='tier-line']");
+      const tier = resolved.tier;
+      if (tierLine && tier.percentOff != null) {
+        tierLine.textContent = `${tier.label} — code ${server.code}`;
+      }
+    }
 
     await animateCountUp(0, finalScore, 700, (value) => {
       const el = overlay.querySelector<HTMLElement>("[data-role='score-value']");
@@ -398,6 +438,8 @@ function loadAsset(asset: GameSpec["assets"][number]): Promise<LoadedAsset> {
     presentation: asset.presentation,
     backgroundColor: asset.backgroundColor,
     backgroundTreatment: asset.backgroundTreatment,
+    subjectBounds: asset.subjectBounds,
+    colorAdjust: asset.colorAdjust,
   }));
 }
 
@@ -445,7 +487,11 @@ function loadImage(url: string, timeoutMs = 6000): Promise<HTMLImageElement | nu
  */
 const STATIC_PREVIEW_EXAMPLE_SCORE = 128;
 
-export function renderStaticScreen(kind: "idle" | "reward", spec: GameSpec): HTMLElement {
+export function renderStaticScreen(
+  kind: "idle" | "reward",
+  spec: GameSpec,
+  exampleScore: number = STATIC_PREVIEW_EXAMPLE_SCORE,
+): HTMLElement {
   const { brand, copy } = spec;
   ensureGoogleFontLoaded(brand.fontFamily);
 
@@ -471,22 +517,48 @@ export function renderStaticScreen(kind: "idle" | "reward", spec: GameSpec): HTM
   }
 
   const { tier } = resolveReward(STATIC_PREVIEW_EXAMPLE_SCORE, spec.rewards);
-  const content = renderRewardState(brand, copy, tier, null, () => {}, () => {});
+  // No live session to draw a real engagement list from here — a
+  // representative sample of the spec's own assets stands in, same spirit
+  // as STATIC_PREVIEW_EXAMPLE_SCORE faking a score for this same preview.
+  const engagedSample = spec.assets
+    .slice(0, 4)
+    .map((a) => ({ spriteUrl: a.spriteUrl, name: a.data?.name }));
+  const content = renderRewardState(brand, copy, tier, null, engagedSample, () => {}, () => {});
   const scoreEl = content.querySelector<HTMLElement>("[data-role='score-value']");
-  if (scoreEl) scoreEl.textContent = String(STATIC_PREVIEW_EXAMPLE_SCORE);
+  if (scoreEl) scoreEl.textContent = String(exampleScore);
   const emailField = content.querySelector<HTMLInputElement>("[data-role='email-input']");
   if (emailField) emailField.disabled = true;
   shell.appendChild(content);
   return shell;
 }
 
-function setOverlay(overlay: HTMLElement, content: HTMLElement | null) {
+function opaqueOverlayBackdrop(background: string): string {
+  if (/^#[0-9a-f]{6}$/i.test(background)) return background;
+  if (/^#[0-9a-f]{8}$/i.test(background)) return background.slice(0, 7);
+  return "#ffffff";
+}
+
+function setOverlay(
+  overlay: HTMLElement,
+  canvas: HTMLCanvasElement,
+  stage: StageController,
+  content: HTMLElement | null,
+  backdrop: string,
+) {
   overlay.innerHTML = "";
   if (!content) {
+    canvas.style.visibility = "visible";
     overlay.style.background = "transparent";
     overlay.style.pointerEvents = "none";
     return;
   }
+  // Hide and clear the play canvas whenever chrome is shown. A semi-
+  // transparent overlay backdrop alone is not enough — the last game frame
+  // (product sprites, sweet-spot bar, etc.) composites through and reads as
+  // broken overlap with the reward controls.
+  canvas.style.visibility = "hidden";
+  stage.ctx.clearRect(0, 0, stage.size.width, stage.size.height);
+  overlay.style.background = backdrop;
   overlay.style.pointerEvents = "auto";
   overlay.appendChild(content);
 }
@@ -550,15 +622,102 @@ function renderIdleState(brand: GameSpec["brand"], copy: GameSpec["copy"], onSta
   return wrap;
 }
 
+/** One product the player engaged with this round — plain data (a URL
+ * string, not a live LoadedAsset/HTMLImageElement) so the exact same
+ * gallery renderer works both from a real session (mount.ts's own
+ * engagedAssetIds, mapped through `loaded`) and from renderStaticScreen's
+ * editor preview, which only ever has ProcessedAsset.spriteUrl strings and
+ * no live session to draw a real list from. */
+interface EngagedAsset {
+  spriteUrl: string;
+  name?: string;
+}
+
+const ENGAGED_GALLERY_MAX = 6;
+
+/** A row of small thumbnails of the products the player actually engaged
+ * with this round — the highest-attention moment of the whole session
+ * (the reward screen) previously showed zero product imagery. Returns null
+ * (render nothing) when `engaged` is empty, matching the "skip silently"
+ * convention already used elsewhere for missing per-asset data — an empty
+ * gallery block would read as a bug, not a deliberate absence. */
+const ENGAGED_THUMB_SIZE = 52; // px — the caption column below is the same width
+
+function renderEngagedGallery(engaged: EngagedAsset[], brand: GameSpec["brand"]): HTMLElement | null {
+  if (engaged.length === 0) return null;
+
+  const row = document.createElement("div");
+  row.style.display = "flex";
+  row.style.gap = "10px";
+  row.style.margin = "4px 0";
+  row.style.overflowX = "auto";
+  row.style.maxWidth = "100%";
+  row.style.justifyContent = "center";
+  // Captions can wrap to two lines and thumbnails don't, so items are
+  // naturally uneven heights — align to the top rather than stretching or
+  // centering, which would otherwise misalign every image vertically.
+  row.style.alignItems = "flex-start";
+
+  for (const asset of engaged.slice(0, ENGAGED_GALLERY_MAX)) {
+    const item = document.createElement("div");
+    item.style.display = "flex";
+    item.style.flexDirection = "column";
+    item.style.alignItems = "center";
+    item.style.gap = "3px";
+    item.style.flex = "0 0 auto";
+    item.style.width = `${ENGAGED_THUMB_SIZE}px`;
+
+    const thumb = document.createElement("img");
+    thumb.src = asset.spriteUrl;
+    thumb.alt = asset.name ?? "";
+    thumb.style.width = `${ENGAGED_THUMB_SIZE}px`;
+    thumb.style.height = `${ENGAGED_THUMB_SIZE}px`;
+    thumb.style.objectFit = "contain";
+    thumb.style.borderRadius = "10px";
+    thumb.style.background = `${brand.foreground}11`;
+    item.appendChild(thumb);
+
+    // The name is the point (per the request: it needs to actually be
+    // readable, not hidden behind a hover-only `title`) — skipped
+    // entirely, not shown as a blank line, when there's no real name to
+    // show, matching the "skip silently" convention used elsewhere for
+    // missing per-asset data.
+    if (asset.name) {
+      const caption = document.createElement("span");
+      caption.textContent = asset.name;
+      caption.title = asset.name;
+      caption.style.fontSize = "10px";
+      caption.style.lineHeight = "1.25";
+      caption.style.textAlign = "center";
+      caption.style.color = brand.foreground;
+      caption.style.opacity = "0.85";
+      caption.style.width = "100%";
+      caption.style.display = "-webkit-box";
+      caption.style.setProperty("-webkit-line-clamp", "2");
+      caption.style.setProperty("-webkit-box-orient", "vertical");
+      caption.style.overflow = "hidden";
+      caption.style.wordBreak = "break-word";
+      item.appendChild(caption);
+    }
+
+    row.appendChild(item);
+  }
+
+  return row;
+}
+
 function renderRewardState(
   brand: GameSpec["brand"],
   copy: GameSpec["copy"],
   tier: GameSpec["rewards"][number],
   serverCode: string | null,
+  engaged: EngagedAsset[],
   onSubmitEmail: () => void,
   onReplay: () => void,
 ): HTMLElement {
   const wrap = document.createElement("div");
+  wrap.style.width = "100%";
+  wrap.style.maxWidth = "360px";
 
   const intro = document.createElement("p");
   intro.textContent = copy.rewardIntro;
@@ -578,6 +737,7 @@ function renderRewardState(
   wrap.appendChild(scoreLine);
 
   const tierLine = document.createElement("p");
+  tierLine.dataset.role = "tier-line";
   tierLine.textContent =
     tier.percentOff != null ? `${tier.label} — code ${serverCode ?? tier.code ?? "pending"}` : tier.label;
   tierLine.style.margin = "0 0 4px";
@@ -585,6 +745,9 @@ function renderRewardState(
   tierLine.style.fontWeight = "600";
   tierLine.style.color = brand.accent;
   wrap.appendChild(tierLine);
+
+  const gallery = renderEngagedGallery(engaged, brand);
+  if (gallery) wrap.appendChild(gallery);
 
   const emailRow = document.createElement("div");
   emailRow.style.display = "flex";
@@ -605,7 +768,12 @@ function renderRewardState(
   emailInput.style.flex = "1 1 160px";
   emailRow.appendChild(emailInput);
 
-  const emailButton = makeButton(copy.emailPrompt, brand.accent, brand.background);
+  // Fixed string, not copy.emailPrompt: that field is the input's
+  // placeholder, and a natural placeholder ("Enter your email for your
+  // code") makes a button wider than the card. A dedicated button label
+  // would mean adding a GameCopy field in lib/engine/types.ts — a shared
+  // contract change for pure cosmetics — so the verb is hardcoded here.
+  const emailButton = makeButton("Get my code", brand.accent, brand.background);
   emailButton.style.padding = "8px 14px";
   emailButton.addEventListener("click", onSubmitEmail);
   emailRow.appendChild(emailButton);

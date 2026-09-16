@@ -1,9 +1,11 @@
 // lib/engine/extract/index.ts
 //
 // Orchestrates the source ladder (build spec §7): shopify → jsonld →
-// opengraph → sitemap-lite → dom, stopping once we have enough candidates.
-// Scraping raw pixels is always the fallback, never the plan. The logo
-// ladder runs independently, once, regardless of how the product ladder went.
+// opengraph → sitemap-lite → dom → render, stopping once we have enough
+// candidates. Scraping raw pixels is always the fallback, never the plan.
+// The last step (render.ts) only runs for markup that looks like an
+// unrendered CSR shell — see its own doc comment. The logo ladder runs
+// independently, once, regardless of how the product ladder went.
 //
 // Returns a *partial* AssetInventory — assets here carry only what markup
 // can tell us. pixels/alpha/background/colour/content/phash/quality stay at
@@ -19,6 +21,7 @@ import { extractShopify } from "./shopify";
 import { extractJsonLd } from "./jsonld";
 import { extractOpenGraph } from "./opengraph";
 import { extractDom } from "./dom";
+import { renderWithBrowser, looksLikeUnrenderedShell } from "./render";
 import { extractLogo } from "./logo";
 import { dedupeByUrl } from "./util";
 
@@ -45,13 +48,32 @@ export interface ExtractResult {
 }
 
 export async function extractFromUrl(sourceUrl: string): Promise<ExtractResult> {
-  const pageRes = await safeFetch(sourceUrl);
-  if (!pageRes.ok) {
-    throw new Error(`Could not fetch ${sourceUrl}: HTTP ${pageRes.status}`);
+  // The root document fetch is the one thing every html-dependent step below
+  // (jsonld/opengraph/dom/logo, via `tryStep` or directly) leans on — but
+  // per this function's own stated design (see `tryStep`'s comment, build
+  // spec §23: "sites blocking fetch → empty extraction, not a thrown
+  // error"), a site that refuses this specific request should degrade the
+  // exact same way every other independent ladder source already does, not
+  // take the whole generation down. This one request used to be the sole
+  // exception — thrown straight past `tryStep` — which meant a site with a
+  // WAF/bot-detection layer that blocks non-browser User-Agents (confirmed
+  // live against uniqlo.com: its edge silently drops any request
+  // identifying itself as a bot, rather than returning a normal HTTP
+  // response) surfaced as a raw "Timed out fetching…" job error instead of
+  // reaching the already-built, friendlier "No template fit well — you can
+  // still continue in manual mode" path a zero-asset inventory produces
+  // further down this same pipeline. Steps 1 (Shopify) and 4 (sitemap)
+  // below don't depend on `html` at all and still get their own independent
+  // attempt via their own `tryStep` calls either way.
+  let pageUrl = sourceUrl;
+  let origin = new URL(sourceUrl).origin;
+  let html = "";
+  const pageRes = await tryStep(() => safeFetch(sourceUrl));
+  if (pageRes?.ok) {
+    pageUrl = pageRes.finalUrl;
+    origin = new URL(pageUrl).origin;
+    html = pageRes.text();
   }
-  const pageUrl = pageRes.finalUrl;
-  const origin = new URL(pageUrl).origin;
-  const html = pageRes.text();
 
   let assets: RawAsset[] = [];
   let platform: string | undefined;
@@ -65,8 +87,10 @@ export async function extractFromUrl(sourceUrl: string): Promise<ExtractResult> 
     if (shopify.platformDetected) platform = "shopify";
   }
 
-  // 2 — JSON-LD schema.org Product markup.
-  if (assets.length < ENOUGH_ASSETS) {
+  // 2 — JSON-LD schema.org Product markup. Needs `html` — absent when the
+  // root fetch itself failed (see above), same as every step below that
+  // reads `html` rather than hitting its own endpoint.
+  if (html && assets.length < ENOUGH_ASSETS) {
     const jsonld = await tryStep(async () => extractJsonLd(html, pageUrl));
     if (jsonld) {
       assets = dedupeByUrl(assets.concat(jsonld.assets));
@@ -76,29 +100,58 @@ export async function extractFromUrl(sourceUrl: string): Promise<ExtractResult> 
 
   // 3 — Open Graph / meta / manifest. Rarely a catalogue but always worth
   // the one extra fetch for a hero image and a brand colour signal.
-  const og = await tryStep(() => extractOpenGraph(html, pageUrl));
+  const og = html ? await tryStep(() => extractOpenGraph(html, pageUrl)) : null;
   if (og) {
     assets = dedupeByUrl(assets.concat(og.assets));
   }
 
   // 4 — sitemap-lite: only when the ladder above is still short. Bounded to
   // a handful of product pages — this is the slow, last-ditch structured
-  // source (build spec §7 step 4), so it never runs unconditionally.
+  // source (build spec §7 step 4), so it never runs unconditionally. Hits
+  // its own endpoint (sitemap.xml), not `html` — still worth attempting
+  // even when the root document fetch above failed.
   if (assets.length < ENOUGH_ASSETS) {
     const sitemapAssets = await tryStep(() => extractSitemapLite(origin));
     if (sitemapAssets) assets = dedupeByUrl(assets.concat(sitemapAssets));
   }
 
   // 5 — DOM heuristics. Noisiest source; last resort only.
-  if (assets.length < ENOUGH_ASSETS) {
+  if (html && assets.length < ENOUGH_ASSETS) {
     const domAssets = extractDom(html, pageUrl);
     assets = dedupeByUrl(assets.concat(domAssets));
   }
 
-  // Logo ladder runs independently of the product ladder above.
-  const logo = extractLogo(html, pageUrl, og?.manifest);
+  // 6 — Rendered-DOM fallback (render.ts). Only when the ladder above is
+  // still short *and* the fetched markup looks like an unrendered CSR
+  // shell rather than a site that's simply sparse or actively blocking us
+  // (a block already surfaced as a thrown fetch error above, not a 200
+  // with thin content — see render.ts's own doc comment on why this is
+  // not the same thing as routing around that). Spawns a real browser, so
+  // it's gated behind both conditions, not just the asset count — this
+  // step alone can cost several real seconds.
+  if (html && assets.length < ENOUGH_ASSETS && looksLikeUnrenderedShell(html)) {
+    const rendered = await tryStep(() => renderWithBrowser(pageUrl));
+    if (rendered) {
+      html = rendered.html;
+      pageUrl = rendered.finalUrl;
+      origin = new URL(pageUrl).origin;
+
+      const renderedJsonld = await tryStep(async () => extractJsonLd(html, pageUrl));
+      if (renderedJsonld) {
+        assets = dedupeByUrl(assets.concat(renderedJsonld.assets));
+        currency = currency ?? renderedJsonld.currency;
+      }
+      const renderedDom = extractDom(html, pageUrl);
+      assets = dedupeByUrl(assets.concat(renderedDom));
+    }
+  }
+
+  // Logo ladder runs independently of the product ladder above — also
+  // needs `html`, so it benefits from step 6's rendered markup too when
+  // that ran.
+  const logo = html ? extractLogo(html, pageUrl, og?.manifest) : null;
   let logoRef: { assetId: string; confidence: number } | undefined;
-  if (logo.asset) {
+  if (logo?.asset) {
     assets = dedupeByUrl(assets.concat(logo.asset));
     logoRef = { assetId: logo.asset.id, confidence: logo.confidence };
   }

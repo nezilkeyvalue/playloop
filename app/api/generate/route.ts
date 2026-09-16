@@ -41,9 +41,24 @@ const manualAssetSchema = z.object({
   priceMinor: z.number().int().nonnegative().optional(),
 });
 
+// Required, not optional-with-a-default: the client UI (app/(app)/build/
+// page.tsx) gates its own submit button on this same checkbox, but that's
+// cosmetic on its own — a direct API call could just omit it. z.literal(true)
+// means the request is rejected outright (400, same as any other malformed
+// body) unless the caller explicitly affirms it, so the confirmation is
+// actually load-bearing rather than decorative. This route is the one that
+// scrapes a *third-party* URL server-side, so what's being confirmed here is
+// specifically the right to use that site's own content/assets — not just
+// "I agree to terms."
+const rightsConfirmedSchema = {
+  rightsConfirmed: z.literal(true, {
+    errorMap: () => ({ message: "You must confirm you have the rights to use this site's content." }),
+  }),
+};
+
 const bodySchema = z.union([
-  z.object({ url: z.string().url() }),
-  z.object({ manualAssets: z.array(manualAssetSchema).min(1) }),
+  z.object({ url: z.string().url(), ...rightsConfirmedSchema }),
+  z.object({ manualAssets: z.array(manualAssetSchema).min(1), ...rightsConfirmedSchema }),
 ]);
 
 function getClientIp(req: NextRequest): string {

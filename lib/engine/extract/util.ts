@@ -105,3 +105,28 @@ export function resolveUrl(maybeRelative: string, base: string): string | null {
     return null;
   }
 }
+
+/**
+ * A safe, always-available brand-name guess from the bare hostname (e.g.
+ * "https://www.uniqlo.com/" → "Uniqlo") — pure string parsing of the URL
+ * the caller already has, no network involved, so it never depends on any
+ * fetch having succeeded. Used as compose.ts's `BrandKit.name` fallback,
+ * and — since the same gap exists one level up — as `runExtraction()`'s
+ * fallback for the business name fed to `brain.ts`'s copy generation, for
+ * exactly the case a real og:site_name can't: a site whose root document
+ * fetch itself failed entirely (see extract/index.ts's resilience comment)
+ * has no markup to read a name from at all, but still has the URL the user
+ * gave us — "Uniqlo" beats brain.ts's generic "this brand" fallback.
+ */
+export function deriveBrandNameFromUrl(sourceUrl: string | undefined): string | undefined {
+  if (!sourceUrl) return undefined;
+  try {
+    let host = new URL(sourceUrl).hostname.replace(/^www\./, "");
+    host = host.replace(/\.[a-z]{2,}$/i, ""); // drop the TLD
+    const words = host.split(/[.\-_]+/).filter(Boolean);
+    if (words.length === 0) return undefined;
+    return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  } catch {
+    return undefined;
+  }
+}

@@ -12,11 +12,13 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
+    "@sparticuz/chromium": "^153.0.0",
     "@supabase/supabase-js": "^2.45.4",
     "cheerio": "^1.0.0",
     "clsx": "^2.1.1",
     "nanoid": "^5.0.7",
     "next": "15.1.0",
+    "playwright-core": "^1.63.0",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "recharts": "^2.13.3",

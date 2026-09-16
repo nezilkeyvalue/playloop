@@ -17,6 +17,7 @@ import type {
   RewardTier,
 } from "@/lib/engine/types";
 import { getCapability } from "@/lib/capabilities";
+import { deriveBrandNameFromUrl } from "./extract/util";
 import { forceContrast, luminanceOfHex, saturationOfHex } from "./palette";
 
 /** MVP scope (build spec §19 "Out"): no ad-platform export yet, even
@@ -52,6 +53,8 @@ export function compose(
     usableIds,
     brain.imagePresentation,
     brain.imageBackgroundTreatment,
+    brain.imageSubjectBounds,
+    brain.imageColorAdjust,
   );
 
   const brand = buildBrandKit(inventory, assetsById);
@@ -117,6 +120,8 @@ function buildProcessedAssets(
   usableIds: Set<string>,
   imagePresentation: BrainResponse["imagePresentation"],
   imageBackgroundTreatment: BrainResponse["imageBackgroundTreatment"],
+  imageSubjectBounds: BrainResponse["imageSubjectBounds"],
+  imageColorAdjust: BrainResponse["imageColorAdjust"],
 ): ProcessedAsset[] {
   const out: ProcessedAsset[] = [];
   for (const asset of assets) {
@@ -141,6 +146,11 @@ function buildProcessedAssets(
       // still "photographic" either way, drop it otherwise.
       backgroundColor: presentation === "photographic" ? asset.processed.backgroundColor : undefined,
       backgroundTreatment,
+      // AI override beats sprites.ts's trim-derived (or absent, for a
+      // photographic asset) rect the same way it beats every other
+      // heuristic here — see SubjectBounds/ColorAdjust's doc comments.
+      subjectBounds: imageSubjectBounds?.[asset.id] ?? asset.processed.subjectBounds,
+      colorAdjust: imageColorAdjust?.[asset.id] ?? asset.processed.colorAdjust,
     });
   }
   return out;
@@ -157,7 +167,7 @@ function buildBrandKit(inventory: AssetInventory, assetsById: Map<string, RawAss
   const foreground = forceContrast(DEFAULT_FOREGROUND, STAGE_BACKGROUND);
 
   return {
-    name: deriveBrandName(inventory.source.url),
+    name: deriveBrandNameFromUrl(inventory.source.url),
     logoUrl: logoAsset?.processed?.spriteUrl,
     accent,
     background: STAGE_BACKGROUND,
@@ -198,17 +208,4 @@ function mapToGoogleFont(fontStack: string): string {
   if (lower.includes("mono")) return "Roboto Mono";
   if (lower.includes("serif") && !lower.includes("sans-serif")) return "Playfair Display";
   return "Inter";
-}
-
-function deriveBrandName(sourceUrl: string | undefined): string | undefined {
-  if (!sourceUrl) return undefined;
-  try {
-    let host = new URL(sourceUrl).hostname.replace(/^www\./, "");
-    host = host.replace(/\.[a-z]{2,}$/i, ""); // drop the TLD
-    const words = host.split(/[.\-_]+/).filter(Boolean);
-    if (words.length === 0) return undefined;
-    return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-  } catch {
-    return undefined;
-  }
 }

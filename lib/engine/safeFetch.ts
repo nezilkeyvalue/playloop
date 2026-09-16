@@ -231,6 +231,37 @@ function robotsRuleMatches(path: string, rule: string): boolean {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Origin failure cache — short-lived "this origin just hard-failed" memory,
+// shared by the robots.txt lookup below and the main fetch loop further
+// down. Distinct from responseCache/robotsCache's 24h TTL: this exists
+// purely to avoid paying a full FETCH_TIMEOUT_MS timeout more than once per
+// origin within a single generation run, not to remember anything
+// long-term (a site that's down for a minute shouldn't be memorized as
+// broken for a day). Confirmed live against uniqlo.com, whose edge WAF
+// silently drops any request carrying our bot User-Agent rather than
+// returning a real HTTP response: a single extractFromUrl() call paid the
+// full ~10s timeout *four separate times* discovering the same fact —
+// robots.txt, the root page, the Shopify products.json probe, and the
+// sitemap.xml probe — each independently unaware the others had already
+// found the origin unreachable. This cache means only the first of those
+// pays the timeout; the rest fail immediately. A clean non-2xx/3xx HTTP
+// response is never recorded here — only a genuine failure to get a
+// response at all (timeout, connection error, DNS failure) counts, since
+// that (not "robots.txt happens not to exist") is the actual signal that
+// every other path on this origin is likely to fail the same way.
+const ORIGIN_FAILURE_TTL_MS = 5 * 60 * 1000;
+const originFailureCache = new Map<string, number>(); // origin -> expiresAt
+
+function isOriginRecentlyFailed(origin: string): boolean {
+  const expiresAt = originFailureCache.get(origin);
+  return expiresAt !== undefined && expiresAt > Date.now();
+}
+
+function recordOriginFailure(origin: string): void {
+  originFailureCache.set(origin, Date.now() + ORIGIN_FAILURE_TTL_MS);
+}
+
 interface RobotsCacheEntry {
   expiresAt: number;
   disallow: string[];
@@ -245,34 +276,44 @@ async function fetchRobotsRules(origin: string): Promise<{ disallow: string[]; a
   }
   let disallow: string[] = [];
   let allow: string[] = [];
-  try {
-    const robotsUrl = `${origin}/robots.txt`;
-    const host = new URL(robotsUrl).hostname;
-    await resolveAndCheck(host);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    const init: FetchInit = {
-      signal: controller.signal,
-      headers: { "User-Agent": USER_AGENT },
-      redirect: "follow",
-      dispatcher: fetchAgent,
-    };
-    const res = await fetch(robotsUrl, init);
-    clearTimeout(timer);
-    if (res.ok) {
-      const text = await res.text();
-      const groups = parseRobotsGroups(text);
-      const wildcard = groups.find((g) => g.agents.includes("*"));
-      if (wildcard) {
-        disallow = wildcard.disallow;
-        allow = wildcard.allow;
+  if (!isOriginRecentlyFailed(origin)) {
+    try {
+      const robotsUrl = `${origin}/robots.txt`;
+      const host = new URL(robotsUrl).hostname;
+      await resolveAndCheck(host);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      const init: FetchInit = {
+        signal: controller.signal,
+        headers: { "User-Agent": USER_AGENT },
+        redirect: "follow",
+        dispatcher: fetchAgent,
+      };
+      const res = await fetch(robotsUrl, init);
+      clearTimeout(timer);
+      if (res.ok) {
+        const text = await res.text();
+        const groups = parseRobotsGroups(text);
+        const wildcard = groups.find((g) => g.agents.includes("*"));
+        if (wildcard) {
+          disallow = wildcard.disallow;
+          allow = wildcard.allow;
+        }
       }
+    } catch {
+      // No robots.txt, unreachable, or blocked target — fail open (allow),
+      // and remember it so the page fetch right after this one (and any
+      // sibling ladder step's fetch to the same origin) doesn't pay its
+      // own full timeout rediscovering the same thing.
+      disallow = [];
+      allow = [];
+      recordOriginFailure(origin);
     }
-  } catch {
-    // No robots.txt, unreachable, or blocked target — fail open (allow).
-    disallow = [];
-    allow = [];
   }
+  // Cached regardless of outcome (including the recently-failed skip
+  // above) — a blocked/unreachable origin's robots.txt result is "allow
+  // everything" either way, and this cache is what stops it from being
+  // re-attempted on every subsequent call within CACHE_TTL_MS.
   robotsCache.set(origin, { expiresAt: Date.now() + CACHE_TTL_MS, disallow, allow });
   return { disallow, allow };
 }
@@ -301,9 +342,28 @@ interface CacheEntry {
 }
 const responseCache = new Map<string, CacheEntry>();
 
+/** SSRF host check alone, with no fetch attached — for callers (like
+ * extract/render.ts's headless-browser step) that don't go through
+ * safeFetch()'s own request path but still load attacker-influenced URLs
+ * and need the same private/loopback/link-local IP rejection applied. */
+export async function assertSafeUrl(url: string): Promise<void> {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new SafeFetchError(`Blocked protocol: ${parsed.protocol}`, "SSRF_BLOCKED");
+  }
+  await resolveAndCheck(parsed.hostname);
+}
+
+/** robots.txt check alone, for the same class of caller as assertSafeUrl
+ * above — reuses the same 24h-cached parse safeFetch() itself relies on. */
+export async function isUrlAllowedByRobots(url: string): Promise<boolean> {
+  return isAllowedByRobots(new URL(url));
+}
+
 export function clearSafeFetchCache(): void {
   responseCache.clear();
   robotsCache.clear();
+  originFailureCache.clear();
 }
 
 export async function safeFetch(
@@ -333,6 +393,14 @@ export async function safeFetch(
       throw new SafeFetchError(`Blocked protocol: ${parsed.protocol}`, "SSRF_BLOCKED");
     }
 
+    // Skip straight to failing — no DNS lookup, no robots check, no
+    // timeout to wait out — if this exact origin already hard-failed
+    // (timeout/connection error) somewhere else in this same run. See
+    // originFailureCache's doc comment above fetchRobotsRules.
+    if (isOriginRecentlyFailed(parsed.origin)) {
+      throw new SafeFetchError(`${parsed.origin} failed to respond earlier in this run`, "TIMEOUT");
+    }
+
     // Re-checked on every hop, including the initial URL and every redirect.
     await resolveAndCheck(parsed.hostname);
 
@@ -340,6 +408,19 @@ export async function safeFetch(
       const allowed = await isAllowedByRobots(parsed);
       if (!allowed) {
         throw new SafeFetchError(`Blocked by robots.txt: ${parsed.pathname}`, "ROBOTS_BLOCKED");
+      }
+      // The robots.txt lookup just above is itself the *first* fetch to
+      // this origin — if it hard-failed, it already recorded that via
+      // recordOriginFailure() and fell back to "allow" rather than
+      // throwing (see fetchRobotsRules). Check again here rather than
+      // only at the top of this iteration, so the actual page fetch below
+      // doesn't independently pay its own full timeout re-discovering
+      // what the robots.txt attempt (which always runs first) just did —
+      // this is what collapsed the *very first* safeFetch call to a dead
+      // origin from ~20s (robots.txt timeout + page timeout, sequential)
+      // to ~10s (just the robots.txt timeout) when verified live.
+      if (isOriginRecentlyFailed(parsed.origin)) {
+        throw new SafeFetchError(`${parsed.origin} failed to respond to the robots.txt lookup`, "TIMEOUT");
       }
     }
 
@@ -351,6 +432,7 @@ export async function safeFetch(
       res = await fetch(currentUrl, init);
     } catch (err) {
       clearTimeout(timer);
+      recordOriginFailure(parsed.origin);
       if (err instanceof Error && err.name === "AbortError") {
         throw new SafeFetchError(`Timed out fetching ${currentUrl}`, "TIMEOUT");
       }

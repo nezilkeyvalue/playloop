@@ -24,7 +24,7 @@ import type {
 } from "@/lib/engine/types";
 import { listCapabilities } from "@/lib/capabilities";
 import { extractFromUrl } from "./extract";
-import { makeRawAsset } from "./extract/util";
+import { deriveBrandNameFromUrl, makeRawAsset } from "./extract/util";
 import { processSprites } from "./sprites";
 import { runQualityGate } from "./quality";
 import { matchAssets } from "./matcher";
@@ -84,7 +84,12 @@ export async function runExtraction(
     if (!input.sourceUrl) throw new Error("runExtraction: auto mode requires sourceUrl");
     const extracted = await extractFromUrl(input.sourceUrl);
     inventory = extracted.inventory;
-    businessName = extracted.siteName;
+    // og:site_name beats a domain guess when markup was actually readable;
+    // when it wasn't (a blocked/unreachable site — extractFromUrl degrades
+    // to an empty inventory rather than throwing, see its own comment), a
+    // real name beats brain.ts's generic "this brand" copy fallback. Free —
+    // pure string parsing of the URL the user already gave us.
+    businessName = extracted.siteName ?? deriveBrandNameFromUrl(input.sourceUrl);
     businessDescription = extracted.description;
     await emit(
       "extracting",

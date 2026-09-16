@@ -43,7 +43,9 @@ lib/capabilities/      One JSON per template (data, not code) + index.ts loader/
 lib/runtime/            Client-side game player
   mount.ts                mount(spec, container, placement) → { teardown } — the runtime entry point
   gameModule.ts            GameModule contract every template implements
-  games/                   one file per template (catch.ts, guessPrice.ts)
+  games/                   one file per template (catch.ts, guessPrice.ts,
+                           chainPop.ts, shooter.ts, sweetSpot.ts)
+    spriteRender.ts          shared subject-aware draw helpers + the celebrate primitive — see hazards list
   stage.ts, loop.ts, input.ts, reward.ts, telemetry.ts   shared runtime services
   fixtures/sampleGameSpec.ts   hand-written GameSpecs for offline dev/demo (no pipeline needed)
 
@@ -129,19 +131,86 @@ touching the related area.
   `hero`); a role that *frames* a photo (a tile, a card) doesn't need it —
   see `ProcessedAsset.presentation`/`docs/ARCHITECTURE.md` §3 for how to
   render a non-isolated photo well instead.
-- **Never crop a `"photographic"` asset to make it "fit."** The first
-  attempt at the fix above filled a tile's frame with the photo's own
-  `backgroundColor` (right) but also cropped into the sprite to reduce
-  visible backdrop margin (wrong) — a subject that already filled most of
-  the frame got its head/feet/edges cut off. Always scale the *whole*
-  image in (Canvas `drawImage` "contain" semantics, no source-rect
-  cropping) and fill the leftover space with `backgroundColor` and/or a
-  pre-rendered blurred self-extension (`backgroundTreatment` — see
-  `docs/ARCHITECTURE.md` §3) instead of cropping toward it.
+- **Never crop a `"photographic"` asset to make it "fit" — unless you have
+  `subjectBounds`, and then only toward it.** The first attempt at the fix
+  above filled a tile's frame with the photo's own `backgroundColor`
+  (right) but also cropped into the sprite to reduce visible backdrop
+  margin (wrong) — a subject that already filled most of the frame got its
+  head/feet/edges cut off. The rule is now: without a known subject
+  boundary, always scale the *whole* image in (Canvas `drawImage` "contain"
+  semantics, no source-rect cropping) and fill the leftover space with
+  `backgroundColor` and/or a pre-rendered blurred self-extension
+  (`backgroundTreatment`) instead of cropping toward it. *With* a known
+  boundary (`ProcessedAsset.subjectBounds` — see `docs/ARCHITECTURE.md` §3)
+  it's safe, and often much better-looking, to crop toward it — that field
+  exists specifically to mark the part of the frame that's genuinely unsafe
+  to touch, so cropping to it (never into it) removes only padding, never
+  content.
+- **Subject-aware sprite rendering lives in `lib/runtime/games/spriteRender.ts`
+  — reuse it, don't re-derive it.** `containFit`, `colorAdjustFilterString`,
+  `drawAssetContain`, `createBlurredBackdrop`, `drawArcText`, and the
+  `Celebration`/`updateCelebrations`/`drawCelebration` primitive are shared
+  across every template's runtime module. This used to be copy-pasted
+  between `chainPop.ts` and `shooter.ts` before it was extracted here — a
+  new template needing subject-cropped rendering, a blurred backdrop, or
+  curved text should import from this file, not write a fourth copy.
+- **Every game module must call `ctx.recordEngagement(assetId)` when the
+  player genuinely interacts with a real product asset.** `mount.ts`
+  accumulates these (deduped) and shows a recap gallery of the actual
+  products played with on the reward screen — the highest-attention moment
+  of the whole session (the peak-end rule: players remember the peak and
+  the end of an experience most, and the reward screen previously showed
+  zero product imagery). Call it only for a *real* asset a player
+  succeeded on — never for hazards/decoys/generated-shape fallbacks/
+  synthesized filler (a synthesized brand-colour gem in `chainPop.ts`, a
+  hazard in `catch.ts`, a missed/wrong shot in `shooter.ts`). See
+  `catch.ts`'s catch branch, `chainPop.ts`'s `popGroup()`, `shooter.ts`'s
+  `resolveHit()`, and `guessPrice.ts`'s `startRound()` (every round shows a
+  real hero regardless of guess accuracy, so recording happens there
+  unconditionally) for the four existing patterns — pick whichever matches
+  your template's "moment of success." The same primitive from
+  `spriteRender.ts` (above) is the natural pairing: a `Celebration` pushed
+  at the same call site gives the player a brief grow-and-fade look at what
+  they just engaged with, instead of it just vanishing.
+- **A game module calling `ctx.complete()` synchronously from `update()`
+  used to crash `chainPop.ts`'s next `render()` call in the same frame.**
+  `mount.ts`'s `onGameComplete()` runs synchronously up to its first
+  `await`, which includes `gameModule.teardown()` — so state a template
+  clears in `teardown()` (e.g. `chainPop.ts`'s `this.grid = []`) could still
+  get read by one more `render()` call before the loop actually stopped,
+  since `loop.ts` unconditionally called `update()` then `render()` every
+  tick. Fixed centrally in `loop.ts` (it now checks `running` again right
+  after `update()`, since `loop.stop()` sets that synchronously in the same
+  call chain) — new templates don't need to guard against this themselves,
+  but don't remove that check, and don't assume `render()` can't run after
+  `teardown()` clears something without re-verifying against this fix.
 - **`undici`'s default max header size is small.** Some real-world sites
   return oversized response headers that blow past Node's default and throw
   before `safeFetch.ts` even gets a body. Both fetches there use a shared
   `undici.Agent({ maxHeaderSize: 1_048_576 })` dispatcher.
+- **A site that blocks non-browser User-Agents is expected behaviour, not a
+  bug to route around.** Confirmed live: uniqlo.com's edge WAF silently
+  drops (no response at all, not even a clean 4xx) any request carrying our
+  honest `PlayLoopBot` User-Agent. Do not "fix" this by spoofing a browser
+  UA to evade a site's own deliberate bot-detection — that's evasion of an
+  access control the site owner put up on purpose, not a defect in this
+  codebase. Two real bugs *were* found and fixed alongside this, though:
+  (1) `extract/index.ts`'s root document fetch was the one ladder step not
+  wrapped in `tryStep()`, so a fully-blocked site threw all the way up
+  instead of degrading to an empty inventory (which already routes the user
+  to "no template fit — try manual mode", exactly as build spec §23
+  intends: "sites blocking fetch → empty extraction, not a thrown error").
+  (2) A single blocked origin still cost ~40s of real wall time even after
+  that fix — the robots.txt lookup, the root page, the Shopify
+  `products.json` probe, and the sitemap.xml probe each independently paid
+  the *same* ~10s timeout discovering the *same* fact. `safeFetch.ts`'s
+  `originFailureCache` (5-minute TTL, separate from the 24h response/robots
+  caches) now remembers a hard failure (timeout/connection error — never a
+  clean non-2xx response) per origin so every subsequent attempt in the
+  same run fails immediately instead of re-timing-out; verified live this
+  brought uniqlo.com's total extraction time down to ~11s (one honest
+  timeout — the real floor, since confirming a truly silent origin
+  necessarily costs one full wait).
 - **macOS `sed` needs `-E`** for extended regex (e.g. `\+`) if you're
   scripting edits — BSD sed, not GNU.
 - **Verification workflow for UI changes:** temporarily
@@ -170,9 +239,17 @@ touching the related area.
 
 ## What's implemented vs. reserved
 
-Three templates are live end-to-end: `catch`, `guess_price`, and
-`chain_pop` (see `lib/capabilities/*.json`, `lib/runtime/games/*.ts`).
-`TemplateId` in `types.ts` also reserves `"match"` and `"stack"` — they
-exist in the type system (and the capability-schema Zod validator)
-precisely so more templates can be added later without touching that
-shared contract at all. See `docs/ADDING_A_TEMPLATE.md`.
+Five templates are live end-to-end: `catch`, `guess_price`, `chain_pop`,
+`shooter`, and `sweet_spot` (see `lib/capabilities/*.json`,
+`lib/runtime/games/*.ts`). `TemplateId` in `types.ts` also reserves
+`"match"` and `"stack"` — they exist in the type system (and the
+capability-schema Zod validator) precisely so more templates can be added
+later without touching that shared contract at all. See
+`docs/ADDING_A_TEMPLATE.md`.
+
+**`sweet_spot` is the eligibility floor.** It is the only template with no
+`fallback: "none"` role, so it stays eligible on sites where extraction
+yields almost nothing — verified live against deathwishcoffee.com, whose
+two surviving assets leave `catch` (needs 4 isolatable collectibles) and
+`guess_price` (needs a priced hero) both ineligible. Don't add a
+hard-required role to it; that floor is the whole reason it exists.

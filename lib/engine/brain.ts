@@ -20,16 +20,19 @@ import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import type { Schema } from "@google/generative-ai";
 import sharp from "sharp";
 import { safeFetchImage } from "@/lib/engine/safeFetch";
+import { normalizeRewardTier, validateRewardTier } from "@/lib/engine/specRules";
 import type {
   AssetBackgroundTreatment,
   AssetInventory,
   AssetPresentation,
   BrainRequest,
   BrainResponse,
+  ColorAdjust,
   GameCapability,
   GameCopy,
   MatchReport,
   RawAsset,
+  SubjectBounds,
   TemplateId,
   TemplateMatch,
 } from "@/lib/engine/types";
@@ -155,6 +158,14 @@ const RESPONSE_SCHEMA: Schema = {
     // Same pattern again — values are "solid" | "blurFill", only
     // meaningful for ids marked "photographic" above.
     imageBackgroundTreatment: { type: SchemaType.OBJECT },
+    // Same free-form-object pattern — values are {x,y,width,height} boxes
+    // (SubjectBounds). Clamped hard in validateBrainResponse: a box that
+    // would extend past the frame is clamped down to what's left, never
+    // trusted as-is.
+    imageSubjectBounds: { type: SchemaType.OBJECT },
+    // Same pattern — values are {brightness,contrast,saturation} multipliers
+    // (ColorAdjust), each clamped to [0.5, 1.5] in validateBrainResponse.
+    imageColorAdjust: { type: SchemaType.OBJECT },
   },
   required: ["category", "template", "reason", "copy", "rewards", "tuning"],
 };
@@ -185,7 +196,16 @@ async function callGemini(apiKey: string, input: RunBrainInput, eligibleTemplate
             "is itself close to one flat colour (a plain but non-white studio background), or \"blurFill\" if it's a " +
             "real, detailed scene (a room, outdoors, a person in an environment) where a flat colour fill would look " +
             "like an obvious patch instead of a natural extension of the photo. " +
-            "Only include ids you're actually confident about — omit any you're unsure of.",
+            "For `imageSubjectBounds`, give a tight bounding box {x, y, width, height}, each 0..1 as a fraction of the " +
+            "image's own width/height, around ONLY the real subject (the product, the person, the focal object) — " +
+            "excluding empty padding/backdrop around it. Be conservative: a box that's slightly too loose is fine, a " +
+            "box that clips any part of the real subject is not — when in doubt, make it bigger. Skip any image where " +
+            "the subject already fills nearly the whole frame (there's nothing useful to tighten). " +
+            "For `imageColorAdjust`, give {brightness, contrast, saturation} as multipliers around 1.0 (e.g. 1.15 = " +
+            "15% brighter) ONLY for an image that's noticeably under/over-exposed or washed out compared to the rest " +
+            "of the set — the goal is a consistent, professional-looking grid, not a creative re-edit. Omit it " +
+            "entirely for any image that already looks fine as-is; most images should have no entry here at all. " +
+            "Only include ids you're actually confident about, for any of these four fields — omit any you're unsure of.",
         ].join("\n")
       : "",
     "",
@@ -317,6 +337,8 @@ function validateBrainResponse(raw: unknown, input: RunBrainInput): BrainRespons
       passedIds,
       isAssetBackgroundTreatment,
     ),
+    imageSubjectBounds: validateAssetObjectMap(obj.imageSubjectBounds, passedIds, parseSubjectBoundsValue),
+    imageColorAdjust: validateAssetObjectMap(obj.imageColorAdjust, passedIds, parseColorAdjustValue),
   };
 }
 
@@ -350,6 +372,72 @@ function isAssetPresentation(value: unknown): value is AssetPresentation {
 
 function isAssetBackgroundTreatment(value: unknown): value is AssetBackgroundTreatment {
   return value === "solid" || value === "blurFill";
+}
+
+/** Same "only real, gate-passed asset ids survive" discipline as
+ * validateAssetEnumMap, for a map whose values are themselves objects
+ * (SubjectBounds, ColorAdjust) rather than a bare enum string — `parse`
+ * does the per-value shape/range check and returns null for anything that
+ * doesn't hold up, same as `isValidValue` does for the enum case. */
+function validateAssetObjectMap<T>(
+  raw: unknown,
+  passedIds: Set<string>,
+  parse: (value: unknown) => T | null,
+): Record<string, T> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, T> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!passedIds.has(id)) continue;
+    const parsed = parse(value);
+    if (parsed === null) continue;
+    out[id] = parsed;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Clamps to a box that can never claim more than the frame — a
+ * hallucinated { x: 0.9, width: 0.9 } (which would extend to 1.8) is
+ * clamped down to what's actually left (width: 0.1), never trusted as-is.
+ * A minimum size floor (0.05) guards against a degenerate near-zero box
+ * that would make the "safe to crop toward" region meaningless. */
+function parseSubjectBoundsValue(value: unknown): SubjectBounds | null {
+  if (!value || typeof value !== "object") return null;
+  const obj = value as Record<string, unknown>;
+  const { x, y, width, height } = obj;
+  if (
+    typeof x !== "number" ||
+    typeof y !== "number" ||
+    typeof width !== "number" ||
+    typeof height !== "number" ||
+    [x, y, width, height].some((n) => Number.isNaN(n))
+  ) {
+    return null;
+  }
+  const cx = clampNumber(x, 0, 1);
+  const cy = clampNumber(y, 0, 1);
+  return {
+    x: cx,
+    y: cy,
+    width: clampNumber(width, 0.05, 1 - cx),
+    height: clampNumber(height, 0.05, 1 - cy),
+  };
+}
+
+/** Each channel clamped to [0.5, 1.5] — see ColorAdjust's doc comment
+ * ("a correction, not a re-edit"). A field the model omitted defaults to
+ * 1 (no change) rather than rejecting the whole entry. */
+function parseColorAdjustValue(value: unknown): ColorAdjust | null {
+  if (!value || typeof value !== "object") return null;
+  const obj = value as Record<string, unknown>;
+  const brightness = typeof obj.brightness === "number" ? obj.brightness : 1;
+  const contrast = typeof obj.contrast === "number" ? obj.contrast : 1;
+  const saturation = typeof obj.saturation === "number" ? obj.saturation : 1;
+  if ([brightness, contrast, saturation].some((n) => Number.isNaN(n))) return null;
+  return {
+    brightness: clampNumber(brightness, 0.5, 1.5),
+    contrast: clampNumber(contrast, 0.5, 1.5),
+    saturation: clampNumber(saturation, 0.5, 1.5),
+  };
 }
 
 function validateCopy(raw: unknown, businessName: string | undefined): GameCopy {
@@ -395,10 +483,22 @@ function validateRewards(raw: unknown, cap: GameCapability): BrainResponse["rewa
     const minScore = typeof obj.minScore === "number" ? obj.minScore : undefined;
     const label = typeof obj.label === "string" ? obj.label : undefined;
     const percentOff = typeof obj.percentOff === "number" ? obj.percentOff : undefined;
-    if (minScore === undefined || !label || percentOff === undefined) continue;
-    if (minScore >= maxRealistic) continue; // nobody can reach it — drop it
-    if (minScore < 0 || percentOff <= 0 || percentOff > 90) continue;
-    parsed.push({ minScore: Math.round(minScore), label, percentOff: Math.round(percentOff) });
+    if (minScore === undefined || label === undefined || percentOff === undefined) continue;
+
+    // Normalize BEFORE validating, which is the whole reason this goes
+    // through specRules rather than open-coding the checks: the old order
+    // tested the raw number and rounded afterwards, so minScore 1399.6 passed
+    // a `< 1400` ceiling and was then stored as 1400 — above the very ceiling
+    // it had just been checked against. The rules themselves are unchanged;
+    // they now just live in one place the editor and the PATCH route share.
+    const tier = normalizeRewardTier({ minScore, label, percentOff });
+    if (validateRewardTier(tier, { maxScore: maxRealistic }).length > 0) continue;
+
+    // Narrowing, not a rule: RewardTier allows percentOff: null for a
+    // thank-you tier, but BrainResponse only ever carries discount tiers and
+    // the loop above already refused a non-numeric percentOff.
+    if (tier.percentOff === null) continue;
+    parsed.push({ minScore: tier.minScore, label: tier.label, percentOff: tier.percentOff });
   }
 
   parsed.sort((a, b) => a.minScore - b.minScore);

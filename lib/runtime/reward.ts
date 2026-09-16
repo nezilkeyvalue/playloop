@@ -8,9 +8,11 @@ import type { RewardTier } from "@/lib/engine/types";
 
 export interface ResolvedReward {
   tier: RewardTier;
-  /** Index into the *original* (unsorted) rewards array, or -1 if the spec
-   * declared no reward tiers at all (defensive — should not happen for a
-   * valid GameSpec, but the runtime must not crash on a malformed fixture). */
+  /** Index into the *original* (unsorted) rewards array, or -1 when no real
+   * tier applies: either the spec declared no reward tiers at all
+   * (defensive — should not happen for a valid GameSpec, but the runtime
+   * must not crash on a malformed fixture), or the score cleared no tier's
+   * minScore. Both cases hand back NO_REWARD_FALLBACK. */
   tierIndex: number;
 }
 
@@ -32,20 +34,20 @@ export function resolveReward(score: number, rewards: RewardTier[]): ResolvedRew
   const withIndex = rewards.map((tier, index) => ({ tier, index }));
   withIndex.sort((a, b) => a.tier.minScore - b.tier.minScore);
 
-  const first = withIndex[0];
-  if (!first) {
-    // Unreachable — rewards.length > 0 here — but keeps this function
-    // total under strict/noUncheckedIndexedAccess without a non-null
-    // assertion.
-    return { tier: NO_REWARD_FALLBACK, tierIndex: -1 };
-  }
-
-  let best = first;
+  // Seeded null, not the lowest tier: a score below every threshold has
+  // earned nothing. The server agrees — finishPlay (lib/db/queries.ts)
+  // returns `tier: null` for exactly this case, so seeding with the lowest
+  // tier made the client promise a reward the API never issued. Starting
+  // from null also keeps this total under noUncheckedIndexedAccess with no
+  // non-null assertion.
+  let best: { tier: RewardTier; index: number } | null = null;
   for (const entry of withIndex) {
     if (score >= entry.tier.minScore) best = entry;
   }
 
-  return { tier: best.tier, tierIndex: best.index };
+  return best
+    ? { tier: best.tier, tierIndex: best.index }
+    : { tier: NO_REWARD_FALLBACK, tierIndex: -1 };
 }
 
 /**

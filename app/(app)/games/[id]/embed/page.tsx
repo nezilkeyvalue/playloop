@@ -7,7 +7,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { getCapability, supportsPlacement } from "@/lib/capabilities";
+import {
+  findIncompleteRoles,
+  getCapability,
+  supportsPlacement,
+} from "@/lib/capabilities";
+import type { RoleGap } from "@/lib/capabilities";
 import type { GameRecord, Placement } from "@/lib/engine/types";
 
 const PLACEMENT_LABELS: Record<Placement, string> = {
@@ -16,6 +21,38 @@ const PLACEMENT_LABELS: Record<Placement, string> = {
   modal: "Modal",
   ad: "Ad unit",
 };
+
+/** "3 more collectible images", joined when a template is short on two roles. */
+function describeGaps(gaps: RoleGap[]): string {
+  return gaps
+    .map((gap) => {
+      const missing = Math.max(0, gap.need - gap.have);
+      return `${missing} more ${gap.label} image${missing === 1 ? "" : "s"}`;
+    })
+    .join(" and ");
+}
+
+function incompleteMessage(gaps: RoleGap[]): string {
+  if (gaps.length === 0) return "This game isn't ready to publish.";
+  return `This game isn't ready to publish. Add ${describeGaps(gaps)} in the editor first.`;
+}
+
+/** The publish route answers with a machine code the merchant can act on;
+ * collapsing every non-OK response to "Could not publish." threw that away —
+ * an incomplete game and a dead game read identically and neither told the
+ * merchant what to do next. */
+function publishErrorMessage(body: { error?: string; gaps?: RoleGap[] } | null): string {
+  switch (body?.error) {
+    case "incomplete_roles":
+      return incompleteMessage(body.gaps ?? []);
+    case "unsupported_placement":
+      return "This template doesn't support that placement.";
+    case "not_found":
+      return "This game no longer exists — reload the page.";
+    default:
+      return "Could not publish.";
+  }
+}
 
 export default function EmbedPage() {
   const { id } = useParams<{ id: string }>();
@@ -45,6 +82,9 @@ export default function EmbedPage() {
     () => (game ? getCapability(game.spec.template) : undefined),
     [game],
   );
+  // The editor is where images are assigned, so this page can only report the
+  // shortfall — the publish route enforces it (publish/route.ts).
+  const gaps = useMemo(() => (game ? findIncompleteRoles(game.spec) : []), [game]);
   const supportedPlacements = useMemo(
     () =>
       capability
@@ -76,11 +116,17 @@ export default function EmbedPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ placement }),
       });
-      if (!res.ok) throw new Error("Could not publish.");
+      if (!res.ok) {
+        const body = (await res
+          .json()
+          .catch(() => null)) as { error?: string; gaps?: RoleGap[] } | null;
+        setError(publishErrorMessage(body));
+        return;
+      }
       const data = (await res.json()) as { slug: string; embed: string };
       setResult(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Publish failed.");
+    } catch {
+      setError("Could not publish.");
     } finally {
       setPublishing(false);
     }
@@ -108,7 +154,7 @@ export default function EmbedPage() {
               onClick={() => setPlacement(p)}
               className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
                 placement === p
-                  ? "border-transparent bg-primary text-white"
+                  ? "border-transparent bg-primary text-primary-foreground"
                   : "border-border hover:border-primary/30"
               }`}
             >
@@ -125,10 +171,17 @@ export default function EmbedPage() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
+      {gaps.length > 0 && (
+        <p className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+          <strong className="font-semibold">This game isn&apos;t ready to publish.</strong>{" "}
+          Add {describeGaps(gaps)} in the editor first.
+        </p>
+      )}
+
       <button
         onClick={handlePublish}
-        disabled={publishing || supportedPlacements.length === 0}
-        className="w-full rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-40"
+        disabled={publishing || supportedPlacements.length === 0 || gaps.length > 0}
+        className="w-full rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition active:scale-[0.98] disabled:opacity-40"
       >
         {publishing ? "Publishing…" : result ? "Republish with this placement" : "Publish"}
       </button>
