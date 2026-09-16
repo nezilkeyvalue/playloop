@@ -13,8 +13,10 @@ import * as cheerio from "cheerio";
 import type { RawAsset } from "@/lib/engine/types";
 import { makeRawAsset, resolveUrl } from "./util";
 
-const SKIP_PATTERN = /(sprite|icon|favicon|logo|pixel|tracking|badge|payment|visa|mastercard|paypal|swatch|thumb-?nav)/i;
-const PRODUCT_HINT_PATTERN = /(product|item-card|grid-item|catalog|collection|shop-item)/i;
+const SKIP_PATTERN =
+  /(sprite|icon|favicon|logo|pixel|tracking|badge|payment|visa|mastercard|paypal|swatch|thumb-?nav|banner|mobile-cms|cms-content|\/storage\/mobile)/i;
+const PRODUCT_HINT_PATTERN =
+  /(product|item-card|grid-item|catalog\/product|collection|shop-item|uploads\/catalog)/i;
 const MAX_DOM_CANDIDATES = 30;
 const MIN_MARKUP_DIMENSION = 150;
 
