@@ -226,6 +226,66 @@ export const chainPopGameSpec: GameSpec = {
 };
 
 // ---------------------------------------------------------------------------
+// Chomp — "Corner Grocer"
+// ---------------------------------------------------------------------------
+
+const chompPellets: ProcessedAsset[] = [
+  asset("grocery-1", "#D64545", "🍎", { name: "Honeycrisp Apple", priceMinor: 150 }),
+  asset("grocery-2", "#E2A233", "🧀", { name: "Aged Cheddar Block", priceMinor: 900 }),
+  asset("grocery-3", "#7A9E4C", "🥑", { name: "Avocado", priceMinor: 200 }),
+  asset("grocery-4", "#C97A3E", "🥐", { name: "Butter Croissant", priceMinor: 350 }),
+  asset("grocery-5", "#5E8D6A", "🥦", { name: "Broccoli Crown", priceMinor: 250 }),
+  asset("grocery-6", "#B6472E", "🍅", { name: "Vine Tomatoes", priceMinor: 300 }),
+];
+
+export const chompGameSpec: GameSpec = {
+  id: "demo-chomp",
+  version: 1,
+  template: "chomp",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Corner Grocer",
+    accent: "#3F8F5E",
+    secondaryAccent: "#D64545",
+    background: "#FBF8F0",
+    foreground: "#22301F",
+    fontFamily: "Nunito, system-ui, sans-serif",
+    palette: ["#3F8F5E", "#D64545", "#FBF8F0", "#22301F"],
+  },
+  copy: {
+    headline: "Chomp your way through the aisle",
+    subhead: "Steer around the board and eat the groceries before their clock runs out.",
+    ctaStart: "Start chomping",
+    ctaReplay: "Chomp again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: chompPellets,
+  roles: {
+    pellet: chompPellets.map((a) => a.id),
+    chaser: { fallback: "generatedShape" },
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "CHOMP10" },
+    { minScore: 450, label: "15% off", percentOff: 15, code: "CHOMP15" },
+    { minScore: 850, label: "20% off", percentOff: 20, code: "CHOMP20" },
+  ],
+  durationSeconds: 40,
+  tuning: {
+    pelletCount: 10,
+    moveSpeed: 260,
+    pelletLifetimeSec: 4,
+    durationSec: 40,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Space Shooter — "Nova Bites"
 // ---------------------------------------------------------------------------
 
@@ -284,6 +344,73 @@ export const shooterGameSpec: GameSpec = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Whack — "Burrow Pet Co."
+// ---------------------------------------------------------------------------
+
+const whackMoles: ProcessedAsset[] = [
+  asset("toy-1", "#C97A3E", "🦴", { name: "Rope Chew Toy", priceMinor: 1200 }),
+  asset("toy-2", "#5E8D6A", "🎾", { name: "Squeaky Ball", priceMinor: 800 }),
+  asset("toy-3", "#7A6AB6", "🧸", { name: "Plush Otter", priceMinor: 1600 }),
+  asset("toy-4", "#D6A63F", "🦆", { name: "Duck Squeaker", priceMinor: 1000 }),
+  asset("toy-5", "#4E7A9C", "🪢", { name: "Tug Rope", priceMinor: 900 }),
+  asset("toy-6", "#B6472E", "🐿️", { name: "Snuffle Mat", priceMinor: 1800 }),
+];
+
+const whackHazards: ProcessedAsset[] = [asset("hazard-sock", "#5A5A5A", "🧦", { name: "Chewed Sock" })];
+
+export const whackGameSpec: GameSpec = {
+  id: "demo-whack",
+  version: 1,
+  template: "whack",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Burrow Pet Co.",
+    accent: "#C97A3E",
+    secondaryAccent: "#5A5A5A",
+    background: "#FBF6EF",
+    foreground: "#2A211A",
+    fontFamily: "Baloo 2, system-ui, sans-serif",
+    palette: ["#C97A3E", "#5E8D6A", "#FBF6EF", "#2A211A"],
+  },
+  copy: {
+    headline: "Whack your way to a deal",
+    subhead: "Tap the toys before they duck back down. Leave the chewed sock alone.",
+    ctaStart: "Start whacking",
+    ctaReplay: "Whack again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: [...whackMoles, ...whackHazards],
+  roles: {
+    mole: whackMoles.map((a) => a.id),
+    hazard: whackHazards.map((a) => a.id),
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "WHACK10" },
+    { minScore: 400, label: "15% off", percentOff: 15, code: "WHACK15" },
+    { minScore: 800, label: "20% off", percentOff: 20, code: "WHACK20" },
+  ],
+  durationSeconds: 35,
+  tuning: {
+    holeCount: 7,
+    popRateHz: 1.1,
+    upTimeSec: 0.9,
+    durationSec: 35,
+    hazardRatio: 0.2,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Sweet Spot — "Bloom Coffee Co."
+// ---------------------------------------------------------------------------
+
 const sweetSpotPrizes: ProcessedAsset[] = [
   asset("roast-1", "#7B4B2A", "\u2615", { name: "House Blend", priceMinor: 1400, currency: "USD" }),
   asset("roast-2", "#A2673B", "\u2615", { name: "Single Origin Kenya", priceMinor: 1900, currency: "USD" }),
@@ -330,6 +457,127 @@ export const sweetSpotGameSpec: GameSpec = {
     zoneShrink: 0.9,
     lives: 3,
     durationSec: 40,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Simon — "Bright Beat Audio"
+// ---------------------------------------------------------------------------
+
+const simonTiles: ProcessedAsset[] = [
+  asset("earbuds", "#E24E6B", "🎧", { name: "Wireless Earbuds" }),
+  asset("speaker", "#3E8FB0", "🔊", { name: "Mini Speaker" }),
+  asset("turntable", "#E2A233", "🎚️", { name: "USB Turntable" }),
+  asset("headphones", "#5B4B8A", "🎵", { name: "Studio Headphones" }),
+];
+
+export const simonGameSpec: GameSpec = {
+  id: "demo-simon",
+  version: 1,
+  template: "simon",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Bright Beat Audio",
+    accent: "#E24E6B",
+    secondaryAccent: "#3E8FB0",
+    background: "#F5F1FA",
+    foreground: "#231B33",
+    fontFamily: "Space Grotesk, system-ui, sans-serif",
+    palette: ["#E24E6B", "#3E8FB0", "#E2A233", "#5B4B8A"],
+  },
+  copy: {
+    headline: "Remember the beat",
+    subhead: "Watch the sequence, then tap it back. It gets longer — and faster — every round.",
+    ctaStart: "Start listening",
+    ctaReplay: "Play again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: simonTiles,
+  roles: {
+    tile: simonTiles.map((a) => a.id),
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "BEAT10" },
+    { minScore: 350, label: "15% off", percentOff: 15, code: "BEAT15" },
+    { minScore: 700, label: "20% off", percentOff: 20, code: "BEAT20" },
+  ],
+  durationSeconds: 60,
+  tuning: {
+    tileCount: 4,
+    flashDurationSec: 0.55,
+    gapDurationSec: 0.28,
+    maxRounds: 12,
+    durationSec: 60,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Slice — "Squeeze Co."
+// ---------------------------------------------------------------------------
+
+const sliceCollectibles: ProcessedAsset[] = [
+  asset("juice-1", "#E8A93E", "🍊", { name: "Cold-Pressed Orange", priceMinor: 600 }),
+  asset("juice-2", "#6FAE4A", "🥝", { name: "Kiwi Lime Blend", priceMinor: 700 }),
+  asset("juice-3", "#D6456B", "🍓", { name: "Strawberry Basil", priceMinor: 650 }),
+  asset("juice-4", "#E2C93E", "🍍", { name: "Pineapple Ginger", priceMinor: 700 }),
+  asset("juice-5", "#8A5AA8", "🫐", { name: "Blueberry Beet", priceMinor: 750 }),
+  asset("juice-6", "#4FA88A", "🥬", { name: "Green Detox", priceMinor: 680 }),
+];
+
+const sliceHazards: ProcessedAsset[] = [asset("hazard-cup", "#5A5A5A", "🗑️", { name: "Empty Cup" })];
+
+export const sliceGameSpec: GameSpec = {
+  id: "demo-slice",
+  version: 1,
+  template: "slice",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Squeeze Co.",
+    accent: "#E8A93E",
+    secondaryAccent: "#5A5A5A",
+    background: "#FBFAF3",
+    foreground: "#233421",
+    fontFamily: "Poppins, system-ui, sans-serif",
+    palette: ["#E8A93E", "#6FAE4A", "#D6456B", "#FBFAF3"],
+  },
+  copy: {
+    headline: "Slice into savings",
+    subhead: "Swipe across the bottles before they drop. Leave the empty cups alone.",
+    ctaStart: "Start slicing",
+    ctaReplay: "Slice again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: [...sliceCollectibles, ...sliceHazards],
+  roles: {
+    collectible: sliceCollectibles.map((a) => a.id),
+    hazard: sliceHazards.map((a) => a.id),
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "SLICE10" },
+    { minScore: 400, label: "15% off", percentOff: 15, code: "SLICE15" },
+    { minScore: 800, label: "20% off", percentOff: 20, code: "SLICE20" },
+  ],
+  durationSeconds: 35,
+  tuning: {
+    launchRateHz: 1.1,
+    launchSpeed: 650,
+    gravity: 1400,
+    durationSec: 35,
+    hazardRatio: 0.18,
   },
   meta: {
     mode: "manual",
@@ -447,6 +695,10 @@ export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-catch": catchGameSpec,
   "demo-guess-price": guessPriceGameSpec,
   "demo-chain-pop": chainPopGameSpec,
+  "demo-chomp": chompGameSpec,
+  "demo-whack": whackGameSpec,
+  "demo-simon": simonGameSpec,
+  "demo-slice": sliceGameSpec,
   "demo-shooter": shooterGameSpec,
   "demo-catch-lumen": skincareGameSpec,
   "demo-guess-price-kicks": sneakerGameSpec,

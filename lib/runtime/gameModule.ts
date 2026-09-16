@@ -55,6 +55,12 @@ export interface RuntimeContext {
   tuning: Record<string, number>;
   roles: Record<string, ResolvedRole>;
   brand: BrandKit;
+  /** brand.logoUrl, pre-loaded once at mount time — null if there's no logo
+   * or it failed to load. The logo isn't tied to any role (buildBrandKit
+   * sets it straight from inventory.brand.logo, outside spec.assets/roles),
+   * so mount.ts loads it separately rather than a game module ever calling
+   * `new Image()` itself (forbidden — see docs/ADDING_A_TEMPLATE.md). */
+  brandLogo: HTMLImageElement | null;
   copy: GameCopy;
   /** Logical (CSS-pixel, not device-pixel) stage size. Query fresh each frame if needed. */
   stage: { width: number; height: number };

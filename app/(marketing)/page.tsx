@@ -127,7 +127,7 @@ export default function LandingPage() {
 
       <Reveal delay={0} className="mt-28 grid w-full max-w-3xl grid-cols-1 gap-8 sm:grid-cols-3">
         <StatBlock value={60} suffix="s" label="from URL to playable game" />
-        <StatBlock value={2} label="ready-made game templates" />
+        <StatBlock value={7} label="ready-made game templates" />
         <StatBlock value={1} label="line of code to embed" />
       </Reveal>
     </main>

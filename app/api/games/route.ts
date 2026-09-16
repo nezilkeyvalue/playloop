@@ -28,7 +28,7 @@ const gameSpecSchema = z
     // implemented and selectable in auto mode. Keep this in sync with
     // TemplateId (lib/engine/types.ts) and the capabilities registry's own
     // enum (lib/capabilities/index.ts) — see docs/ADDING_A_TEMPLATE.md.
-    template: z.enum(["catch", "guess_price", "chain_pop", "shooter", "sweet_spot", "match", "stack"]),
+    template: z.enum(["catch", "guess_price", "chain_pop", "shooter", "sweet_spot", "match", "stack","chomp", "whack", "simon", "slice"]),
     placements: z.array(placementSchema).min(1),
     brand: z.record(z.any()),
     copy: z.record(z.any()),

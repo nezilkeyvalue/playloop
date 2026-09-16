@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "id": "slice",
+  "name": "Slice",
+  "summary": "Products launch into the air; swipe across them to slice before they fall. Avoid slicing the decoys.",
+
+  "roles": [
+    {
+      "id": "collectible",
+      "purpose": "Launched items the player slices with a swipe",
+      "count": { "min": 4, "ideal": 8, "max": 12 },
+      "requires": {
+        "subjectTypeIn": ["product"],
+        "isolatable": true,
+        "minShortEdge": 300,
+        "aspectRange": [0.5, 2.0],
+        "maxTextDensity": 0.15,
+        "maxSubjectCount": 1
+      },
+      "prefers": {
+        "distinctPhash": true,
+        "coverageRange": [0.25, 0.85],
+        "uniformScale": true,
+        "contrastAgainst": "stage.background"
+      },
+      "transforms": ["cutout", "trim", "padSquare", "resize", "outline", "shadow"],
+      "fallback": "none"
+    },
+    {
+      "id": "hazard",
+      "purpose": "Decoys that cost points if sliced",
+      "count": { "min": 0, "ideal": 2, "max": 4 },
+      "requires": { "isolatable": true },
+      "transforms": ["cutout", "trim", "padSquare", "desaturate"],
+      "fallback": "generatedShape",
+      "optional": true
+    },
+    {
+      "id": "stageBackground",
+      "purpose": "Play area backdrop",
+      "count": { "min": 0, "ideal": 1, "max": 1 },
+      "requires": { "subjectTypeIn": ["lifestyle", "pattern"] },
+      "transforms": ["cropAspect", "blur", "darken", "resize"],
+      "fallback": "brandGradient",
+      "optional": true
+    }
+  ],
+
+  "data": {
+    "required": [],
+    "optional": ["name", "priceMinor"]
+  },
+
+  "placements": {
+    "section": { "minWidth": 320, "minHeight": 420, "preferredAspect": 0.75 },
+    "fullpage": { "minWidth": 320, "minHeight": 480, "preferredAspect": 0.6 },
+    "modal": { "minWidth": 300, "minHeight": 400, "preferredAspect": 0.75 },
+    "ad": { "sizes": ["300x250", "320x480", "300x600"], "excluded": ["728x90"] }
+  },
+
+  "tuning": {
+    "launchRateHz": { "min": 0.5, "default": 1.1, "max": 2.5 },
+    "launchSpeed": { "min": 400, "default": 650, "max": 900 },
+    "gravity": { "min": 900, "default": 1400, "max": 2000 },
+    "durationSec": { "min": 20, "default": 35, "max": 60 },
+    "hazardRatio": { "min": 0, "default": 0.18, "max": 0.4 }
+  },
+
+  "scoring": {
+    "maxRealistic": 1000,
+    "rewardTierHint": [0.3, 0.65]
+  },
+
+  "cost": { "buildMs": 380, "runtimeKb": 32 }
+}

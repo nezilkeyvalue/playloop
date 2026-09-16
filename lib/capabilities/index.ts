@@ -18,6 +18,10 @@ import type {
 import catchCapability from "./catch.json";
 import guessPriceCapability from "./guess_price.json";
 import chainPopCapability from "./chain_pop.json";
+import chompCapability from "./chomp.json";
+import whackCapability from "./whack.json";
+import simonCapability from "./simon.json";
+import sliceCapability from "./slice.json";
 import shooterCapability from "./shooter.json";
 import sweetSpotCapability from "./sweet_spot.json";
 
@@ -59,7 +63,7 @@ const placementConstraintSchema = z.object({
 
 const gameCapabilitySchema = z.object({
   version: z.literal(1),
-  id: z.enum(["catch", "guess_price", "chain_pop", "shooter", "sweet_spot", "match", "stack"]),
+  id: z.enum(["catch", "guess_price", "chain_pop", "shooter", "sweet_spot", "match", "stack", "chomp", "whack", "simon", "slice"]),
   name: z.string(),
   summary: z.string(),
   roles: z.array(capabilityRoleSchema).min(1),
@@ -90,6 +94,15 @@ const registry: Record<string, GameCapability> = {
   catch: validate(catchCapability, "catch.json"),
   guess_price: validate(guessPriceCapability, "guess_price.json"),
   chain_pop: validate(chainPopCapability, "chain_pop.json"),
+  chomp: validate(chompCapability, "chomp.json"),
+  whack: validate(whackCapability, "whack.json"),
+  simon: validate(simonCapability, "simon.json"),
+  slice: validate(sliceCapability, "slice.json"),
+
+/** All templates currently implemented (catch, guess_price, chain_pop,
+ * chomp, whack, simon, slice). Post-MVP ids (match, stack) are reserved in
+ * the type system but intentionally absent here — an absent capability
+ * makes a template automatically ineligible everywhere. */
   shooter: validate(shooterCapability, "shooter.json"),
   sweet_spot: validate(sweetSpotCapability, "sweet_spot.json"),
 };
