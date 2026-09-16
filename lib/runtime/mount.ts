@@ -116,6 +116,7 @@ function mountGame(
   shell.style.position = "relative";
   shell.style.width = "100%";
   shell.style.overflow = "hidden";
+  shell.style.isolation = "isolate";
   shell.style.fontFamily = brand.fontFamily || "system-ui, sans-serif";
   shell.style.background = "transparent";
   shell.style.userSelect = "none";
@@ -124,6 +125,7 @@ function mountGame(
   const canvas = document.createElement("canvas");
   canvas.style.position = "absolute";
   canvas.style.inset = "0";
+  canvas.style.zIndex = "0";
   canvas.style.display = "block";
   canvas.style.touchAction = "none";
 
@@ -139,14 +141,14 @@ function mountGame(
   overlay.style.padding = "24px";
   overlay.style.boxSizing = "border-box";
   overlay.style.color = brand.foreground;
-  overlay.style.background = `linear-gradient(180deg, ${brand.background}f2, ${brand.background}f2)`;
+  overlay.style.zIndex = "1";
+  const overlayBackdrop = opaqueOverlayBackdrop(brand.background);
+  overlay.style.background = overlayBackdrop;
 
   shell.appendChild(canvas);
   shell.appendChild(overlay);
   container.innerHTML = "";
   container.appendChild(shell);
-
-  setOverlay(overlay, renderLoadingState());
 
   // --- stage sizing --------------------------------------------------------
   const constraint = capability.placements[placement];
@@ -154,6 +156,8 @@ function mountGame(
     shell.style.height = `${stageController.size.height}px`;
   });
   shell.style.height = `${stageController.size.height}px`;
+
+  setOverlay(overlay, canvas, stageController, renderLoadingState(), overlayBackdrop);
 
   // --- input ----------------------------------------------------------------
   // Bound to the canvas, not the shell: the shell also contains the overlay
@@ -224,13 +228,13 @@ function mountGame(
     });
 
   function showIdleScreen() {
-    setOverlay(overlay, renderIdleState(brand, copy, () => startPlay(false)));
+    setOverlay(overlay, canvas, stageController, renderIdleState(brand, copy, () => startPlay(false)), overlayBackdrop);
   }
 
   function startPlay(isReplay: boolean) {
     score = 0;
     engagedAssetIds = new Set();
-    setOverlay(overlay, null); // hide chrome; the game renders on canvas
+    setOverlay(overlay, canvas, stageController, null, overlayBackdrop); // hide chrome; the game renders on canvas
     activeSessionToken = beginSession(slug);
     trackEvent(isReplay ? "replay" : "start", { slug });
 
@@ -267,18 +271,34 @@ function mountGame(
       .map((id) => loaded.get(id))
       .filter((a): a is LoadedAsset => Boolean(a?.image))
       .map((a) => ({ spriteUrl: a.image!.src, name: a.data?.name }));
-    const sessionToken = activeSessionToken ? await activeSessionToken : null;
-    const server = await endSession(sessionToken, finalScore);
     const resolved = resolveReward(finalScore, spec.rewards);
+    let sessionToken: string | null = null;
 
+    // Paint the reward overlay immediately — don't wait on network. The last
+    // game frame (sweet-spot bar, falling products, etc.) otherwise sits on
+    // the canvas under semi-transparent chrome and reads as broken overlap.
     setOverlay(
       overlay,
-      renderRewardState(brand, copy, resolved.tier, server.code, engagedAssets, () => {
+      canvas,
+      stageController,
+      renderRewardState(brand, copy, resolved.tier, null, engagedAssets, () => {
         void submitLead(sessionToken);
       }, () => {
         startPlay(true);
       }),
+      overlayBackdrop,
     );
+
+    sessionToken = activeSessionToken ? await activeSessionToken : null;
+    const server = await endSession(sessionToken, finalScore);
+
+    if (server.code) {
+      const tierLine = overlay.querySelector<HTMLElement>("[data-role='tier-line']");
+      const tier = resolved.tier;
+      if (tierLine && tier.percentOff != null) {
+        tierLine.textContent = `${tier.label} — code ${server.code}`;
+      }
+    }
 
     await animateCountUp(0, finalScore, 700, (value) => {
       const el = overlay.querySelector<HTMLElement>("[data-role='score-value']");
@@ -493,13 +513,33 @@ export function renderStaticScreen(
   return shell;
 }
 
-function setOverlay(overlay: HTMLElement, content: HTMLElement | null) {
+function opaqueOverlayBackdrop(background: string): string {
+  if (/^#[0-9a-f]{6}$/i.test(background)) return background;
+  if (/^#[0-9a-f]{8}$/i.test(background)) return background.slice(0, 7);
+  return "#ffffff";
+}
+
+function setOverlay(
+  overlay: HTMLElement,
+  canvas: HTMLCanvasElement,
+  stage: StageController,
+  content: HTMLElement | null,
+  backdrop: string,
+) {
   overlay.innerHTML = "";
   if (!content) {
+    canvas.style.visibility = "visible";
     overlay.style.background = "transparent";
     overlay.style.pointerEvents = "none";
     return;
   }
+  // Hide and clear the play canvas whenever chrome is shown. A semi-
+  // transparent overlay backdrop alone is not enough — the last game frame
+  // (product sprites, sweet-spot bar, etc.) composites through and reads as
+  // broken overlap with the reward controls.
+  canvas.style.visibility = "hidden";
+  stage.ctx.clearRect(0, 0, stage.size.width, stage.size.height);
+  overlay.style.background = backdrop;
   overlay.style.pointerEvents = "auto";
   overlay.appendChild(content);
 }
@@ -657,6 +697,8 @@ function renderRewardState(
   onReplay: () => void,
 ): HTMLElement {
   const wrap = document.createElement("div");
+  wrap.style.width = "100%";
+  wrap.style.maxWidth = "360px";
 
   const intro = document.createElement("p");
   intro.textContent = copy.rewardIntro;
@@ -676,6 +718,7 @@ function renderRewardState(
   wrap.appendChild(scoreLine);
 
   const tierLine = document.createElement("p");
+  tierLine.dataset.role = "tier-line";
   tierLine.textContent =
     tier.percentOff != null ? `${tier.label} — code ${serverCode ?? tier.code ?? "pending"}` : tier.label;
   tierLine.style.margin = "0 0 4px";
