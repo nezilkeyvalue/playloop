@@ -656,6 +656,58 @@ export const skincareGameSpec: GameSpec = {
   ],
 };
 
+const petCollectibles: ProcessedAsset[] = [
+  asset("pet-1", "#8A5A2B", "🦴", { name: "Marrow Bone Chew", priceMinor: 900, currency: "USD" }),
+  asset("pet-2", "#C2703D", "🍖", { name: "Slow-Roast Treats", priceMinor: 1400, currency: "USD" }),
+  asset("pet-3", "#4E7C59", "🎾", { name: "Bounce Ball 3-Pack", priceMinor: 1100, currency: "USD" }),
+  asset("pet-4", "#6B4A2F", "🧶", { name: "Tug Rope", priceMinor: 1600, currency: "USD" }),
+  asset("pet-5", "#B5843A", "🥣", { name: "Slow Feed Bowl", priceMinor: 2400, currency: "USD" }),
+  asset("pet-6", "#7A5C3E", "🦴", { name: "Dental Sticks", priceMinor: 1200, currency: "USD" }),
+];
+
+/** The pet-supplies theme (spec.meta.theme) rendering through the ordinary
+ * catch template — the catcher becomes a food bowl and dogs wait along the
+ * ground. Everything else about the spec is a normal catch game, which is
+ * the point: the theme is dressing, not a different template. */
+export const petSupplyGameSpec: GameSpec = {
+  ...catchGameSpec,
+  id: "demo-catch-pets",
+  brand: {
+    name: "Barkwell Supply",
+    accent: "#C2703D",
+    secondaryAccent: "#4E7C59",
+    background: "#FBF6EE",
+    foreground: "#2A2016",
+    fontFamily: "Nunito, system-ui, sans-serif",
+    palette: ["#C2703D", "#4E7C59", "#FBF6EE", "#2A2016"],
+  },
+  copy: {
+    headline: "Catch supplies for your pet",
+    subhead: "Drag the bowl, catch the treats, skip the empties.",
+    ctaStart: "Start catching",
+    ctaReplay: "Catch again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: petCollectibles,
+  roles: {
+    ...catchGameSpec.roles,
+    collectible: petCollectibles.map((a) => a.id),
+    catcher: { fallback: "generatedShape" },
+  },
+  rewards: [
+    { minScore: 225, label: "10% off", percentOff: 10, code: "BARK10" },
+    { minScore: 450, label: "15% off", percentOff: 15, code: "BARK15" },
+    { minScore: 900, label: "20% off", percentOff: 20, code: "BARK20" },
+  ],
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+    theme: "pet_supplies",
+  },
+};
+
 const sneakerHeroes: ProcessedAsset[] = [
   asset("sneaker-1", "#1C1C1C", "👟", { name: "Air Runner Low", priceMinor: 8900, currency: "USD" }),
   asset("sneaker-2", "#D9772A", "👟", { name: "Trail Max", priceMinor: 11900, currency: "USD" }),
@@ -769,6 +821,7 @@ export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-slice": sliceGameSpec,
   "demo-shooter": shooterGameSpec,
   "demo-catch-lumen": skincareGameSpec,
+  "demo-catch-pets": petSupplyGameSpec,
   "demo-guess-price-kicks": sneakerGameSpec,
   "demo-sweet-spot": sweetSpotGameSpec,
   "demo-sweet-spot-bare": sweetSpotBareGameSpec,

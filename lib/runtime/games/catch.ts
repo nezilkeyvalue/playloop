@@ -19,6 +19,21 @@
 //                     hazardRatio) as a generated shape so the mechanic
 //                     works even with zero hazard assets
 //   stageBackground — optional; brand gradient if unfilled
+//
+// Theme dressing: `spec.meta.theme === "pet_supplies"` swaps the generated
+// catcher for a food bowl and puts dog silhouettes along the ground. That
+// is the ONLY behaviour any theme changes here — no scoring, no spawning,
+// no role handling — and with no theme set (every spec generated before
+// meta.theme existed) this file renders exactly as it always did. If a
+// third theme ever lands, move the switch out to a lookup table rather
+// than growing a chain of branches through the render path.
+//
+// The pet is deliberately NOT routed through the `catcher` role: that role
+// requires subjectTypeIn ["product", "logo", "shape"], and a store's own
+// dog photo classifies as "lifestyle", so the matcher would never assign
+// it. Loosening the role to let one through would also let any lifestyle
+// rectangle become a basket on every other site. A generated silhouette
+// needs no asset at all and is right on every pet store.
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
 import {
@@ -29,7 +44,13 @@ import {
   drawCelebration,
   type Celebration,
 } from "@/lib/runtime/games/spriteRender";
-import { drawGemShape, drawHazardShape, drawBasketShape } from "@/lib/runtime/games/shapeLibrary";
+import {
+  drawGemShape,
+  drawHazardShape,
+  drawBasketShape,
+  drawPetBowlShape,
+  drawDogSilhouette,
+} from "@/lib/runtime/games/shapeLibrary";
 
 // Scoring constants. Chosen so maxRealisticScore() at the capability's
 // *default* tuning (spawnRateHz 1.2, durationSec 40, hazardRatio 0.2) lands
@@ -101,6 +122,7 @@ class CatchGame implements GameModule {
   private hazards: LoadedAsset[] = [];
   private catcherAsset: LoadedAsset | null = null;
   private hasStageBackgroundFallback = false;
+  private petTheme = false;
 
   init(ctx: RuntimeContext): void {
     this.ctx = ctx;
@@ -117,6 +139,7 @@ class CatchGame implements GameModule {
     this.hazards = ctx.roles.hazard?.assets ?? [];
     this.catcherAsset = ctx.roles.catcher?.assets[0] ?? null;
     this.hasStageBackgroundFallback = !ctx.roles.stageBackground?.assets.length;
+    this.petTheme = ctx.spec.meta.theme === "pet_supplies";
   }
 
   update(dt: number): void {
@@ -205,6 +228,9 @@ class CatchGame implements GameModule {
       const bg = this.ctx.roles.stageBackground?.assets[0]?.image ?? null;
       if (bg) c.drawImage(bg, 0, 0, stage.width, stage.height);
     }
+
+    // Theme scenery sits behind everything that moves.
+    if (this.petTheme) this.drawPetScenery(c);
 
     // Falling items
     for (const item of this.items) {
@@ -315,9 +341,26 @@ class CatchGame implements GameModule {
 
     if (this.catcherAsset?.image) {
       withDropShadow(c, () => drawAssetContain(c, this.catcherAsset!, x, y, BASKET_WIDTH, BASKET_HEIGHT));
+    } else if (this.petTheme) {
+      drawPetBowlShape(c, x, y, BASKET_WIDTH, BASKET_HEIGHT, brand.accent);
     } else {
       drawBasketShape(c, x, y, BASKET_WIDTH, BASKET_HEIGHT, brand.accent);
     }
+    c.restore();
+  }
+
+  /** Two dogs waiting along the ground, watching the supplies come down.
+   * Scenery only: drawn under the falling items, well below the play line,
+   * and faint enough that it never competes with a product sprite. */
+  private drawPetScenery(c: CanvasRenderingContext2D): void {
+    const { stage, brand } = this.ctx;
+    const feetY = stage.height - 4;
+    const size = Math.max(64, Math.min(132, stage.width * 0.26));
+
+    c.save();
+    c.globalAlpha = 0.18;
+    drawDogSilhouette(c, size * 0.75, feetY, size, brand.foreground);
+    drawDogSilhouette(c, stage.width - size * 0.55, feetY, size * 0.82, brand.foreground);
     c.restore();
   }
 }

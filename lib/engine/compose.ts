@@ -89,8 +89,26 @@ export function compose(
       mode,
       generatedAt: new Date().toISOString(),
       warnings,
+      theme: normalizeTheme(brain.category),
     },
   };
+}
+
+/** Themes a runtime module actually knows how to dress differently. The
+ * brain's `category` is a free string (and, on the deterministic fallback
+ * path, always "general_retail"), so anything unrecognised is dropped here
+ * rather than carried into the spec — a runtime module should only ever
+ * see a theme it can act on, and `undefined` is the normal case.
+ *
+ * Add a value here at the same time as the runtime module that renders it,
+ * never before: an unrendered theme in a spec is just a string nothing
+ * reads. */
+const KNOWN_THEMES = new Set(["pet_supplies"]);
+
+export function normalizeTheme(category: string | undefined): string | undefined {
+  if (!category) return undefined;
+  const slug = category.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return KNOWN_THEMES.has(slug) ? slug : undefined;
 }
 
 /** Exported for retemplate.ts: switching an existing game to a different

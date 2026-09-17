@@ -223,3 +223,108 @@ export function drawStarShape(c: CanvasRenderingContext2D, cx: number, cy: numbe
   c.fill();
   c.restore();
 }
+
+/** A pet food bowl — catch's catcher fallback when the game's theme is
+ * pet supplies, in place of the woven basket. Wide flared bowl on a base
+ * ring, with a lighter inner well so it reads as something you drop food
+ * INTO, which is exactly the verb the template already has. */
+export function drawPetBowlShape(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string): void {
+  const rimH = h * 0.26;
+  const baseInset = w * 0.22;
+  const baseH = h * 0.14;
+
+  withDropShadow(c, () => {
+    c.save();
+    // Bowl body — a steep trapezoid, much narrower at the base than the
+    // basket so the flared "dish" silhouette is unmistakable.
+    c.beginPath();
+    c.moveTo(x, y + rimH * 0.5);
+    c.lineTo(x + w, y + rimH * 0.5);
+    c.lineTo(x + w - baseInset, y + h - baseH);
+    c.lineTo(x + baseInset, y + h - baseH);
+    c.closePath();
+    c.fillStyle = color;
+    c.fill();
+
+    // Foot ring.
+    c.fillStyle = shadeHex(color, -0.18);
+    c.fillRect(x + baseInset * 0.8, y + h - baseH, w - baseInset * 1.6, baseH);
+    c.restore();
+  });
+
+  // Rim, then the inner well sunk into it — drawn after the shadow pass so
+  // the well doesn't cast one of its own.
+  fillGlossyRoundedRect(c, x - w * 0.02, y, w * 1.04, rimH, rimH / 2, shadeHex(color, 0.14));
+  c.save();
+  c.fillStyle = shadeHex(color, -0.3);
+  c.beginPath();
+  c.ellipse(x + w / 2, y + rimH * 0.52, w * 0.4, rimH * 0.3, 0, 0, Math.PI * 2);
+  c.fill();
+  c.restore();
+}
+
+/** A side-on dog silhouette, facing right. Used as static scenery along
+ * the bottom of a pet-supplies game — decoration only, never a role asset
+ * and never something the player interacts with, so it takes a single flat
+ * colour and the caller sets the alpha it wants. `size` is the body's full
+ * length nose-to-tail. */
+export function drawDogSilhouette(c: CanvasRenderingContext2D, x: number, feetY: number, size: number, color: string): void {
+  const bodyW = size * 0.58;
+  const bodyH = size * 0.3;
+  const bodyCx = x - size * 0.06;
+  const bodyCy = feetY - size * 0.36;
+  const legH = size * 0.22;
+  const legW = size * 0.07;
+
+  c.save();
+  c.fillStyle = color;
+
+  // Legs first, so the body reads as in front of them.
+  for (const t of [-0.34, -0.16, 0.18, 0.34]) {
+    c.fillRect(bodyCx + bodyW * t - legW / 2, feetY - legH, legW, legH);
+  }
+
+  // Body.
+  c.beginPath();
+  c.ellipse(bodyCx, bodyCy, bodyW / 2, bodyH / 2, 0, 0, Math.PI * 2);
+  c.fill();
+
+  // Neck + head, up and to the right.
+  const headCx = bodyCx + bodyW * 0.46;
+  const headCy = bodyCy - size * 0.17;
+  c.beginPath();
+  c.moveTo(bodyCx + bodyW * 0.2, bodyCy - bodyH * 0.2);
+  c.lineTo(headCx - size * 0.05, headCy);
+  c.lineTo(headCx + size * 0.05, headCy + size * 0.05);
+  c.lineTo(bodyCx + bodyW * 0.3, bodyCy + bodyH * 0.25);
+  c.closePath();
+  c.fill();
+
+  c.beginPath();
+  c.ellipse(headCx, headCy, size * 0.135, size * 0.115, 0, 0, Math.PI * 2);
+  c.fill();
+  // Muzzle, pushed forward so the silhouette has an unambiguous "facing
+  // right" read — without it the head is just a lump and the whole shape
+  // lands somewhere between a dog and a sheep.
+  c.beginPath();
+  c.ellipse(headCx + size * 0.14, headCy + size * 0.03, size * 0.095, size * 0.062, 0, 0, Math.PI * 2);
+  c.fill();
+  // Ear — a flopped triangle back over the skull.
+  c.beginPath();
+  c.moveTo(headCx - size * 0.05, headCy - size * 0.1);
+  c.lineTo(headCx - size * 0.16, headCy + size * 0.07);
+  c.lineTo(headCx - size * 0.01, headCy + size * 0.04);
+  c.closePath();
+  c.fill();
+
+  // Tail — a short upward flick. A long curl reads as a squirrel at this
+  // silhouette size.
+  c.strokeStyle = color;
+  c.lineWidth = size * 0.06;
+  c.lineCap = "round";
+  c.beginPath();
+  c.moveTo(bodyCx - bodyW * 0.46, bodyCy - bodyH * 0.12);
+  c.quadraticCurveTo(bodyCx - bodyW * 0.62, bodyCy - size * 0.12, bodyCx - bodyW * 0.56, bodyCy - size * 0.18);
+  c.stroke();
+  c.restore();
+}
