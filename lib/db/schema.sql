@@ -93,12 +93,27 @@ create table if not exists leads (
 );
 create unique index if not exists leads_game_email_idx on leads (game_id, email) where email is not null;
 
+-- Analytics events (§16) — inserted by API routes only (service role).
+create table if not exists game_analytics_events (
+  id          uuid primary key default gen_random_uuid(),
+  game_id     uuid not null references games(id) on delete cascade,
+  play_id     uuid references plays(id) on delete set null,
+  event       text not null,
+  detail      jsonb,
+  created_at  timestamptz not null default now()
+);
+create index if not exists game_analytics_events_game_created_idx
+  on game_analytics_events (game_id, created_at desc);
+create index if not exists game_analytics_events_game_event_idx
+  on game_analytics_events (game_id, event);
+
 -- Row Level Security ---------------------------------------------------------
 alter table accounts enable row level security;
 alter table jobs enable row level security;
 alter table games enable row level security;
 alter table plays enable row level security;
 alter table leads enable row level security;
+alter table game_analytics_events enable row level security;
 
 -- Server-side access uses the service role key (bypasses RLS by design — the
 -- Next.js API routes are the trust boundary, they authorize per-account
@@ -122,5 +137,10 @@ create policy plays_via_game on plays
 
 create policy leads_via_game on leads
   for all using (
+    game_id in (select id from games where account_id = auth.uid())
+  );
+
+create policy game_analytics_events_via_game on game_analytics_events
+  for select using (
     game_id in (select id from games where account_id = auth.uid())
   );

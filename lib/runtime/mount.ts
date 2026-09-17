@@ -201,6 +201,8 @@ function mountGame(
   let score = 0;
   let engagedAssetIds = new Set<string>();
   let activeSessionToken: Promise<string | null> | null = null;
+  /** Previous play's token — passed on replay so analytics can link sessions. */
+  let lastSessionToken: string | null = null;
   let destroyed = false;
 
   function addScore(delta: number) {
@@ -268,8 +270,13 @@ function mountGame(
     score = 0;
     engagedAssetIds = new Set();
     setOverlay(overlay, canvas, stageController, null, overlayBackdrop); // hide chrome; the game renders on canvas
-    activeSessionToken = beginSession(slug);
-    trackEvent(isReplay ? "replay" : "start", { slug });
+    activeSessionToken = beginSession(slug, {
+      replayOfSessionToken: isReplay ? lastSessionToken : null,
+    });
+    void activeSessionToken.then((token) => {
+      if (token) lastSessionToken = token;
+      trackEvent(isReplay ? "replay" : "start", { slug, sessionToken: token });
+    });
 
     const mod = factory();
     gameModule = mod;
@@ -335,7 +342,7 @@ function mountGame(
         await finishedSignal;
         const claim = await claimCoupon(sessionToken);
         if (claim.status === "ok") {
-          trackEvent("reward_revealed", { slug, coupon: "claimed" });
+          trackEvent("reward_revealed", { slug, sessionToken, coupon: "claimed" });
         }
         return claim.code;
       }),
@@ -363,7 +370,13 @@ function mountGame(
       if (el) el.textContent = String(value);
     });
 
-    trackEvent("reward_revealed", { slug, score: finalScore, tier: resolved.tier.label });
+    trackEvent("reward_revealed", {
+      slug,
+      sessionToken,
+      score: finalScore,
+      tier: resolved.tier.label,
+    });
+    trackEvent("complete", { slug, sessionToken, score: finalScore });
   }
 
   async function submitLead(sessionToken: string | null): Promise<boolean> {
@@ -397,7 +410,7 @@ function mountGame(
           ? "Sent — check your inbox."
           : "Got it — we've saved your email. Copy your code above to use it now.";
     }
-    if (ok) trackEvent("lead_captured", { slug });
+    if (ok) trackEvent("lead_captured", { slug, sessionToken });
     return ok;
   }
 

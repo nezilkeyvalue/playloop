@@ -14,7 +14,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getGameBySlug, startPlay } from "@/lib/db/queries";
 
-const bodySchema = z.object({ slug: z.string().min(1) });
+const bodySchema = z.object({
+  slug: z.string().min(1),
+  replayOfSessionToken: z.string().min(1).optional(),
+});
 
 function hostAllowed(hostname: string, allowedHosts: string[]): boolean {
   return allowedHosts.some(
@@ -63,7 +66,11 @@ export async function POST(req: NextRequest) {
 
   const referrer = req.headers.get("referer");
   const device = detectDevice(req.headers.get("user-agent"));
-  const { sessionToken } = await startPlay(game.id, { referrer, device });
+  const { sessionToken } = await startPlay(game.id, {
+    referrer,
+    device,
+    replayOfSessionToken: parsed.data.replayOfSessionToken,
+  });
 
   return NextResponse.json({ sessionToken });
 }
