@@ -39,6 +39,7 @@ import type {
   TemplateMatch,
   TransformId,
 } from "@/lib/engine/types";
+import { exemptFromPhashDedup } from "@/lib/engine/catalogue";
 
 const MIN_ASSETS_FOR_AUTO = Number(process.env.MIN_ASSETS_FOR_AUTO) || 4;
 
@@ -261,7 +262,14 @@ function countPrefersMet(prefers: RolePreferences | undefined, chosen: RawAsset[
 
   if (prefers.distinctPhash) {
     const allDistinct = chosen.every((a, i) =>
-      chosen.every((b, j) => i === j || !a.phash || !b.phash || hammingDistanceSafe(a.phash, b.phash) >= 6),
+      chosen.every(
+        (b, j) =>
+          i === j ||
+          !a.phash ||
+          !b.phash ||
+          hammingDistanceSafe(a.phash, b.phash) >= 6 ||
+          exemptFromPhashDedup(a, b),
+      ),
     );
     if (allDistinct) met += 1;
   }
@@ -431,7 +439,10 @@ function countDistinctByPhash(assets: RawAsset[]): number {
       continue;
     }
     const duplicate = kept.some(
-      (existing) => existing.phash && hammingDistanceSafe(existing.phash, asset.phash) < 6,
+      (existing) =>
+        existing.phash &&
+        hammingDistanceSafe(existing.phash, asset.phash) < 6 &&
+        !exemptFromPhashDedup(existing, asset),
     );
     if (!duplicate) kept.push(asset);
   }

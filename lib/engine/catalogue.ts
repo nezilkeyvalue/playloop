@@ -6,6 +6,7 @@
 // (ranking bonuses).
 
 import type { AssetOrigin, RawAsset } from "@/lib/engine/types";
+import { normalizeUrlForDedupe } from "@/lib/engine/extract/util";
 
 /** URLs/context matching this pattern are treated as catalogue product images
  * (dom ladder, SPA storefronts like The Souled Store, etc.). */
@@ -25,4 +26,15 @@ export function isCatalogueProductAsset(asset: Pick<RawAsset, "origin" | "url" |
     if (asset.data?.name) return true;
   }
   return false;
+}
+
+/** Studio packshots on a flat background (JSON-LD listing pages, Shopify
+ * grids) often share the same aHash even when the SKU/image URL differs.
+ * Skip phash dedup for structurally distinct catalogue rows. */
+export function exemptFromPhashDedup(
+  a: Pick<RawAsset, "origin" | "url" | "data">,
+  b: Pick<RawAsset, "origin" | "url" | "data">,
+): boolean {
+  if (!isCatalogueProductAsset(a) || !isCatalogueProductAsset(b)) return false;
+  return normalizeUrlForDedupe(a.url) !== normalizeUrlForDedupe(b.url);
 }
