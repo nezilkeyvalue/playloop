@@ -10,7 +10,6 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Legacy aliases — most of the app is mid-migration to the
         // semantic tokens below; keep these until every page is converted.
         ink: "#0B0B0F",
         paper: "#FAFAF8",
