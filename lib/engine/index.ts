@@ -28,6 +28,7 @@ import { deriveBrandNameFromUrl, makeRawAsset } from "./extract/util";
 import { processSprites } from "./sprites";
 import { runQualityGate } from "./quality";
 import { matchAssets } from "./matcher";
+import { suggestTemplates } from "./suggestTemplates";
 import { runBrain } from "./brain";
 import { compose } from "./compose";
 
@@ -134,8 +135,20 @@ export async function runExtraction(
   };
 
   const capabilities = listCapabilities();
-  const match = matchAssets(inventory, capabilities);
+  let match = matchAssets(inventory, capabilities);
   await emit("matching", 68, "Matching games to your brand…");
+
+  if (input.mode === "auto" && match.results.some((r) => r.eligible)) {
+    await emit("matching", 69, "Finding the best games for your brand…");
+    match = await suggestTemplates({
+      match,
+      inventory,
+      capabilities,
+      businessName,
+      businessDescription,
+      sourceUrl: input.sourceUrl,
+    });
+  }
 
   return { inventory, match, businessName, businessDescription, droppedCount: dropped.length };
 }

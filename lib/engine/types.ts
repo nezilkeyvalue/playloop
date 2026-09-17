@@ -394,6 +394,9 @@ export interface GameCapability {
   id: TemplateId;
   name: string;
   summary: string;
+  /** When this template tends to shine for a brand category or catalog shape —
+   * fed to Gemini at template-suggestion time alongside the matcher scores. */
+  brandFit?: string;
   roles: CapabilityRole[];
   data: { required: string[]; optional: string[] };
   placements: Partial<Record<Placement, PlacementConstraint>>;
@@ -451,6 +454,21 @@ export interface TemplateMatch {
   gaps?: MatchGap[];
   warnings: string[];
   estimatedBuildMs?: number;
+  /** One-line why this game fits this brand — from AI suggestion when available. */
+  pickReason?: string;
+}
+
+/** Website/brand context inferred when ranking eligible templates. */
+export interface SiteContext {
+  category: string | null;
+  summary: string | null;
+}
+
+export interface TemplateRanking {
+  template: TemplateId;
+  /** 0..1 — how well the game fits this brand context (AI); blended with matcher score for ordering. */
+  contextualFit: number;
+  reason: string;
 }
 
 export interface MatchReport {
@@ -459,6 +477,8 @@ export interface MatchReport {
   results: TemplateMatch[];
   recommended: TemplateId[];
   fallbackMode: "manual" | null;
+  siteContext?: SiteContext | null;
+  templateRankings?: TemplateRanking[];
 }
 
 // ---------------------------------------------------------------------------

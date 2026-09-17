@@ -66,6 +66,7 @@ const gameCapabilitySchema = z.object({
   id: z.enum(["catch", "guess_price", "chain_pop", "shooter", "sweet_spot", "match", "stack", "chomp", "whack", "simon", "slice"]),
   name: z.string(),
   summary: z.string(),
+  brandFit: z.string().optional(),
   roles: z.array(capabilityRoleSchema).min(1),
   data: z.object({ required: z.array(z.string()), optional: z.array(z.string()) }),
   placements: z.record(z.string(), placementConstraintSchema),

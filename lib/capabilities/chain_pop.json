@@ -3,6 +3,7 @@
   "id": "chain_pop",
   "name": "Chain Pop",
   "summary": "A grid of products; tap a group of 3+ matching tiles to pop them before time runs out. Bigger chains score more.",
+  "brandFit": "Colorful catalogs (beauty, snacks, toys) with many visually distinct SKUs on packshots or tiles.",
 
   "roles": [
     {

@@ -3,6 +3,7 @@
   "id": "guess_price",
   "name": "Guess the Price",
   "summary": "A product is shown; the player drags a slider to guess its price and scores on closeness.",
+  "brandFit": "Apparel, accessories, and home goods with visible prices — works when shoppers already compare value.",
 
   "roles": [
     {

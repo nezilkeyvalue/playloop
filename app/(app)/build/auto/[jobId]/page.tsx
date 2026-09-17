@@ -163,9 +163,13 @@ function TemplatePicker({
   error: string | null;
   onChoose: (template: TemplateId) => void;
 }) {
-  const eligible = match.results.filter((r) => r.eligible).sort((a, b) => b.score - a.score);
+  const recommendedOrder = new Map(match.recommended.map((id, i) => [id, i]));
+  const eligible = match.results
+    .filter((r) => r.eligible)
+    .sort((a, b) => (recommendedOrder.get(a.template) ?? 99) - (recommendedOrder.get(b.template) ?? 99));
   const ineligible = match.results.filter((r) => !r.eligible);
   const [showNearMiss, setShowNearMiss] = useState(false);
+  const topPick = match.recommended[0];
 
   if (eligible.length === 0) {
     return (
@@ -191,6 +195,12 @@ function TemplatePicker({
       <p className="mt-2 text-muted">
         Based on what we found on your site, here&apos;s what we can build — choose one to continue.
       </p>
+      {match.siteContext?.summary && (
+        <p className="mt-3 text-sm text-foreground/80">{match.siteContext.summary}</p>
+      )}
+      {match.siteContext?.category && !match.siteContext.summary?.includes(match.siteContext.category) && (
+        <p className="mt-1 text-xs font-medium uppercase tracking-wide text-muted">{match.siteContext.category}</p>
+      )}
 
       {error && (
         <div className="mt-6 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
@@ -199,9 +209,9 @@ function TemplatePicker({
       )}
 
       <div className="mt-8 grid grid-cols-1 gap-4 text-left sm:grid-cols-2">
-        {eligible.map((result, i) => {
+        {eligible.map((result) => {
           const meta = getTemplatePickerMeta(result.template);
-          const isBest = i === 0;
+          const isBest = result.template === topPick;
           const isSelecting = selecting === result.template;
           const disabled = selecting !== null;
 
@@ -226,6 +236,9 @@ function TemplatePicker({
                 {meta.name}
               </h2>
               <p className="mt-1.5 text-sm text-muted">{meta.summary}</p>
+              {result.pickReason && (
+                <p className="mt-2 text-sm text-foreground/85">{result.pickReason}</p>
+              )}
 
               <div className="mt-4 flex items-center justify-between">
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground">
