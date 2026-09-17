@@ -45,8 +45,17 @@
 //     a real pour is thin at the bottom and fat at the spout.
 //   - Splash droplets are semi-implicit Euler particles (v += g*dt;
 //     p += v*dt), spawned at the impact point while the stream is landing.
-//   - The surface sloshes: the impact feeds a damped sine whose amplitude
-//     decays once the pour stops.
+//   - The surface is a WAVE, not a line: two travelling sines plus a
+//     Gaussian depression under the stream, sampled around the surface
+//     ellipse. That is what stops a rising level reading as a rectangle
+//     sliding upward.
+//   - The bulk level rides a damped spring, so when the pour stops the
+//     surface overshoots and settles instead of freezing mid-frame.
+//
+// Every spring here sub-steps at a fixed PHYSICS_SUBSTEP. loop.ts clamps a
+// frame's dt to 0.1s, and an explicit spring integrated at K=90 over a
+// 0.1s step diverges — a backgrounded tab would come back to a surface
+// oscillating out of the cup.
 //
 // None of it is a fluid simulation and none of it needs to be — see
 // docs/ARCHITECTURE.md on keeping runtime modules cheap enough for a
@@ -119,6 +128,50 @@ const SLOSH_HZ = 5.2;
 const SLOSH_DECAY_PER_SEC = 3.2;
 const SLOSH_MAX = 1;
 
+/** Fixed integration step for every spring below. See the header: loop.ts's
+ * dt can be as large as 0.1s and these stiffnesses are not stable there. */
+const PHYSICS_SUBSTEP = 1 / 120;
+
+// The bulk surface level: a damped spring about its true height, so the
+// liquid overshoots and settles rather than stopping dead. Under-damped on
+// purpose (C below 2*sqrt(K)) — that overshoot IS the satisfying part.
+const SURFACE_SPRING_K = 95;
+const SURFACE_SPRING_C = 7.5;
+// Sized from the spring it feeds, not guessed: a constant push `a` against
+// stiffness K settles at a/K, so this is ~6px of steady depression at
+// K=95 — enough to see. At 34 it was 0.36px, which is invisible, and the
+// whole overshoot-and-settle beat did not exist on screen.
+const SURFACE_IMPULSE_PER_SEC = 560; // px/sec^2 of downward push from the stream
+
+// Two travelling sines across the surface. Wavelengths are deliberately
+// incommensurate so the pattern never visibly repeats.
+const WAVE_A = { amp: 0.34, length: 0.82, speed: 3.1 };
+const WAVE_B = { amp: 0.2, length: 0.39, speed: -4.7 };
+const CRATER_WIDTH = 0.3; // Gaussian sigma, as a fraction of the surface radius
+const CRATER_DEPTH = 0.9; // in surface-ellipse half-heights, at full pour
+
+// The stream eases in and out instead of blinking on and off.
+// Fast enough to be fully gone inside OVERFLOW_HOLD_SEC: at 7/sec the
+// stream was still ~5% visible when the next cup started, so a served
+// cup sat there with a ghost of a pour still running into it.
+const STREAM_EASE_PER_SEC = 12;
+const STREAM_CUTOFF = 0.02; // below this the stream is gone entirely
+
+// Cup bounce on a serve, and the softer nudge on a miss.
+const POP_SPRING_K = 240;
+const POP_SPRING_C = 15;
+const POP_SERVE_IMPULSE = 2.6;
+const POP_MISS_IMPULSE = -1.1;
+
+// Restrained on purpose: a serve gets a dozen short-lived sparks, not a
+// firework. MISS_FLASH is a fade, never a shake.
+const MAX_SPARKLES = 14;
+const SPARKLE_LIFE_SEC = 0.6;
+const SPARKLE_GRAVITY = 420;
+const MISS_FLASH_SEC = 0.6;
+const PERFECT_CLOSENESS = 0.82; // centre-closeness that earns the "PERFECT" call
+const PERFECT_LABEL_SEC = 0.9;
+
 // How far the source is tipped, in radians (canvas positive = clockwise).
 //
 // The two cases are genuinely different objects. A modelled bottle has a
@@ -169,7 +222,7 @@ const SATELLITE_SCALE = 0.45; // the small drop that forms between two main ones
 // Foam/crema head. Builds while the stream is landing and collapses after.
 const FOAM_BUILD_PER_SEC = 1.1;
 const FOAM_DECAY_PER_SEC = 0.85;
-const FOAM_MAX_FRACTION = 0.06; // of the cup's inner height, at full head
+const FOAM_MAX_FRACTION = 0.045; // of the cup's inner height, at full head
 
 // Surface rings thrown out from the impact point.
 const RIPPLE_INTERVAL_SEC = 0.17;
@@ -189,6 +242,15 @@ interface Ripple {
   life: number;
 }
 
+interface Sparkle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  size: number;
+}
+
 interface Droplet {
   x: number;
   y: number;
@@ -197,6 +259,10 @@ interface Droplet {
   life: number;
   maxLife: number;
   radius: number;
+  /** True for the few drips that trail off the spout after the pour stops,
+   * as opposed to splash thrown up from the impact. They fall past the rim,
+   * so they need the same clip the stream has. */
+  spout?: boolean;
 }
 
 /** Everything the renderer and the physics both need to agree about. */
@@ -287,6 +353,27 @@ class PourGame implements GameModule {
    * rather than tinted water. */
   private foam = 0;
 
+  /** Bulk surface level as a damped spring: `surfaceOffset` is the surface's
+   * displacement in pixels from where `fill` alone would put it. The stream
+   * pushes it down; when the pour stops it springs back through zero and
+   * settles. */
+  private surfaceOffset = 0;
+  private surfaceVel = 0;
+  /** Phase of the travelling surface waves. */
+  private wavePhase = 0;
+  /** Depth of the depression the stream punches, 0..1, eased with the pour. */
+  private crater = 0;
+  /** Stream opacity/width multiplier, eased so the pour starts and stops
+   * smoothly instead of appearing and vanishing between frames. */
+  private streamStrength = 0;
+  /** Cup scale bounce, also a spring: positive on a serve, slightly
+   * negative on a miss. */
+  private pop = 0;
+  private popVel = 0;
+  private sparkles: Sparkle[] = [];
+  private missFlash = 0;
+  private perfectT = 0;
+
   init(ctx: RuntimeContext): void {
     this.ctx = ctx;
     this.fill = 0;
@@ -310,6 +397,16 @@ class PourGame implements GameModule {
     this.ripples = [];
     this.rippleTimer = 0;
     this.foam = 0;
+    this.surfaceOffset = 0;
+    this.surfaceVel = 0;
+    this.wavePhase = 0;
+    this.crater = 0;
+    this.streamStrength = 0;
+    this.pop = 0;
+    this.popVel = 0;
+    this.sparkles = [];
+    this.missFlash = 0;
+    this.perfectT = 0;
     this.bandCentre = this.pickBandCentre();
   }
 
@@ -374,6 +471,18 @@ class PourGame implements GameModule {
     this.phase = "served";
     this.phaseT = 0;
     this.feedback = { kind: "serve", t: FEEDBACK_SEC };
+
+    // Physical response to the tap: the cup bounces, the surface gets one
+    // last kick so it visibly settles, and a ring goes out. Landing dead
+    // centre also earns a short burst of sparks and the "PERFECT" call.
+    this.popVel += POP_SERVE_IMPULSE * (0.7 + closeness * 0.5);
+    this.surfaceVel += 30 * closeness;
+    if (this.ripples.length < MAX_RIPPLES) this.ripples.push({ radius: 0, life: RIPPLE_LIFE_SEC });
+    if (closeness >= PERFECT_CLOSENESS) {
+      this.perfectT = PERFECT_LABEL_SEC;
+      this.spawnSparkles();
+    }
+    this.spawnSpoutDrips();
 
     // The moment of success: the product on screen is what was just poured.
     // Guard on a real loaded image that isn't the brand's own logo — the
@@ -445,8 +554,50 @@ class PourGame implements GameModule {
     this.ripples = liveRipples;
 
     this.sloshPhase += SLOSH_HZ * dt;
+    this.wavePhase += dt;
     this.sloshAmp *= Math.exp(-SLOSH_DECAY_PER_SEC * dt);
 
+    // Everything that eases toward a target, integrated at a fixed step so
+    // a 0.1s frame (loop.ts's clamp) can't destabilise the stiff springs.
+    const streamTarget = pouring ? 1 : 0;
+    const craterTarget = pouring ? 1 - Math.min(1, this.fill) * 0.4 : 0;
+    let remaining = dt;
+    while (remaining > 0) {
+      const step = Math.min(PHYSICS_SUBSTEP, remaining);
+      remaining -= step;
+
+      this.streamStrength += (streamTarget - this.streamStrength) * Math.min(1, STREAM_EASE_PER_SEC * step);
+      this.crater += (craterTarget - this.crater) * Math.min(1, 9 * step);
+
+      // Surface level: a damped spring about zero, pushed down by the
+      // stream. Semi-implicit Euler — velocity first, then position — which
+      // is what keeps a spring stable rather than gaining energy.
+      if (pouring) this.surfaceVel += SURFACE_IMPULSE_PER_SEC * this.streamStrength * step;
+      this.surfaceVel += (-SURFACE_SPRING_K * this.surfaceOffset - SURFACE_SPRING_C * this.surfaceVel) * step;
+      this.surfaceOffset += this.surfaceVel * step;
+
+      this.popVel += (-POP_SPRING_K * this.pop - POP_SPRING_C * this.popVel) * step;
+      this.pop += this.popVel * step;
+    }
+    if (this.streamStrength < STREAM_CUTOFF && !pouring) this.streamStrength = 0;
+
+    this.missFlash = Math.max(0, this.missFlash - dt / MISS_FLASH_SEC);
+    this.perfectT = Math.max(0, this.perfectT - dt);
+
+    const liveSparkles: Sparkle[] = [];
+    for (const sp of this.sparkles) {
+      sp.vy += SPARKLE_GRAVITY * dt;
+      sp.x += sp.vx * dt;
+      sp.y += sp.vy * dt;
+      sp.life -= dt;
+      if (sp.life > 0) liveSparkles.push(sp);
+    }
+    this.sparkles = liveSparkles;
+
+    // Anything that falls past the cup's base is gone: splash thrown out of
+    // the cup used to keep falling and land on the tray, which reads as the
+    // game leaking rather than as a splash.
+    const floor = this.layout().baseCy;
     const alive: Droplet[] = [];
     for (const d of this.droplets) {
       // Semi-implicit (symplectic) Euler: velocity first, then position.
@@ -454,7 +605,7 @@ class PourGame implements GameModule {
       d.x += d.vx * dt;
       d.y += d.vy * dt;
       d.life -= dt;
-      if (d.life > 0) alive.push(d);
+      if (d.life > 0 && d.y < floor) alive.push(d);
     }
     this.droplets = alive;
   }
@@ -483,6 +634,52 @@ class PourGame implements GameModule {
     this.phaseT = 0;
     this.fill = Math.min(1, this.fill);
     this.feedback = { kind: "spill", t: FEEDBACK_SEC };
+    // Deliberately gentle: a small settle of the cup and a fading warm
+    // wash, no shake and no red flash. A miss here costs a life already —
+    // the feedback's job is to be legible, not to punish.
+    this.popVel += POP_MISS_IMPULSE;
+    this.missFlash = 1;
+    this.spawnSpoutDrips();
+  }
+
+  /** The last of the liquid leaving the lip once the pour stops. A stream
+   * that ends cleanly at the spout looks switched off; real ones dribble. */
+  private spawnSpoutDrips(): void {
+    const { spoutX, spoutY } = this.layout();
+    const r = this.ctx.random;
+    const count = 2 + Math.floor(r() * 3);
+    for (let i = 0; i < count; i++) {
+      if (this.droplets.length >= MAX_DROPLETS) break;
+      this.droplets.push({
+        x: spoutX + (r() - 0.5) * 6,
+        y: spoutY + i * 4,
+        vx: (r() - 0.5) * 24,
+        vy: 40 + r() * 70,
+        life: DROPLET_LIFE_SEC * (1.2 + r() * 0.8),
+        maxLife: DROPLET_LIFE_SEC * 2,
+        radius: 1.6 + r() * 1.6,
+        spout: true,
+      });
+    }
+  }
+
+  /** A short, restrained burst for a dead-centre serve. Thrown upward and
+   * outward from the surface so they arc rather than shooting out flat. */
+  private spawnSparkles(): void {
+    const { impactX, impactY } = this.layout();
+    const r = this.ctx.random;
+    for (let i = 0; i < MAX_SPARKLES; i++) {
+      const angle = -Math.PI / 2 + (r() - 0.5) * 2.2;
+      const speed = 110 + r() * 150;
+      this.sparkles.push({
+        x: impactX + (r() - 0.5) * 30,
+        y: impactY,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: SPARKLE_LIFE_SEC * (0.6 + r() * 0.6),
+        size: 1.6 + r() * 2,
+      });
+    }
   }
 
   private nextCup(): void {
@@ -491,6 +688,8 @@ class PourGame implements GameModule {
       return;
     }
     this.fill = 0;
+    this.surfaceOffset = 0;
+    this.surfaceVel = 0;
     this.phase = "pouring";
     this.phaseT = 0;
     this.bandCentre = this.pickBandCentre();
@@ -605,8 +804,13 @@ class PourGame implements GameModule {
     // of it was painted over by the cup's front wall and the pour looked
     // like it stopped in mid-air. renderStream clips itself to the part a
     // viewer could actually see.
-    if (this.phase === "pouring") this.renderStream(c, l);
-    this.renderDroplets(c);
+    //
+    // Gated on streamStrength rather than the phase, so the pour eases out
+    // over a few frames after the tap instead of vanishing on one.
+    if (this.streamStrength > 0) this.renderStream(c, l);
+    this.renderDroplets(c, l);
+    this.renderSparkles(c);
+    this.renderPerfect(c, l);
     this.renderTray(c, stage.width, l.trayY, l.trayH);
     this.renderHud(c, stage.width, stage.height);
 
@@ -664,7 +868,17 @@ class PourGame implements GameModule {
         // No prize and no logo: a modelled bottle, tipped right over so it
         // genuinely pours. Its neck is drawn at the top of this box, which
         // is exactly the point BOTTLE_MOUTH names.
-        drawBottleShape(c, -size * 0.26, -size * 0.5, size * 0.52, size, brand.accent, this.liquidColor());
+        drawBottleShape(
+          c,
+          -size * 0.26,
+          -size * 0.5,
+          size * 0.52,
+          size,
+          brand.accent,
+          this.liquidColor(),
+          l.tilt,
+          this.sloshPhase * 0.6,
+        );
       }
     });
     c.restore();
@@ -694,10 +908,15 @@ class PourGame implements GameModule {
 
     const v0 = STREAM_EXIT_SPEED;
     const flight = (Math.sqrt(v0 * v0 + 2 * STREAM_GRAVITY * drop) - v0) / STREAM_GRAVITY;
-    const w0 = Math.max(3, l.cupW * 0.055);
+    // Thicker than a hairline, and scaled by the eased strength so the pour
+    // thins out as it stops rather than being cut off mid-column.
+    const w0 = Math.max(4, l.cupW * 0.075) * this.streamStrength;
+    if (w0 < 0.6) return;
     // Lateral drift from the tipped spout, plus a slow wobble so the column
     // isn't a dead straight line.
     const driftX = -l.cupW * 0.04;
+
+    const cx = l.cupX + l.cupW / 2;
 
     // Where the intact column ends. Rayleigh: a jet survives for a length
     // proportional to its own diameter, so a short drop never breaks up at
@@ -728,15 +947,33 @@ class PourGame implements GameModule {
       right.push([p.x + p.width / 2, p.y]);
     }
 
+    // The cup is translucent, so the part of the stream below the front lip
+    // is not hidden — it is dimmed. Drawn first, under the crisp pass, so
+    // the column visibly continues down into the liquid instead of being
+    // chopped off at the rim.
     c.save();
-    // Visible region: everything above the rim, plus the rim opening itself.
-    // The cup is opaque, so below the front lip the stream is behind the
-    // wall — exactly what you see pouring into a real paper cup. Both
-    // sub-paths are added to one path and clipped together.
     c.beginPath();
-    c.rect(0, 0, this.ctx.stage.width, l.topCy);
-    c.ellipse(l.cupX + l.cupW / 2, l.topCy, l.topRx, l.topRy, 0, 0, Math.PI * 2);
+    c.moveTo(cx - l.topRx, l.topCy);
+    c.lineTo(cx - l.baseRx, l.baseCy);
+    c.ellipse(cx, l.baseCy, l.baseRx, l.baseRy, 0, Math.PI, 0, true);
+    c.lineTo(cx + l.topRx, l.topCy);
+    c.ellipse(cx, l.topCy, l.topRx, l.topRy, 0, 0, Math.PI, true);
+    c.closePath();
     c.clip();
+    c.globalAlpha = 0.34;
+    c.fillStyle = this.liquidColor();
+    this.fillStreamPath(c, left, right);
+    c.restore();
+
+    c.save();
+    this.clipToVisiblePour(c, l);
+
+    // A bead of liquid clinging at the lip, so the stream grows out of the
+    // bottle instead of starting in the air just below it.
+    c.fillStyle = this.liquidColor();
+    c.beginPath();
+    c.ellipse(l.spoutX, l.spoutY, w0 * 0.85, w0 * 0.62, 0, 0, Math.PI * 2);
+    c.fill();
 
     c.beginPath();
     c.moveTo(left[0]![0], left[0]![1]);
@@ -775,15 +1012,91 @@ class PourGame implements GameModule {
     c.restore();
   }
 
-  private renderDroplets(c: CanvasRenderingContext2D): void {
+  /** Clip to the part of the pour a viewer could actually see: above the
+   * rim, plus the rim opening itself. The cup is opaque below its front
+   * lip, so anything falling past that is behind the wall. Shared by the
+   * stream and by the drips that trail off the spout. */
+  private clipToVisiblePour(c: CanvasRenderingContext2D, l: Layout): void {
+    c.beginPath();
+    c.rect(0, 0, this.ctx.stage.width, l.topCy);
+    c.ellipse(l.cupX + l.cupW / 2, l.topCy, l.topRx, l.topRy, 0, 0, Math.PI * 2);
+    c.clip();
+  }
+
+  /** Traces the stream polygon from its two pre-computed edges. Shared by
+   * the dimmed in-cup pass and the crisp free-fall pass. */
+  private fillStreamPath(
+    c: CanvasRenderingContext2D,
+    left: [number, number][],
+    right: [number, number][],
+  ): void {
+    c.beginPath();
+    c.moveTo(left[0]![0], left[0]![1]);
+    for (const [x, y] of left.slice(1)) c.lineTo(x, y);
+    for (let i = right.length - 1; i >= 0; i--) c.lineTo(right[i]![0], right[i]![1]);
+    c.closePath();
+    c.fill();
+  }
+
+  private renderDroplets(c: CanvasRenderingContext2D, l: Layout): void {
     if (this.droplets.length === 0) return;
+    const draw = (list: Droplet[]) => {
+      for (const d of list) {
+        c.globalAlpha = Math.max(0, Math.min(1, d.life / d.maxLife));
+        // Drops stretch along their velocity: surface tension loses to
+        // inertia as they speed up, and a circle at 600px/sec reads as a
+        // floating bead rather than a moving drop.
+        const speed = Math.hypot(d.vx, d.vy);
+        const stretch = Math.min(2.4, 1 + speed / 900);
+        c.save();
+        c.translate(d.x, d.y);
+        c.rotate(Math.atan2(d.vy, d.vx));
+        c.beginPath();
+        c.ellipse(0, 0, d.radius * stretch, d.radius, 0, 0, Math.PI * 2);
+        c.fill();
+        c.restore();
+      }
+    };
+
+    const splash = this.droplets.filter((d) => !d.spout);
+    const drips = this.droplets.filter((d) => d.spout);
+
     c.save();
     c.fillStyle = this.liquidColor();
-    for (const d of this.droplets) {
-      c.globalAlpha = Math.max(0, Math.min(1, d.life / d.maxLife));
+    draw(splash);
+    c.restore();
+
+    if (drips.length > 0) {
+      // The drips that trail off the spout after the pour stops fall past
+      // the rim, so they get the same clip the stream does.
+      c.save();
+      this.clipToVisiblePour(c, l);
+      c.fillStyle = this.liquidColor();
+      draw(drips);
+      c.restore();
+    }
+  }
+
+  private renderSparkles(c: CanvasRenderingContext2D): void {
+    if (this.sparkles.length === 0) return;
+    c.save();
+    for (const sp of this.sparkles) {
+      const fade = Math.max(0, Math.min(1, sp.life / SPARKLE_LIFE_SEC));
+      c.globalAlpha = fade;
+      c.fillStyle = "#FFFFFF";
+      // A four-point star rather than a dot: at this size a dot is just
+      // noise, and the star reads as "a good thing happened".
+      c.save();
+      c.translate(sp.x, sp.y);
       c.beginPath();
-      c.arc(d.x, d.y, d.radius, 0, Math.PI * 2);
+      const r = sp.size * (0.5 + fade);
+      c.moveTo(0, -r * 2.2);
+      c.quadraticCurveTo(0, 0, r, 0);
+      c.quadraticCurveTo(0, 0, 0, r * 2.2);
+      c.quadraticCurveTo(0, 0, -r, 0);
+      c.quadraticCurveTo(0, 0, 0, -r * 2.2);
       c.fill();
+      c.restore();
     }
     c.restore();
   }
@@ -796,9 +1109,38 @@ class PourGame implements GameModule {
     return asset?.backgroundColor || LIQUID_DEFAULT;
   }
 
+  /**
+   * Vertical displacement of the liquid surface at a point across it, as a
+   * multiple of the surface ellipse's half-height.
+   *
+   * Two travelling sines at incommensurate wavelengths (so the pattern
+   * never visibly repeats), plus a Gaussian depression centred under the
+   * stream. This is the difference between a surface and a line: the level
+   * rising alone reads as a rectangle sliding up the cup no matter how well
+   * the rest of it is shaded.
+   *
+   * @param u position across the surface, -1 at the left wall to +1 at the right
+   */
+  private surfaceWave(u: number): number {
+    const amp = this.sloshAmp;
+    const a = Math.sin((u / WAVE_A.length) * Math.PI + this.wavePhase * WAVE_A.speed) * WAVE_A.amp;
+    const b = Math.sin((u / WAVE_B.length) * Math.PI + this.wavePhase * WAVE_B.speed) * WAVE_B.amp;
+    const dip = -CRATER_DEPTH * this.crater * Math.exp(-((u / CRATER_WIDTH) ** 2));
+    return (a + b) * amp + dip;
+  }
+
   private renderCup(c: CanvasRenderingContext2D, l: Layout): void {
     const { brand, brandLogo } = this.ctx;
     const cx = l.cupX + l.cupW / 2;
+
+    // Serve/miss bounce, applied about the cup's base so it squashes into
+    // the tray rather than floating.
+    const squash = 1 - this.pop * 0.02;
+    const stretch = 1 + this.pop * 0.02;
+    c.save();
+    c.translate(cx, l.baseCy);
+    c.scale(stretch, squash);
+    c.translate(-cx, -l.baseCy);
 
     // Outer silhouette: rim ellipse on top, base ellipse at the bottom,
     // straight sides between. Reused as both fill path and clip.
@@ -812,16 +1154,19 @@ class PourGame implements GameModule {
       c.closePath();
     };
 
-    // Body, with a horizontal gradient standing in for a curved surface:
-    // dark at both edges, brightest just left of centre where the light is.
+    // --- the vessel itself, behind its contents ------------------------
+    // Translucent rather than a flat fill: the stage background reads
+    // faintly through the empty part of the cup, which is what makes it a
+    // plastic tumbler instead of a painted shape. The liquid is then drawn
+    // INSIDE this, with the glass pass (below) laid over everything.
     withDropShadow(c, () => {
       c.save();
       bodyPath();
       const shell = c.createLinearGradient(cx - l.topRx, 0, cx + l.topRx, 0);
-      shell.addColorStop(0, shadeHex(brand.background, -0.2));
-      shell.addColorStop(0.3, shadeHex(brand.background, 0.05));
-      shell.addColorStop(0.62, brand.background);
-      shell.addColorStop(1, shadeHex(brand.background, -0.24));
+      shell.addColorStop(0, withAlpha(shadeHex(brand.background, -0.22), 0.85));
+      shell.addColorStop(0.32, withAlpha(shadeHex(brand.background, 0.06), 0.5));
+      shell.addColorStop(0.64, withAlpha(brand.background, 0.45));
+      shell.addColorStop(1, withAlpha(shadeHex(brand.background, -0.26), 0.88));
       c.fillStyle = shell;
       c.fill();
       c.restore();
@@ -831,7 +1176,7 @@ class PourGame implements GameModule {
     c.save();
     c.beginPath();
     c.ellipse(cx, l.topCy, l.topRx, l.topRy, 0, 0, Math.PI * 2);
-    c.fillStyle = shadeHex(brand.background, -0.32);
+    c.fillStyle = shadeHex(brand.background, -0.3);
     c.fill();
     c.restore();
 
@@ -841,170 +1186,45 @@ class PourGame implements GameModule {
 
     // --- liquid ---------------------------------------------------------
     const level = Math.max(0, Math.min(1, this.fill));
-    const surfaceCy = this.surfaceCy(l.topCy, l.baseCy, level);
-    const surfaceRx = this.rxAt(l, surfaceCy);
+    const baseSurfaceCy = this.surfaceCy(l.topCy, l.baseCy, level);
+    // The spring rides on top of the true level, and is clamped so an
+    // overshoot can never push the surface out through the rim or the base.
+    const surfCy = Math.max(
+      l.topCy + l.topRy * 0.5,
+      Math.min(l.baseCy, baseSurfaceCy + this.surfaceOffset),
+    );
+    const surfaceRx = this.rxAt(l, surfCy);
     const surfaceRy = l.baseRy + (l.topRy - l.baseRy) * level;
-    // Slosh rides on the surface ellipse's own height, so a settled cup is
-    // a clean ellipse and a freshly-hit one wobbles.
-    const slosh = Math.sin(this.sloshPhase) * this.sloshAmp * surfaceRy * 0.45;
 
     if (level > 0.001) {
-      c.fillStyle = this.liquidColor();
-      c.fillRect(cx - l.topRx, surfaceCy, l.topRx * 2, l.baseCy + l.baseRy - surfaceCy);
-      // The visible top face of the liquid — an ellipse, not a straight
-      // line, which is what actually makes the cup read as having a volume.
-      const surfCy = surfaceCy + slosh;
-      const surfRy = Math.max(1, surfaceRy + slosh * 0.5);
-      c.beginPath();
-      c.ellipse(cx, surfCy, surfaceRx, surfRy, 0, 0, Math.PI * 2);
-      c.fillStyle = shadeHex(this.liquidColor(), 0.12);
-      c.fill();
-      c.strokeStyle = "rgba(255,255,255,0.35)";
-      c.lineWidth = 1.5;
-      c.stroke();
-
-      // Foam/crema head sitting ON the surface. Built by the pour and
-      // collapsing after it, which is what makes this read as a specific
-      // drink instead of tinted water. Drawn BEFORE the impact effects
-      // because it floats: the stream lands on the foam, so the crater and
-      // the rings belong on the foam's top face, not buried under it.
-      const foamH = this.foam * FOAM_MAX_FRACTION * (l.baseCy - l.topCy);
-      const hasFoam = foamH > 1;
-      if (hasFoam) {
-        const foamColor = shadeHex(this.liquidColor(), 0.5);
-        const foamTop = surfCy - foamH;
-        c.fillStyle = foamColor;
-        c.fillRect(cx - l.topRx, foamTop, l.topRx * 2, foamH);
-        c.beginPath();
-        c.ellipse(cx, foamTop, surfaceRx, surfRy, 0, 0, Math.PI * 2);
-        c.fillStyle = shadeHex(foamColor, 0.12);
-        c.fill();
-        // A few bubbles, placed off the slosh phase so they drift rather
-        // than sitting in fixed spots.
-        c.fillStyle = shadeHex(foamColor, -0.12);
-        for (let i = 0; i < 5; i++) {
-          const a = this.sloshPhase * 0.3 + i * 1.7;
-          const bx = cx + Math.cos(a) * surfaceRx * 0.55;
-          const by = foamTop + Math.sin(a) * surfRy * 0.5;
-          c.beginPath();
-          c.arc(bx, by, Math.max(1, foamH * 0.16), 0, Math.PI * 2);
-          c.fill();
-        }
-      }
-
-      // Rings thrown out from where the stream lands. Drawn on the surface
-      // ellipse's own axes so they read as travelling across a disc seen at
-      // an angle, not as circles pasted on top of it.
-      const impactCy = hasFoam ? surfCy - foamH : surfCy;
-      const squash = surfRy / Math.max(surfaceRx, 1e-4);
-      for (const ring of this.ripples) {
-        const fade = Math.max(0, ring.life / RIPPLE_LIFE_SEC);
-        const rx = Math.min(ring.radius, surfaceRx * 0.94);
-        if (rx <= 1) continue;
-        c.beginPath();
-        c.ellipse(l.impactX, impactCy, rx, rx * squash, 0, 0, Math.PI * 2);
-        c.strokeStyle = `rgba(255,255,255,${(0.35 * fade).toFixed(3)})`;
-        c.lineWidth = 1.2;
-        c.stroke();
-      }
-
-      // The crater the column punches while it is still landing. On a
-      // headed drink this is the dark hole the stream cuts through the
-      // foam, which is why it takes the liquid's colour, not the foam's.
-      if (this.phase === "pouring") {
-        const craterRx = Math.max(3, l.cupW * 0.05);
-        c.beginPath();
-        c.ellipse(l.impactX, impactCy, craterRx, craterRx * squash, 0, 0, Math.PI * 2);
-        c.fillStyle = shadeHex(this.liquidColor(), -0.18);
-        c.fill();
-      }
+      this.renderLiquid(c, l, cx, surfCy, surfaceRx, surfaceRy);
     }
 
-    // Sleeve — the cup's permanent brand surface, carrying the logo. It is
-    // opaque, so it sits LOW on the cup and stays clear of where the fill
-    // band can ever be: pickBandCentre() never goes below 0.5 of the cup,
-    // which is the upper half of the drawn silhouette. A sleeve across the
-    // middle hid the band and the liquid level at exactly the moment the
-    // player needs to read them. Its top and bottom edges are ellipse arcs,
-    // so the band wraps the cylinder instead of sitting on it like a label.
-    const sleeveTop = l.topCy + (l.baseCy - l.topCy) * 0.66;
-    const sleeveBottom = l.topCy + (l.baseCy - l.topCy) * 0.92;
-    const sleeveTopRx = this.rxAt(l, sleeveTop);
-    const sleeveBottomRx = this.rxAt(l, sleeveBottom);
-    const sleeveTopRy = l.topRy * 0.72;
-    const sleeveBottomRy = l.topRy * 0.6;
-
-    c.beginPath();
-    c.ellipse(cx, sleeveTop, sleeveTopRx, sleeveTopRy, 0, Math.PI, 0, true);
-    c.lineTo(cx + sleeveBottomRx, sleeveBottom);
-    c.ellipse(cx, sleeveBottom, sleeveBottomRx, sleeveBottomRy, 0, 0, Math.PI, true);
-    c.closePath();
-    const sleeveShade = c.createLinearGradient(cx - sleeveTopRx, 0, cx + sleeveTopRx, 0);
-    sleeveShade.addColorStop(0, shadeHex(brand.accent, -0.22));
-    sleeveShade.addColorStop(0.35, shadeHex(brand.accent, 0.08));
-    sleeveShade.addColorStop(1, shadeHex(brand.accent, -0.26));
-    c.fillStyle = sleeveShade;
-    c.fill();
-
-    const sleeveMidY = (sleeveTop + sleeveBottom) / 2;
-    const sleeveH = sleeveBottom - sleeveTop;
-    const sleeveW = sleeveTopRx * 1.72;
-    if (brandLogo) {
-      const pad = sleeveH * 0.16;
-      drawImageContain(c, brandLogo, cx - sleeveW / 2, sleeveTop + pad, sleeveW, sleeveH - pad * 2);
-    } else if (brand.name) {
-      c.fillStyle = contrastOn(brand.accent, brand.foreground, brand.background);
-      c.font = `700 ${Math.round(sleeveH * 0.52)}px ${brand.fontFamily}, system-ui, sans-serif`;
-      c.textAlign = "center";
-      c.textBaseline = "middle";
-      c.fillText(truncate(c, brand.name.toUpperCase(), sleeveW), cx, sleeveMidY);
-    }
-
-    // The fill band the player is aiming for — drawn last inside the cup so
-    // it is never occluded by the liquid or the sleeve, and curved to the
-    // cylinder like a printed measuring line.
-    const bandCy = this.surfaceCy(l.topCy, l.baseCy, this.bandCentre);
-    const bandSpan = (l.baseCy - l.topCy) * this.bandWidth;
-    c.fillStyle = "rgba(255,255,255,0.16)";
-    c.fillRect(cx - l.topRx, bandCy - bandSpan / 2, l.topRx * 2, bandSpan);
-    // Each edge is stroked twice, dark then light one pixel below. A single
-    // colour can't work here: the band sits over the pale empty interior
-    // near the rim and over the dark liquid once the cup fills, and either
-    // one alone disappears against half of that. The doubled line is legible
-    // on both, which matters — this is the thing the player is aiming at.
-    for (const edgeY of [bandCy - bandSpan / 2, bandCy + bandSpan / 2]) {
-      const rx = this.rxAt(l, edgeY);
-      for (const [dy, stroke, width] of [
-        [0, withAlpha(brand.foreground, 0.75), 2.5],
-        [1.5, "rgba(255,255,255,0.9)", 1.5],
-      ] as [number, string, number][]) {
-        c.beginPath();
-        c.ellipse(cx, edgeY + dy, rx, rx * 0.2, 0, 0, Math.PI);
-        c.strokeStyle = stroke;
-        c.lineWidth = width;
-        c.stroke();
-      }
-    }
-
-    // Specular stripe — one soft vertical highlight, same light source as
-    // the body gradient.
-    const gloss = c.createLinearGradient(cx - l.topRx * 0.55, 0, cx - l.topRx * 0.15, 0);
-    gloss.addColorStop(0, "rgba(255,255,255,0)");
-    gloss.addColorStop(0.5, "rgba(255,255,255,0.26)");
-    gloss.addColorStop(1, "rgba(255,255,255,0)");
-    c.fillStyle = gloss;
-    c.fillRect(cx - l.topRx * 0.55, l.topCy, l.topRx * 0.4, l.baseCy - l.topCy);
+    this.renderSleeve(c, l, cx, brandLogo);
+    this.renderTargetBand(c, l, cx, surfCy);
+    this.renderGlass(c, l, cx, bodyPath);
     c.restore();
 
     // Rim lip on top of everything, then the outline.
     c.save();
     c.beginPath();
     c.ellipse(cx, l.topCy, l.topRx, l.topRy, 0, 0, Math.PI * 2);
-    c.strokeStyle = shadeHex(brand.background, -0.28);
+    c.strokeStyle = shadeHex(brand.background, -0.26);
     c.lineWidth = Math.max(3, l.cupW * 0.035);
     c.stroke();
+    // A bright arc along the back of the rim — the single clearest "this is
+    // a hard, shiny edge" cue.
+    c.beginPath();
+    c.ellipse(cx, l.topCy, l.topRx, l.topRy, 0, Math.PI * 1.15, Math.PI * 1.85);
+    c.strokeStyle = "rgba(255,255,255,0.75)";
+    c.lineWidth = Math.max(1.5, l.cupW * 0.014);
+    c.stroke();
+
     bodyPath();
-    c.strokeStyle = withAlpha(brand.foreground, 0.16);
+    c.strokeStyle =
+      this.missFlash > 0
+        ? `rgba(209,67,67,${(0.5 * this.missFlash).toFixed(3)})`
+        : withAlpha(brand.foreground, 0.16);
     c.lineWidth = 1.5;
     c.stroke();
     c.restore();
@@ -1022,7 +1242,316 @@ class PourGame implements GameModule {
       c.fillRect(cx + l.topRx * 0.78, l.topCy, l.topRx * 0.22, runH);
       c.restore();
     }
+
+    c.restore(); // bounce transform
   }
+
+  /**
+   * The liquid: a wavy surface disc plus the body beneath it.
+   *
+   * The body's top edge is the FRONT half of the surface ellipse, sampled
+   * with the wave — so the level and the wave are the same curve, and the
+   * liquid can't separate from its own surface. Everything is inside the
+   * cup's clip already, so the walls do the rest.
+   */
+  private renderLiquid(
+    c: CanvasRenderingContext2D,
+    l: Layout,
+    cx: number,
+    surfCy: number,
+    rx: number,
+    ry: number,
+  ): void {
+    const liquid = this.liquidColor();
+    const SAMPLES = 26;
+
+    /** A point on the surface ellipse at angle `theta`, displaced by the wave. */
+    const surfacePoint = (theta: number): [number, number] => {
+      const u = Math.cos(theta);
+      return [cx + rx * u, surfCy + ry * Math.sin(theta) + this.surfaceWave(u) * ry];
+    };
+
+    // Body: front arc (theta 0 -> PI passes through the near edge), then
+    // down the right wall, across the base, up the left wall.
+    c.beginPath();
+    for (let i = 0; i <= SAMPLES; i++) {
+      const [x, y] = surfacePoint((i / SAMPLES) * Math.PI);
+      if (i === 0) c.moveTo(x, y);
+      else c.lineTo(x, y);
+    }
+    c.lineTo(cx - l.topRx, l.baseCy + l.baseRy);
+    c.lineTo(cx + l.topRx, l.baseCy + l.baseRy);
+    c.closePath();
+    // Depth: darker toward the base, lighter just under the surface.
+    const depth = c.createLinearGradient(0, surfCy, 0, l.baseCy + l.baseRy);
+    depth.addColorStop(0, shadeHex(liquid, 0.08));
+    depth.addColorStop(0.45, liquid);
+    depth.addColorStop(1, shadeHex(liquid, -0.16));
+    c.fillStyle = depth;
+    c.fill();
+
+    // Surface disc, drawn over the body so the far edge reads as the liquid
+    // meeting the back wall.
+    c.beginPath();
+    for (let i = 0; i <= SAMPLES * 2; i++) {
+      const [x, y] = surfacePoint((i / (SAMPLES * 2)) * Math.PI * 2);
+      if (i === 0) c.moveTo(x, y);
+      else c.lineTo(x, y);
+    }
+    c.closePath();
+    c.fillStyle = shadeHex(liquid, 0.14);
+    c.fill();
+
+    // Specular sheen across the surface, offset toward the light.
+    c.save();
+    c.clip();
+    const sheen = c.createLinearGradient(cx - rx, surfCy - ry, cx + rx * 0.3, surfCy + ry);
+    sheen.addColorStop(0, "rgba(255,255,255,0.3)");
+    sheen.addColorStop(0.55, "rgba(255,255,255,0.05)");
+    sheen.addColorStop(1, "rgba(255,255,255,0)");
+    c.fillStyle = sheen;
+    c.fillRect(cx - rx, surfCy - ry * 2, rx * 2, ry * 4);
+    c.restore();
+
+    // Meniscus: the liquid climbs the wall it touches. A bright hairline
+    // along the far edge and a darker contact shadow along the near one is
+    // enough to stop the surface reading as a disc pasted into a tube.
+    c.beginPath();
+    for (let i = 0; i <= SAMPLES; i++) {
+      const [x, y] = surfacePoint(Math.PI + (i / SAMPLES) * Math.PI);
+      if (i === 0) c.moveTo(x, y);
+      else c.lineTo(x, y);
+    }
+    c.strokeStyle = "rgba(255,255,255,0.45)";
+    c.lineWidth = 1.4;
+    c.stroke();
+
+    c.beginPath();
+    for (let i = 0; i <= SAMPLES; i++) {
+      const [x, y] = surfacePoint((i / SAMPLES) * Math.PI);
+      if (i === 0) c.moveTo(x, y);
+      else c.lineTo(x, y);
+    }
+    c.strokeStyle = withAlpha(shadeHex(liquid, -0.3), 0.55);
+    c.lineWidth = 1.2;
+    c.stroke();
+
+    // --- foam, then the impact effects that ride on top of it ----------
+    const foamH = this.foam * FOAM_MAX_FRACTION * (l.baseCy - l.topCy);
+    const hasFoam = foamH > 1;
+    if (hasFoam) {
+      const foamColor = shadeHex(liquid, 0.5);
+      const foamTop = surfCy - foamH;
+      c.beginPath();
+      for (let i = 0; i <= SAMPLES * 2; i++) {
+        const theta = (i / (SAMPLES * 2)) * Math.PI * 2;
+        const [x, y] = surfacePoint(theta);
+        if (i === 0) c.moveTo(x, y - foamH);
+        else c.lineTo(x, y - foamH);
+      }
+      c.closePath();
+      c.fillStyle = shadeHex(foamColor, 0.1);
+      c.fill();
+      c.fillStyle = foamColor;
+      c.fillRect(cx - l.topRx, foamTop, l.topRx * 2, foamH * 0.6);
+      c.fillStyle = shadeHex(foamColor, -0.1);
+      for (let i = 0; i < 5; i++) {
+        const a = this.sloshPhase * 0.3 + i * 1.7;
+        const bx = cx + Math.cos(a) * rx * 0.55;
+        const by = foamTop + Math.sin(a) * ry * 0.5;
+        c.beginPath();
+        c.arc(bx, by, Math.max(1, foamH * 0.16), 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+
+    const impactCy = hasFoam ? surfCy - foamH : surfCy;
+    const squash = ry / Math.max(rx, 1e-4);
+    for (const ring of this.ripples) {
+      const fade = Math.max(0, ring.life / RIPPLE_LIFE_SEC);
+      const ringRx = Math.min(ring.radius, rx * 0.94);
+      if (ringRx <= 1) continue;
+      c.beginPath();
+      c.ellipse(this.layoutImpactX(l), impactCy, ringRx, ringRx * squash, 0, 0, Math.PI * 2);
+      c.strokeStyle = `rgba(255,255,255,${(0.4 * fade).toFixed(3)})`;
+      c.lineWidth = 1.3;
+      c.stroke();
+    }
+
+    if (this.crater > 0.02) {
+      const craterRx = Math.max(3, l.cupW * 0.055) * this.crater;
+      c.beginPath();
+      c.ellipse(this.layoutImpactX(l), impactCy, craterRx, craterRx * squash, 0, 0, Math.PI * 2);
+      c.fillStyle = withAlpha(shadeHex(liquid, -0.22), 0.8 * this.crater);
+      c.fill();
+    }
+  }
+
+  private layoutImpactX(l: Layout): number {
+    return l.impactX;
+  }
+
+  /** The cup's permanent brand surface. Opaque, so it sits LOW and stays
+   * clear of where the fill band can ever be — pickBandCentre() never goes
+   * below 0.5 of the cup. A sleeve across the middle hid the band and the
+   * liquid level at exactly the moment the player needs to read them. Its
+   * top and bottom edges are ellipse arcs, so it wraps the cylinder instead
+   * of sitting on it like a label. */
+  private renderSleeve(
+    c: CanvasRenderingContext2D,
+    l: Layout,
+    cx: number,
+    brandLogo: HTMLImageElement | null,
+  ): void {
+    const { brand } = this.ctx;
+    const sleeveTop = l.topCy + (l.baseCy - l.topCy) * 0.66;
+    const sleeveBottom = l.topCy + (l.baseCy - l.topCy) * 0.92;
+    const sleeveTopRx = this.rxAt(l, sleeveTop);
+    const sleeveBottomRx = this.rxAt(l, sleeveBottom);
+    const sleeveTopRy = l.topRy * 0.72;
+    const sleeveBottomRy = l.topRy * 0.6;
+
+    c.beginPath();
+    c.ellipse(cx, sleeveTop, sleeveTopRx, sleeveTopRy, 0, Math.PI, 0, true);
+    c.lineTo(cx + sleeveBottomRx, sleeveBottom);
+    c.ellipse(cx, sleeveBottom, sleeveBottomRx, sleeveBottomRy, 0, 0, Math.PI, true);
+    c.closePath();
+    const shade = c.createLinearGradient(cx - sleeveTopRx, 0, cx + sleeveTopRx, 0);
+    shade.addColorStop(0, shadeHex(brand.accent, -0.24));
+    shade.addColorStop(0.35, shadeHex(brand.accent, 0.1));
+    shade.addColorStop(1, shadeHex(brand.accent, -0.28));
+    c.fillStyle = shade;
+    c.fill();
+
+    const sleeveMidY = (sleeveTop + sleeveBottom) / 2;
+    const sleeveH = sleeveBottom - sleeveTop;
+    const sleeveW = sleeveTopRx * 1.72;
+    if (brandLogo) {
+      const pad = sleeveH * 0.16;
+      drawImageContain(c, brandLogo, cx - sleeveW / 2, sleeveTop + pad, sleeveW, sleeveH - pad * 2);
+    } else if (brand.name) {
+      c.fillStyle = contrastOn(brand.accent, brand.foreground, brand.background);
+      c.font = `700 ${Math.round(sleeveH * 0.52)}px ${brand.fontFamily}, system-ui, sans-serif`;
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      c.fillText(truncate(c, brand.name.toUpperCase(), sleeveW), cx, sleeveMidY);
+    }
+  }
+
+  /**
+   * The target. This is the one thing on screen the player is acting on, so
+   * it gets a soft pulsing glow and brightens further when the surface is
+   * actually inside it — which teaches the objective without a word of copy.
+   *
+   * Each edge is stroked twice, dark then light one pixel below. A single
+   * colour cannot work: the band sits over the pale empty interior near the
+   * rim and over the dark liquid once the cup fills, and either one alone
+   * disappears against half of that.
+   */
+  private renderTargetBand(c: CanvasRenderingContext2D, l: Layout, cx: number, surfCy: number): void {
+    const { brand } = this.ctx;
+    const bandCy = this.surfaceCy(l.topCy, l.baseCy, this.bandCentre);
+    const bandSpan = (l.baseCy - l.topCy) * this.bandWidth;
+    const inside = Math.abs(surfCy - bandCy) <= bandSpan / 2;
+    const pulse = 0.5 + 0.5 * Math.sin(this.elapsed * 3.4);
+    const glow = inside ? 0.85 : 0.3 + pulse * 0.25;
+
+    c.save();
+    c.fillStyle = `rgba(255,255,255,${(inside ? 0.26 : 0.14).toFixed(3)})`;
+    c.fillRect(cx - l.topRx, bandCy - bandSpan / 2, l.topRx * 2, bandSpan);
+
+    c.shadowColor = withAlpha(brand.accent, glow);
+    c.shadowBlur = inside ? 14 : 8;
+    for (const edgeY of [bandCy - bandSpan / 2, bandCy + bandSpan / 2]) {
+      const rx = this.rxAt(l, edgeY);
+      for (const [dy, stroke, width] of [
+        [0, withAlpha(brand.foreground, 0.75), 2.5],
+        [1.5, `rgba(255,255,255,${(0.75 + glow * 0.25).toFixed(3)})`, 1.5],
+      ] as [number, string, number][]) {
+        c.beginPath();
+        c.ellipse(cx, edgeY + dy, rx, rx * 0.2, 0, 0, Math.PI);
+        c.strokeStyle = stroke;
+        c.lineWidth = width;
+        c.stroke();
+      }
+    }
+    c.restore();
+  }
+
+  /** The glass pass: laid over the liquid and the sleeve, which is what
+   * makes both look like they are INSIDE the vessel rather than painted on
+   * top of it. Two specular stripes and a darker edge on each side. */
+  private renderGlass(
+    c: CanvasRenderingContext2D,
+    l: Layout,
+    cx: number,
+    bodyPath: () => void,
+  ): void {
+    const top = l.topCy;
+    const bottom = l.baseCy + l.baseRy;
+
+    c.save();
+    // Broad soft highlight down the left, where the light is.
+    const gloss = c.createLinearGradient(cx - l.topRx * 0.62, 0, cx - l.topRx * 0.1, 0);
+    gloss.addColorStop(0, "rgba(255,255,255,0)");
+    gloss.addColorStop(0.45, "rgba(255,255,255,0.3)");
+    gloss.addColorStop(1, "rgba(255,255,255,0)");
+    c.fillStyle = gloss;
+    c.fillRect(cx - l.topRx * 0.62, top, l.topRx * 0.52, bottom - top);
+
+    // A thin hard reflection just inside the right wall — the giveaway that
+    // a surface is glassy rather than matte.
+    const edge = c.createLinearGradient(cx + l.topRx * 0.6, 0, cx + l.topRx, 0);
+    edge.addColorStop(0, "rgba(255,255,255,0)");
+    edge.addColorStop(0.7, "rgba(255,255,255,0.22)");
+    edge.addColorStop(1, "rgba(255,255,255,0)");
+    c.fillStyle = edge;
+    c.fillRect(cx + l.topRx * 0.6, top, l.topRx * 0.4, bottom - top);
+
+    // Both walls darken at the silhouette, which is what gives a
+    // transparent cylinder its thickness.
+    const walls = c.createLinearGradient(cx - l.topRx, 0, cx + l.topRx, 0);
+    walls.addColorStop(0, "rgba(0,0,0,0.2)");
+    walls.addColorStop(0.12, "rgba(0,0,0,0)");
+    walls.addColorStop(0.88, "rgba(0,0,0,0)");
+    walls.addColorStop(1, "rgba(0,0,0,0.24)");
+    c.fillStyle = walls;
+    bodyPath();
+    c.fill();
+
+    if (this.missFlash > 0) {
+      c.fillStyle = `rgba(209,67,67,${(0.12 * this.missFlash).toFixed(3)})`;
+      bodyPath();
+      c.fill();
+    }
+    c.restore();
+  }
+
+  /** A short "PERFECT" call for a dead-centre serve, riding the same pop
+   * spring as the cup so it lands with the bounce rather than beside it. */
+  private renderPerfect(c: CanvasRenderingContext2D, l: Layout): void {
+    if (this.perfectT <= 0) return;
+    const { brand } = this.ctx;
+    const t = 1 - this.perfectT / PERFECT_LABEL_SEC;
+    const rise = t * l.cupH * 0.16;
+    const alpha = Math.min(1, (1 - t) * 2.2);
+    const scale = 1 + Math.max(0, 0.28 - t * 0.6);
+
+    c.save();
+    c.globalAlpha = alpha;
+    c.translate(l.impactX, l.topCy - l.cupH * 0.04 - rise);
+    c.scale(scale, scale);
+    c.font = `800 ${Math.round(l.cupW * 0.16)}px ${brand.fontFamily}, system-ui, sans-serif`;
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    c.lineWidth = 4;
+    c.strokeStyle = "rgba(255,255,255,0.9)";
+    c.strokeText("PERFECT", 0, 0);
+    c.fillStyle = brand.accent;
+    c.fillText("PERFECT", 0, 0);
+    c.restore();
+  }
+
 
   private renderTray(c: CanvasRenderingContext2D, w: number, y: number, h: number): void {
     const { brand } = this.ctx;

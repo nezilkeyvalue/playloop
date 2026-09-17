@@ -53,6 +53,11 @@ interface Harness {
   slosh(): number;
   ripples(): number;
   foam(): number;
+  sparkles(): number;
+  popVel(): number;
+  missFlash(): number;
+  streamStrength(): number;
+  surfaceOffset(): number;
   tap(): void;
   step(): void;
 }
@@ -105,6 +110,12 @@ function harness(tuning: Record<string, number>, prizes: LoadedAsset[]): Harness
     sloshAmp: number;
     ripples: unknown[];
     foam: number;
+    sparkles: unknown[];
+    popVel: number;
+    missFlash: number;
+    streamStrength: number;
+    surfaceOffset: number;
+    surfaceVel: number;
   };
   return {
     game,
@@ -118,6 +129,11 @@ function harness(tuning: Record<string, number>, prizes: LoadedAsset[]): Harness
     slosh: () => inner.sloshAmp,
     ripples: () => inner.ripples.length,
     foam: () => inner.foam,
+    sparkles: () => inner.sparkles.length,
+    popVel: () => inner.popVel,
+    missFlash: () => inner.missFlash,
+    streamStrength: () => inner.streamStrength,
+    surfaceOffset: () => inner.surfaceOffset,
     tap: () => {
       ctx.input.justPressed = true;
       game.update(DT);
@@ -267,7 +283,84 @@ let centreScore = 0;
   );
 }
 
-// --- 6. the forged-score ceiling matches the capability ------------------
+// --- 6. the polish layer is wired to the right outcomes ------------------
+// These effects are driven by state, and browser keypress latency is wider
+// than the serve window, so this is the only place they can be pinned down.
+
+// A dead-centre serve bounces the cup and throws sparks; an off-centre one
+// inside the band still scores but must not.
+{
+  const h = harness(defaultTuning(), [prize("p1", "https://example.test/p1.png")]);
+  fillTo(h, h.band().centre);
+  h.tap();
+  assert(h.popVel() > 0, `a serve kicks the cup bounce spring (${h.popVel().toFixed(2)})`);
+  assert(h.sparkles() > 0, `a dead-centre serve throws sparkles (${h.sparkles()})`);
+  assert(h.missFlash() === 0, `a serve raises no miss feedback (${h.missFlash()})`);
+}
+{
+  const h = harness(defaultTuning(), [prize("p1", "https://example.test/p1.png")]);
+  const { centre, width } = h.band();
+  fillTo(h, centre + width * 0.28);
+  h.tap();
+  assert(h.sparkles() === 0, `an off-centre serve scores but earns no sparkles (${h.sparkles()})`);
+}
+
+// A miss raises the fade, never anything harsher, and never sparkles.
+{
+  const h = harness(defaultTuning(), [prize("p1", "https://example.test/p1.png")]);
+  fillTo(h, 1);
+  h.step();
+  assert(h.missFlash() > 0, `an overflow raises the miss fade (${h.missFlash().toFixed(2)})`);
+  assert(h.sparkles() === 0, `an overflow throws no sparkles (${h.sparkles()})`);
+  for (let i = 0; i < 60; i++) h.step();
+  assert(h.missFlash() === 0, `the miss fade clears within a second (${h.missFlash()})`);
+}
+
+// The stream eases in and out rather than switching. It must also be fully
+// off while a cup is held, or the pour appears to continue into a served cup.
+{
+  const h = harness(defaultTuning(), [prize("p1", "https://example.test/p1.png")]);
+  h.step();
+  const afterOneFrame = h.streamStrength();
+  assert(
+    afterOneFrame > 0 && afterOneFrame < 1,
+    `the stream eases in rather than starting at full (${afterOneFrame.toFixed(3)})`,
+  );
+  fillTo(h, h.band().centre);
+  h.tap();
+  for (let i = 0; i < 24; i++) h.step();
+  assert(h.streamStrength() === 0, `the stream is off while the cup is held (${h.streamStrength()})`);
+}
+
+// The surface spring must overshoot and settle, and must never run away —
+// it is integrated at a fixed sub-step precisely because loop.ts can hand
+// update() a 0.1s frame after a backgrounded tab.
+{
+  const h = harness(defaultTuning(), [prize("p1", "https://example.test/p1.png")]);
+  let peak = 0;
+  for (let i = 0; i < 90; i++) {
+    h.step();
+    peak = Math.max(peak, Math.abs(h.surfaceOffset()));
+  }
+  assert(peak > 0.5, `the stream visibly displaces the surface (peak ${peak.toFixed(2)}px)`);
+  assert(peak < 40, `the surface spring stays bounded (peak ${peak.toFixed(2)}px)`);
+
+  // Now hammer it with the largest dt loop.ts will ever pass.
+  const big = harness(defaultTuning(), [prize("p1", "https://example.test/p1.png")]);
+  const bigGame = big.game as unknown as { update(dt: number): void };
+  let bigPeak = 0;
+  for (let i = 0; i < 200; i++) {
+    bigGame.update(0.1);
+    bigPeak = Math.max(bigPeak, Math.abs(big.surfaceOffset()));
+    if (!Number.isFinite(bigPeak)) break;
+  }
+  assert(
+    Number.isFinite(bigPeak) && bigPeak < 40,
+    `the spring survives 0.1s frames without diverging (peak ${bigPeak.toFixed(2)}px)`,
+  );
+}
+
+// --- 7. the forged-score ceiling matches the capability ------------------
 {
   const game = createPourGame();
   const ceiling = game.maxRealisticScore(defaultTuning());

@@ -345,6 +345,13 @@ export function drawBottleShape(
   h: number,
   color: string,
   liquid: string,
+  /** The bottle's rotation in world space. The contents are counter-rotated
+   * by it, so the liquid inside stays level while the bottle is tipped —
+   * which is the whole tell that there is liquid in there at all. Pass 0
+   * for an upright bottle. */
+  worldTilt = 0,
+  /** Advances the gentle slosh of that inner surface. */
+  wobble = 0,
 ): void {
   const cx = x + w / 2;
   const neckW = w * 0.34;
@@ -376,25 +383,49 @@ export function drawBottleShape(
   c.fillStyle = shell;
   c.fill();
 
-  // Liquid sitting in the lower two thirds, with its own surface ellipse.
+  // Liquid inside, counter-rotated so its surface stays level in world
+  // space however far the bottle is tipped. Drawn oversized and clipped to
+  // the body, because once the context is rotated the bottle's own box no
+  // longer bounds the region that needs filling.
+  const pivotY = y + h * 0.55;
   c.save();
   bodyPath();
   c.clip();
-  const liquidTop = bodyTop + (baseY - bodyTop) * 0.34;
-  c.fillStyle = liquid;
-  c.fillRect(cx - w / 2, liquidTop, w, baseY - liquidTop);
-  c.beginPath();
-  c.ellipse(cx, liquidTop, w / 2, ry * 0.8, 0, 0, Math.PI * 2);
-  c.fillStyle = shadeHex(liquid, 0.14);
-  c.fill();
+  c.translate(cx, pivotY);
+  c.rotate(-worldTilt);
+  c.translate(-cx, -pivotY);
 
-  // Specular stripe, same light source as the body gradient.
+  const surfaceY = pivotY + h * 0.06 + Math.sin(wobble) * h * 0.015;
+  c.fillStyle = liquid;
+  c.fillRect(cx - h, surfaceY, h * 2, h * 2);
+  c.beginPath();
+  c.ellipse(cx, surfaceY, w * 0.62, ry * 0.75, 0, 0, Math.PI * 2);
+  c.fillStyle = shadeHex(liquid, 0.16);
+  c.fill();
+  c.strokeStyle = "rgba(255,255,255,0.3)";
+  c.lineWidth = 1.2;
+  c.stroke();
+  c.restore();
+
+  // Specular stripe, same light source as the body gradient. Outside the
+  // counter-rotation: a highlight belongs to the bottle's own surface, so
+  // it has to tip with the bottle, not stay level with the liquid.
+  c.save();
+  bodyPath();
+  c.clip();
   const gloss = c.createLinearGradient(cx - w * 0.3, 0, cx - w * 0.08, 0);
   gloss.addColorStop(0, "rgba(255,255,255,0)");
-  gloss.addColorStop(0.5, "rgba(255,255,255,0.3)");
+  gloss.addColorStop(0.5, "rgba(255,255,255,0.32)");
   gloss.addColorStop(1, "rgba(255,255,255,0)");
   c.fillStyle = gloss;
   c.fillRect(cx - w * 0.3, y, w * 0.22, h);
+  // A hard reflection just inside the right wall.
+  const edge = c.createLinearGradient(cx + w * 0.22, 0, cx + w * 0.44, 0);
+  edge.addColorStop(0, "rgba(255,255,255,0)");
+  edge.addColorStop(0.6, "rgba(255,255,255,0.22)");
+  edge.addColorStop(1, "rgba(255,255,255,0)");
+  c.fillStyle = edge;
+  c.fillRect(cx + w * 0.22, y, w * 0.24, h);
   c.restore();
 
   c.strokeStyle = shadeHex(color, -0.35);
