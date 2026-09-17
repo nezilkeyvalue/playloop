@@ -10,7 +10,11 @@
     "typecheck": "tsc --noEmit",
     "test:extract": "tsx scripts/test-extract.ts",
     "test:matcher": "tsx scripts/test-matcher.ts",
-    "migrate:dev-data": "tsx scripts/migrate-dev-data.ts"
+    "migrate:dev-data": "tsx scripts/migrate-dev-data.ts",
+    "supabase": "supabase",
+    "db:push": "supabase db push",
+    "db:link": "supabase link",
+    "db:login": "supabase login"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
@@ -38,6 +42,7 @@
     "autoprefixer": "^10.4.20",
     "dotenv": "^17.4.2",
     "postcss": "^8.4.47",
+    "supabase": "^2.117.0",
     "tailwindcss": "^3.4.14",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3"

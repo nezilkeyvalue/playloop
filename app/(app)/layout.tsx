@@ -14,6 +14,7 @@ import { AuthButton } from "@/components/AuthButton";
 const NAV_LINKS = [
   { href: "/build", label: "New game" },
   { href: "/games", label: "My games" },
+  { href: "/analytics", label: "Analytics" },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {

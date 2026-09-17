@@ -92,7 +92,8 @@ export function dedupeByUrl(assets: RawAsset[]): RawAsset[] {
   return [...seen.values()];
 }
 
-function normalizeUrlForDedupe(url: string): string {
+/** Strip query/hash so the same CDN asset at two sizes doesn't double-count. */
+export function normalizeUrlForDedupe(url: string): string {
   try {
     const u = new URL(url);
     u.search = "";

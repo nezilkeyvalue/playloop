@@ -41,7 +41,6 @@ import {
   PERCENT_OFF_MIN,
   REWARD_CODE_MAX,
   REWARD_LABEL_MAX,
-  hasBaselineTier,
   normalizeRewardTier,
   suggestNextMinScore,
   validateCopyField,
@@ -1017,13 +1016,16 @@ function GameEditor() {
                         Add a tier to offer a discount instead.
                       </p>
                     )}
-                    {/* Non-blocking on purpose: a raised floor can be
-                        deliberate, and silently rewriting the lowest tier to 0
-                        would discard that intent. */}
-                    {baseline && !hasBaselineTier(spec.rewards) && (
+                    {/* Informational, never a warning: falling short is the
+                        intended outcome now that no tier can sit at 0, and the
+                        runtime answers it with a "play again" nudge showing
+                        how far off the player was. This just tells the
+                        merchant where their bar is. */}
+                    {baseline && (
                       <p className="rounded-lg border border-border p-2 text-xs text-muted">
-                        Players scoring below {baseline.reward.minScore} see no reward. Add a tier
-                        at min score 0 to always give something.
+                        Players need {baseline.reward.minScore} to earn{" "}
+                        {baseline.reward.label || "the first tier"}. Below that they see how close
+                        they got and are nudged to play again — no code is handed out.
                       </p>
                     )}
                     {orderedRewards.map(({ reward, index }) => (
@@ -1060,11 +1062,11 @@ function GameEditor() {
                     <button
                       type="button"
                       onClick={() => {
-                        // A generated game always already has a tier at 0
-                        // (brain.ts guarantees it), so a hardcoded minScore of
-                        // 0 made the very first "Add another tier" a
-                        // guaranteed collision — and both reward resolvers
-                        // resolve a duplicate threshold silently.
+                        // Never a hardcoded 0: a tier at 0 is rejected by
+                        // validateRewardTier (REWARD_MIN_SCORE_FLOOR), and on
+                        // a game that already has tiers a constant threshold
+                        // is a guaranteed collision — which both reward
+                        // resolvers then resolve silently.
                         void patchSpec(
                           (cur) => ({
                             rewards: [
@@ -1742,12 +1744,12 @@ function RewardRow({
           }
           className="ml-auto mt-5 rounded-md px-2 py-1 text-xs font-medium text-destructive hover:bg-destructive/10"
         >
-          {confirmingRemove ? "Remove the baseline tier?" : "Remove tier"}
+          {confirmingRemove ? "Remove the entry tier?" : "Remove tier"}
         </button>
       </div>
       {confirmingRemove && (
         <p className="mt-1 text-xs text-muted">
-          Players scoring below the next tier will see no reward.
+          This is your lowest tier — removing it raises the bar every player has to clear.
         </p>
       )}
 

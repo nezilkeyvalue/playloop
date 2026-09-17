@@ -9,6 +9,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { AuthGate } from "@/components/AuthGate";
+import { GameSubNav } from "@/components/GameSubNav";
 import {
   ChevronIcon,
   CursorClickIcon,
@@ -227,6 +228,7 @@ function EmbedPanel() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
+      <GameSubNav gameId={id} />
       <div>
         <h1 className="font-display text-2xl font-semibold tracking-tight">Publish &amp; embed</h1>
         <p className="mt-1 text-sm text-muted">

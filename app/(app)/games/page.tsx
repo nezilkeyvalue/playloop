@@ -140,8 +140,8 @@ function GamesList() {
                   <Link href={`/games/${g.id}/embed`} className="text-muted hover:text-foreground">
                     Embed
                   </Link>
-                  <Link href={`/games/${g.id}/stats`} className="text-muted hover:text-foreground">
-                    Stats
+                  <Link href={`/games/${g.id}/analytics`} className="text-muted hover:text-foreground">
+                    Analytics
                   </Link>
                   <button
                     onClick={() => handleDelete(g.id)}
