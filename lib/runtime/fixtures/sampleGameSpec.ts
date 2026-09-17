@@ -698,6 +698,67 @@ export const sneakerGameSpec: GameSpec = {
 };
 
 /** Keyed by the slug app/play/[slug]/page.tsx serves directly, no DB hit. */
+// ---------------------------------------------------------------------------
+// Runner — "Trailhead Supply"
+// ---------------------------------------------------------------------------
+
+const runnerCollectibles: ProcessedAsset[] = [
+  asset("gear-1", "#2F7D5C", "\u{1F392}", { name: "Ridgeline Daypack", priceMinor: 8900, currency: "USD" }),
+  asset("gear-2", "#C8622F", "\u{1F97E}", { name: "Trail Runner GTX", priceMinor: 12500, currency: "USD" }),
+  asset("gear-3", "#3C6E9F", "\u{1F9F4}", { name: "Insulated Flask 1L", priceMinor: 3400, currency: "USD" }),
+  asset("gear-4", "#8A6BC1", "\u{26FA}", { name: "Two-Person Tent", priceMinor: 21900, currency: "USD" }),
+  asset("gear-5", "#D3A62E", "\u{1F526}", { name: "Trailhead Headlamp", priceMinor: 4200, currency: "USD" }),
+  asset("gear-6", "#4F9D8B", "\u{1F9E3}", { name: "Merino Beanie", priceMinor: 2800, currency: "USD" }),
+];
+
+export const runnerGameSpec: GameSpec = {
+  id: "demo-runner",
+  version: 1,
+  template: "runner",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Trailhead Supply",
+    accent: "#2F7D5C",
+    secondaryAccent: "#6B4A2F",
+    background: "#F4F7F2",
+    foreground: "#1C2B22",
+    fontFamily: "Inter, system-ui, sans-serif",
+    palette: ["#2F7D5C", "#6B4A2F", "#F4F7F2", "#1C2B22"],
+  },
+  copy: {
+    headline: "Hit the trail",
+    subhead: "Tap to jump. Clear the rocks, grab the gear.",
+    ctaStart: "Start running",
+    ctaReplay: "Run again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: runnerCollectibles,
+  roles: {
+    collectible: runnerCollectibles.map((a) => a.id),
+    runner: { fallback: "logo" },
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "TRAIL10" },
+    { minScore: 90, label: "15% off", percentOff: 15, code: "TRAIL15" },
+    { minScore: 170, label: "20% off", percentOff: 20, code: "TRAIL20" },
+  ],
+  durationSeconds: 35,
+  tuning: {
+    scrollSpeed: 260,
+    obstacleRateHz: 0.55,
+    collectibleRateHz: 0.7,
+    lives: 3,
+    durationSec: 35,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
 export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-catch": catchGameSpec,
   "demo-guess-price": guessPriceGameSpec,
@@ -711,4 +772,5 @@ export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-guess-price-kicks": sneakerGameSpec,
   "demo-sweet-spot": sweetSpotGameSpec,
   "demo-sweet-spot-bare": sweetSpotBareGameSpec,
+  "demo-runner": runnerGameSpec,
 };

@@ -24,6 +24,7 @@ import simonCapability from "./simon.json";
 import sliceCapability from "./slice.json";
 import shooterCapability from "./shooter.json";
 import sweetSpotCapability from "./sweet_spot.json";
+import runnerCapability from "./runner.json";
 
 const roleRequirementsSchema = z.object({
   subjectTypeIn: z.array(z.string()).optional(),
@@ -63,7 +64,7 @@ const placementConstraintSchema = z.object({
 
 const gameCapabilitySchema = z.object({
   version: z.literal(1),
-  id: z.enum(["catch", "guess_price", "chain_pop", "shooter", "sweet_spot", "match", "stack", "chomp", "whack", "simon", "slice"]),
+  id: z.enum(["catch", "guess_price", "chain_pop", "shooter", "sweet_spot", "match", "stack", "chomp", "whack", "simon", "slice", "runner"]),
   name: z.string(),
   summary: z.string(),
   roles: z.array(capabilityRoleSchema).min(1),
@@ -100,6 +101,7 @@ const registry: Record<string, GameCapability> = {
   slice: validate(sliceCapability, "slice.json"),
   shooter: validate(shooterCapability, "shooter.json"),
   sweet_spot: validate(sweetSpotCapability, "sweet_spot.json"),
+  runner: validate(runnerCapability, "runner.json"),
 };
 
 /** All templates currently implemented (catch, guess_price, chain_pop,
@@ -135,6 +137,7 @@ const PICKER_META_FALLBACK: Partial<Record<TemplateId, { name: string; summary: 
   slice: { name: sliceCapability.name, summary: sliceCapability.summary },
   shooter: { name: shooterCapability.name, summary: shooterCapability.summary },
   sweet_spot: { name: sweetSpotCapability.name, summary: sweetSpotCapability.summary },
+  runner: { name: runnerCapability.name, summary: runnerCapability.summary },
 };
 
 export function requireCapability(id: TemplateId): GameCapability {

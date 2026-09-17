@@ -24,6 +24,7 @@ export type TemplateId =
   | "slice"
   | "shooter"
   | "sweet_spot"
+  | "runner"
   | "match"
   | "stack";
 
