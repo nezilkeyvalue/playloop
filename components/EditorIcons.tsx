@@ -105,3 +105,31 @@ export function TrophyIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+/** Embed page's "Size" section — a box with a resize handle. */
+export function ResizeIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="2.5" y="2.5" width="15" height="15" rx="2.5" />
+      <path d="M7.2 12.8l5.6-5.6M12.8 9.6V7.2h-2.4" />
+    </svg>
+  );
+}
+
+/** Embed page's "Trigger" section — a click/tap cursor. */
+export function CursorClickIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M5 3.2l1.3 12.4 2.9-3.3 2.6 4.7 1.9-1.05-2.6-4.7 4.3-.65z" />
+    </svg>
+  );
+}
+
+/** "Full page" placement card — four corners expanding outward. */
+export function ExpandIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M7 3H3v4M13 3h4v4M7 17H3v-4M13 17h4v-4" />
+    </svg>
+  );
+}

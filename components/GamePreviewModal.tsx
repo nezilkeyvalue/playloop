@@ -63,10 +63,10 @@ export function GamePreviewModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm animate-pop-in overflow-hidden rounded-2xl bg-card shadow-elevated"
+        className="flex max-h-[90vh] w-full max-w-sm animate-pop-in flex-col overflow-hidden rounded-2xl bg-card shadow-elevated"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
           <span className="text-sm font-semibold">Preview</span>
           <button
             type="button"
@@ -77,8 +77,20 @@ export function GamePreviewModal({
             ✕
           </button>
         </div>
-        <div ref={containerRef} className="w-full" style={{ minHeight: 480 }} />
-        {mountError && <div className="p-6 text-center text-sm text-muted">{mountError}</div>}
+        {/* mount.ts grows its own shell to fit whatever the idle/reward
+            overlay actually needs (a reward tier + coupon terms + an
+            engaged-products gallery routinely exceeds a template's
+            gameplay aspect ratio) — this modal is a fixed-position,
+            viewport-centered box with no scroll of its own, so a shell
+            taller than the visitor's screen would otherwise have its top
+            and bottom pushed off-screen with no way to reach them, not
+            "clipped" by any overflow rule but just as unreachable. This
+            wrapper is the one thing here that scrolls; the header above
+            stays put (shrink-0) as a fixed anchor. */}
+        <div className="overflow-y-auto">
+          <div ref={containerRef} className="w-full" style={{ minHeight: 480 }} />
+          {mountError && <div className="p-6 text-center text-sm text-muted">{mountError}</div>}
+        </div>
       </div>
     </div>
   );

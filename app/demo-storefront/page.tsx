@@ -15,7 +15,14 @@ const PRODUCTS = [
   { name: "Seasonal Blend", price: "$18.00", tone: "#A96A3B" },
 ];
 
-const EMBED_SNIPPET = `<div data-playloop="demo-catch"></div>
+const EMBED_SNIPPET = `<div data-playloop="demo-catch" data-placement="section"></div>
+<script src="/embed.js" async></script>`;
+
+// A second, separate embed on the same page showing the "modal" placement —
+// embed.js renders this one as a trigger BUTTON, not the game itself, and
+// only builds the overlay + iframe the first time a visitor clicks it.
+const MODAL_EMBED_SNIPPET = `<div data-playloop="demo-guess-price" data-placement="modal"
+     data-trigger-label="Guess the price & win"></div>
 <script src="/embed.js" async></script>`;
 
 export default function DemoStorefrontPage() {
@@ -72,7 +79,7 @@ export default function DemoStorefrontPage() {
             sandboxed iframe at /play/demo-catch, and auto-sizes it via
             postMessage — nothing else on this page knows the game exists. */}
         <div className="overflow-hidden rounded-2xl border border-ink/10 bg-white shadow-sm">
-          <div data-playloop="demo-catch" />
+          <div data-playloop="demo-catch" data-placement="section" />
           <script src="/embed.js" async />
         </div>
 
@@ -80,6 +87,27 @@ export default function DemoStorefrontPage() {
           <summary className="cursor-pointer select-none">View embed code</summary>
           <pre className="mt-2 overflow-x-auto rounded-lg bg-ink/5 p-3 text-[11px] leading-relaxed text-ink/70">
             {EMBED_SNIPPET}
+          </pre>
+        </details>
+      </section>
+
+      {/* --- second embed: same loader script, "modal" placement --------
+          embed.js turns this host div into a trigger button and only
+          builds the overlay + game iframe on the first click — nothing
+          about this section's markup differs except data-placement. */}
+      <section className="mx-auto max-w-5xl px-6 pb-16">
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="text-lg font-semibold">Or trigger it from a button</h2>
+          <span className="text-xs uppercase tracking-wide text-ink/40">Modal placement</span>
+        </div>
+        <div className="rounded-2xl border border-dashed border-ink/15 bg-white/60 p-8 text-center">
+          <div data-playloop="demo-guess-price" data-placement="modal" data-trigger-label="Guess the price & win" />
+          <script src="/embed.js" async />
+        </div>
+        <details className="mt-3 text-xs text-ink/50">
+          <summary className="cursor-pointer select-none">View embed code</summary>
+          <pre className="mt-2 overflow-x-auto rounded-lg bg-ink/5 p-3 text-[11px] leading-relaxed text-ink/70">
+            {MODAL_EMBED_SNIPPET}
           </pre>
         </details>
       </section>

@@ -71,7 +71,34 @@ export default async function PlayPage({
   const placement =
     requested && resolved.spec.placements.includes(requested) ? requested : resolved.placement;
 
-  return <PlayRuntime spec={resolved.spec} placement={placement} slug={slug} />;
+  // Only embed.js's own "fullpage" mounting sets this — the exact pixel
+  // height of the visitor's real browser viewport, measured by the PARENT
+  // page (the only place that can; see app/embed.js/route.ts's comment on
+  // why a CSS vh unit inside this iframe can't answer the same question).
+  const rawViewportHeight = typeof sp.viewportHeight === "string" ? Number(sp.viewportHeight) : NaN;
+  const viewportHeight = Number.isFinite(rawViewportHeight) && rawViewportHeight > 0 ? rawViewportHeight : undefined;
+
+  // A merchant's own custom size choice (embed/page.tsx's Size section),
+  // forwarded by embed.js from data-width/data-height exactly like
+  // data-placement is. Parsed here rather than trusted as-is: a malformed
+  // or hostile query string must degrade to "no override" (the template's
+  // own responsive default), never a broken/NaN stage size.
+  const rawWidth = typeof sp.width === "string" ? Number(sp.width) : NaN;
+  const rawHeight = typeof sp.height === "string" ? Number(sp.height) : NaN;
+  const sizeOverride = {
+    maxWidth: Number.isFinite(rawWidth) && rawWidth > 0 ? rawWidth : undefined,
+    height: Number.isFinite(rawHeight) && rawHeight > 0 ? rawHeight : undefined,
+  };
+
+  return (
+    <PlayRuntime
+      spec={resolved.spec}
+      placement={placement}
+      slug={slug}
+      viewportHeight={viewportHeight}
+      sizeOverride={sizeOverride}
+    />
+  );
 }
 
 function NotFoundState() {

@@ -14,6 +14,26 @@ export interface StageSize {
   dpr: number;
 }
 
+/**
+ * A merchant-configured size for THIS embed, layered on top of (never
+ * instead of) the template's own capability constraints — maxWidth still
+ * can't shrink narrower than the placement's minWidth, and height still
+ * can't shrink shorter than its minHeight. Distinct from `PlacementConstraint`
+ * (which is per-template, capability-JSON data) because this is per-embed,
+ * merchant-chosen data threaded in from outside the engine (see
+ * lib/engine/embedSnippet.ts's data-width/data-height and
+ * app/play/[slug]/page.tsx's ?width=/?height=).
+ *
+ * `height` here is a literal target, not something computeStageSize reads
+ * back from the container — it comes from a value the merchant set once,
+ * not from this function's own prior output, so it doesn't create the
+ * feedback loop the comment below warns about for container-height reads.
+ */
+export interface StageSizeOverride {
+  maxWidth?: number;
+  height?: number;
+}
+
 const DEFAULT_MIN_WIDTH = 300;
 const DEFAULT_ASPECT = 0.75; // height = width * aspect, matches "section" defaults
 
@@ -28,6 +48,7 @@ export function computeStageSize(
   container: HTMLElement,
   placement: Placement,
   constraint: PlacementConstraint | undefined,
+  override?: StageSizeOverride,
 ): StageSize {
   const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
   const rect = container.getBoundingClientRect();
@@ -45,17 +66,29 @@ export function computeStageSize(
   const minHeight = constraint?.minHeight ?? Math.round(minWidth * DEFAULT_ASPECT);
   const aspect = constraint?.preferredAspect ?? DEFAULT_ASPECT;
 
-  const width = Math.max(Math.round(rect.width) || minWidth, minWidth);
+  let width = Math.max(Math.round(rect.width) || minWidth, minWidth);
+  if (override?.maxWidth) {
+    // The cap can never win against the template's own floor — a merchant
+    // asking for a box narrower than the game can function in still gets
+    // the smallest usable size instead of a broken layout.
+    width = Math.max(Math.min(width, Math.round(override.maxWidth)), minWidth);
+  }
 
   // Height is always derived from width * preferredAspect, never read back
-  // from the container's own box. section/fullpage/modal slots are fluid-
-  // width by design (build spec §1 "Placements" — a section is "full
-  // width, ~500-700px tall", not a fixed box) and mount.ts writes this
-  // computed height onto a wrapper *inside* the container, so reading the
-  // container's height here would just be reading our own last output back
-  // — a feedback loop that freezes height across later width changes
-  // (e.g. a phone rotation). Ad placements never reach this branch.
-  const height = Math.max(Math.round(width * aspect), minHeight);
+  // from the container's own box — UNLESS a merchant supplied an explicit
+  // override.height, which is a value chosen once outside this function,
+  // not this function's own prior output, so it carries none of the
+  // feedback-loop risk the aspect-derivation comment below warns about.
+  // section/fullpage/modal slots are fluid-width by design (build spec §1
+  // "Placements" — a section is "full width, ~500-700px tall", not a fixed
+  // box) and mount.ts writes this computed height onto a wrapper *inside*
+  // the container, so reading the container's height here would just be
+  // reading our own last output back — a feedback loop that freezes height
+  // across later width changes (e.g. a phone rotation). Ad placements never
+  // reach this branch.
+  const height = override?.height
+    ? Math.max(Math.round(override.height), minHeight)
+    : Math.max(Math.round(width * aspect), minHeight);
 
   return { width, height, dpr };
 }
@@ -98,14 +131,15 @@ export function mountStage(
   placement: Placement,
   constraint: PlacementConstraint | undefined,
   onResize?: (size: StageSize) => void,
+  override?: StageSizeOverride,
 ): StageController {
-  let size = computeStageSize(container, placement, constraint);
+  let size = computeStageSize(container, placement, constraint, override);
   let ctx = applyStageSize(canvas, size);
 
   let observer: ResizeObserver | null = null;
   if (typeof ResizeObserver !== "undefined" && placement !== "ad") {
     observer = new ResizeObserver(() => {
-      const next = computeStageSize(container, placement, constraint);
+      const next = computeStageSize(container, placement, constraint, override);
       if (next.width === size.width && next.height === size.height && next.dpr === size.dpr) return;
       size = next;
       ctx = applyStageSize(canvas, size);

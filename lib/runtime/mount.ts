@@ -27,7 +27,7 @@ import { isBrandLogoUrl, shadeHex } from "@/lib/runtime/games/spriteRender";
 import { createInput } from "@/lib/runtime/input";
 import { startLoop, type LoopHandle } from "@/lib/runtime/loop";
 import { animateCountUp, resolveReward } from "@/lib/runtime/reward";
-import { mountStage, type StageController } from "@/lib/runtime/stage";
+import { mountStage, type StageController, type StageSizeOverride } from "@/lib/runtime/stage";
 import {
   beginSession,
   captureLead,
@@ -90,6 +90,18 @@ export interface MountOptions {
    * hosted /play/:slug page.
    */
   autoStart?: boolean;
+  /**
+   * A merchant-chosen size for this specific embed, layered on top of the
+   * template's own capability constraints (see stage.ts's StageSizeOverride
+   * doc comment — it can cap width and set a literal height, but never
+   * shrink below what the template declares as its own usable minimum).
+   * Threaded in from app/play/[slug]/page.tsx's ?width=/?height=, which in
+   * turn come from the embed snippet's data-width/data-height (see
+   * lib/engine/embedSnippet.ts). Omitted everywhere else — the editor's own
+   * preview, fixtures, and any caller with no merchant sizing choice to
+   * honor.
+   */
+  sizeOverride?: StageSizeOverride;
 }
 
 export interface MountHandle {
@@ -113,7 +125,16 @@ export function mount(
     return renderUnavailable(container, "This game's configuration is missing.");
   }
 
-  return mountGame(spec, container, placement, slug, capability, factory, options.autoStart ?? false);
+  return mountGame(
+    spec,
+    container,
+    placement,
+    slug,
+    capability,
+    factory,
+    options.autoStart ?? false,
+    options.sizeOverride,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +147,7 @@ function mountGame(
   capability: GameCapability,
   factory: GameModuleFactory,
   autoStart: boolean,
+  sizeOverride: StageSizeOverride | undefined,
 ): MountHandle {
   const brand = spec.brand;
   const copy = spec.copy;
@@ -173,12 +195,81 @@ function mountGame(
 
   // --- stage sizing --------------------------------------------------------
   const constraint = capability.placements[placement];
-  const stageController: StageController = mountStage(canvas, container, placement, constraint, () => {
-    shell.style.height = `${stageController.size.height}px`;
-  });
+  const stageController: StageController = mountStage(
+    canvas,
+    container,
+    placement,
+    constraint,
+    () => {
+      // Re-fit on every resize too, not just re-apply the stage height: a
+      // narrower box can wrap the SAME reward/idle copy onto more lines,
+      // needing more height than it did a moment ago (see
+      // fitShellToOverlay's doc comment for why this can't just be
+      // stageController.size.height).
+      fitShellToOverlay(shell, overlay, stageController.size.height);
+    },
+    sizeOverride,
+  );
   shell.style.height = `${stageController.size.height}px`;
 
-  setOverlay(overlay, canvas, stageController, renderLoadingState(), overlayBackdrop);
+  // Re-fits the shell whenever the CURRENTLY shown overlay content's own
+  // rendered size changes after setOverlay() already ran — a coupon code
+  // line toggling visible, a "no codes left" status line appearing, the
+  // score count-up text changing width. Every such mutation site would
+  // otherwise have to remember to re-measure itself (fragile, easy to miss
+  // one now or later); observing the content element directly catches all
+  // of them. Re-created per setOverlay() call since the observed element
+  // changes each time; disconnected in teardown().
+  let contentResizeObserver: ResizeObserver | null = null;
+
+  function setOverlay(content: HTMLElement | null) {
+    contentResizeObserver?.disconnect();
+    contentResizeObserver = null;
+    overlay.innerHTML = "";
+    if (!content) {
+      canvas.style.visibility = "visible";
+      overlay.style.background = "transparent";
+      overlay.style.pointerEvents = "none";
+      shell.style.height = `${stageController.size.height}px`;
+      return;
+    }
+    // Hide and clear the play canvas whenever chrome is shown. A semi-
+    // transparent overlay backdrop alone is not enough — the last game
+    // frame (product sprites, sweet-spot bar, etc.) composites through and
+    // reads as broken overlap with the reward controls.
+    canvas.style.visibility = "hidden";
+    stageController.ctx.clearRect(0, 0, stageController.size.width, stageController.size.height);
+    overlay.style.background = overlayBackdrop;
+    overlay.style.pointerEvents = "auto";
+
+    // A brief fade + scale-in on every screen swap (idle -> play -> reward)
+    // instead of an instant innerHTML replace, so the transition itself
+    // reads as a deliberate beat rather than a jump-cut. Two rAFs, not one:
+    // the style change has to land in a frame the browser has already
+    // painted the pre-transition (opacity 0) state for, or the transition
+    // never has a starting frame to animate from.
+    content.style.opacity = "0";
+    content.style.transform = "scale(0.98)";
+    content.style.transition = "opacity 0.22s ease, transform 0.22s ease";
+    overlay.appendChild(content);
+    fitShellToOverlay(shell, overlay, stageController.size.height);
+
+    if (typeof ResizeObserver !== "undefined") {
+      contentResizeObserver = new ResizeObserver(() => {
+        fitShellToOverlay(shell, overlay, stageController.size.height);
+      });
+      contentResizeObserver.observe(content);
+    }
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        content.style.opacity = "1";
+        content.style.transform = "scale(1)";
+      });
+    });
+  }
+
+  setOverlay(renderLoadingState());
 
   // --- input ----------------------------------------------------------------
   // Bound to the canvas, not the shell: the shell also contains the overlay
@@ -261,13 +352,13 @@ function mountGame(
     });
 
   function showIdleScreen() {
-    setOverlay(overlay, canvas, stageController, renderIdleState(brand, copy, () => startPlay(false)), overlayBackdrop);
+    setOverlay(renderIdleState(brand, copy, () => startPlay(false)));
   }
 
   function startPlay(isReplay: boolean) {
     score = 0;
     engagedAssetIds = new Set();
-    setOverlay(overlay, canvas, stageController, null, overlayBackdrop); // hide chrome; the game renders on canvas
+    setOverlay(null); // hide chrome; the game renders on canvas
     activeSessionToken = beginSession(slug);
     trackEvent(isReplay ? "replay" : "start", { slug });
 
@@ -319,9 +410,6 @@ function mountGame(
     // game frame (sweet-spot bar, falling products, etc.) otherwise sits on
     // the canvas under semi-transparent chrome and reads as broken overlap.
     setOverlay(
-      overlay,
-      canvas,
-      stageController,
       renderRewardState(brand, copy, resolved.tier, null, engagedAssets, () => {
         void submitLead(sessionToken);
       }, () => {
@@ -339,7 +427,6 @@ function mountGame(
         }
         return claim.code;
       }),
-      overlayBackdrop,
     );
 
     sessionToken = activeSessionToken ? await activeSessionToken : null;
@@ -407,6 +494,7 @@ function mountGame(
     gameModule?.teardown();
     input.destroy();
     stageController.destroy();
+    contentResizeObserver?.disconnect();
     container.innerHTML = "";
   }
 
@@ -617,45 +705,43 @@ function opaqueOverlayBackdrop(background: string): string {
   return "#ffffff";
 }
 
-function setOverlay(
-  overlay: HTMLElement,
-  canvas: HTMLCanvasElement,
-  stage: StageController,
-  content: HTMLElement | null,
-  backdrop: string,
-) {
-  overlay.innerHTML = "";
+/**
+ * Overlay chrome (idle/reward) is sized for whatever it actually contains,
+ * never for the stage's gameplay aspect ratio — a reward tier plus coupon
+ * terms plus an engaged-products gallery plus an email form routinely needs
+ * more height than a template's `preferredAspect`-derived box, and the
+ * shell's own `overflow: hidden` (there so gameplay never visibly spills
+ * past its box) was silently clipping that content instead of ever growing
+ * to fit it.
+ *
+ * Measured off the CONTENT element itself (`overlay`'s one child), not off
+ * `overlay` — confirmed live that `overlay.scrollHeight` under-reports an
+ * overflowing child here: `overlay` is `justify-content: center` (mountGame's
+ * DOM scaffold), and centered ("safe"-aligned) flex overflow doesn't
+ * reliably become part of a container's own scrollable overflow the way
+ * start-aligned overflow does — the trailing end of a tall reward screen
+ * (the replay button, past a full coupon block + gallery) was still
+ * clipped even once this function existed, because it was sizing to a
+ * number smaller than the content actually needed. `content` is an
+ * ordinary block box with no centering of its own, so its scrollHeight is
+ * an unambiguous measurement of what it actually needs. `overlay`'s own
+ * padding (set once in mountGame) isn't part of that box, so it's added
+ * back in from the live computed style rather than duplicated as a
+ * hardcoded number that could silently drift out of sync with it.
+ *
+ * Only ever GROWS the shell past the stage's own height, never shrinks
+ * below it — gameplay's canvas box is untouched.
+ */
+function fitShellToOverlay(shell: HTMLElement, overlay: HTMLElement, stageHeight: number): void {
+  const content = overlay.firstElementChild as HTMLElement | null;
   if (!content) {
-    canvas.style.visibility = "visible";
-    overlay.style.background = "transparent";
-    overlay.style.pointerEvents = "none";
+    shell.style.height = `${stageHeight}px`;
     return;
   }
-  // Hide and clear the play canvas whenever chrome is shown. A semi-
-  // transparent overlay backdrop alone is not enough — the last game frame
-  // (product sprites, sweet-spot bar, etc.) composites through and reads as
-  // broken overlap with the reward controls.
-  canvas.style.visibility = "hidden";
-  stage.ctx.clearRect(0, 0, stage.size.width, stage.size.height);
-  overlay.style.background = backdrop;
-  overlay.style.pointerEvents = "auto";
-
-  // A brief fade + scale-in on every screen swap (idle -> play -> reward)
-  // instead of an instant innerHTML replace, so the transition itself
-  // reads as a deliberate beat rather than a jump-cut. Two rAFs, not one:
-  // the style change has to land in a frame the browser has already
-  // painted the pre-transition (opacity 0) state for, or the transition
-  // never has a starting frame to animate from.
-  content.style.opacity = "0";
-  content.style.transform = "scale(0.98)";
-  content.style.transition = "opacity 0.22s ease, transform 0.22s ease";
-  overlay.appendChild(content);
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      content.style.opacity = "1";
-      content.style.transform = "scale(1)";
-    });
-  });
+  const overlayStyle = getComputedStyle(overlay);
+  const verticalPadding =
+    parseFloat(overlayStyle.paddingTop || "0") + parseFloat(overlayStyle.paddingBottom || "0");
+  shell.style.height = `${Math.max(stageHeight, content.scrollHeight + verticalPadding)}px`;
 }
 
 function renderLoadingState(): HTMLElement {

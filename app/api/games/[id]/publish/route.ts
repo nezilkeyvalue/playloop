@@ -15,15 +15,11 @@ import {
 } from "@/lib/capabilities";
 import { publishGame, getGameById } from "@/lib/db/queries";
 import { notFound, ownsRecord, requireAccount } from "@/lib/auth/server";
+import { buildEmbedSnippet } from "@/lib/engine/embedSnippet";
 
 const bodySchema = z.object({
   placement: z.enum(["section", "fullpage", "modal", "ad"]),
 });
-
-function buildEmbedSnippet(slug: string): string {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://playloop.app";
-  return `<div data-playloop="${slug}"></div>\n<script src="${appUrl}/embed.js" async></script>`;
-}
 
 export async function POST(
   req: NextRequest,
@@ -77,5 +73,12 @@ export async function POST(
 
   const updated = await publishGame(id, parsed.data.placement);
   const slug = updated.slug!;
-  return NextResponse.json({ slug, embed: buildEmbedSnippet(slug) });
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://playloop.app";
+  const embed = buildEmbedSnippet({
+    slug,
+    template: updated.spec.template,
+    placement: parsed.data.placement,
+    appUrl,
+  });
+  return NextResponse.json({ slug, embed });
 }
