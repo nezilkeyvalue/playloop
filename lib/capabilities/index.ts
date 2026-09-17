@@ -25,6 +25,7 @@ import sliceCapability from "./slice.json";
 import shooterCapability from "./shooter.json";
 import sweetSpotCapability from "./sweet_spot.json";
 import runnerCapability from "./runner.json";
+import pourCapability from "./pour.json";
 
 const roleRequirementsSchema = z.object({
   subjectTypeIn: z.array(z.string()).optional(),
@@ -64,7 +65,7 @@ const placementConstraintSchema = z.object({
 
 const gameCapabilitySchema = z.object({
   version: z.literal(1),
-  id: z.enum(["catch", "guess_price", "chain_pop", "shooter", "sweet_spot", "match", "stack", "chomp", "whack", "simon", "slice", "runner"]),
+  id: z.enum(["catch", "guess_price", "chain_pop", "shooter", "sweet_spot", "match", "stack", "chomp", "whack", "simon", "slice", "runner", "pour"]),
   name: z.string(),
   summary: z.string(),
   roles: z.array(capabilityRoleSchema).min(1),
@@ -102,6 +103,7 @@ const registry: Record<string, GameCapability> = {
   shooter: validate(shooterCapability, "shooter.json"),
   sweet_spot: validate(sweetSpotCapability, "sweet_spot.json"),
   runner: validate(runnerCapability, "runner.json"),
+  pour: validate(pourCapability, "pour.json"),
 };
 
 /** All templates currently implemented (catch, guess_price, chain_pop,

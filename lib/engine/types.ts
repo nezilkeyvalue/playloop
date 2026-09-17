@@ -25,6 +25,7 @@ export type TemplateId =
   | "shooter"
   | "sweet_spot"
   | "runner"
+  | "pour"
   | "match"
   | "stack";
 

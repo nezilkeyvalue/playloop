@@ -811,6 +811,61 @@ export const runnerGameSpec: GameSpec = {
   },
 };
 
+const pourPrizes: ProcessedAsset[] = [
+  asset("pour-1", "#6B3A1E", "☕", { name: "House Espresso" }),
+  asset("pour-2", "#8A4B27", "🫘", { name: "Single Origin Beans" }),
+  asset("pour-3", "#A35E33", "🥛", { name: "Oat Barista Blend" }),
+  asset("pour-4", "#5A3018", "🍫", { name: "Mocha Syrup" }),
+];
+
+export const pourGameSpec: GameSpec = {
+  id: "demo-pour",
+  version: 1,
+  template: "pour",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Bloom Coffee Co.",
+    accent: "#C2612F",
+    secondaryAccent: "#2F6FC2",
+    background: "#FBF7F2",
+    foreground: "#1F1710",
+    fontFamily: "Fraunces, Georgia, serif",
+    palette: ["#C2612F", "#7B4B2A", "#FBF7F2", "#1F1710"],
+  },
+  copy: {
+    headline: "Pour the perfect cup",
+    subhead: "Tap to stop the pour on the line. Overfill and you lose the cup.",
+    ctaStart: "Start pouring",
+    ctaReplay: "Pour again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: pourPrizes,
+  roles: {
+    prize: pourPrizes.map((a) => a.id),
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 100, label: "5% off", percentOff: 5, code: "POUR5" },
+    { minScore: 200, label: "10% off", percentOff: 10, code: "POUR10" },
+    { minScore: 420, label: "15% off", percentOff: 15, code: "POUR15" },
+  ],
+  durationSeconds: 40,
+  tuning: {
+    fillSpeed: 0.5,
+    bandWidth: 0.18,
+    bandShrink: 0.88,
+    lives: 3,
+    cupsToServe: 12,
+    durationSec: 40,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
 export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-catch": catchGameSpec,
   "demo-guess-price": guessPriceGameSpec,
@@ -826,4 +881,5 @@ export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-sweet-spot": sweetSpotGameSpec,
   "demo-sweet-spot-bare": sweetSpotBareGameSpec,
   "demo-runner": runnerGameSpec,
+  "demo-pour": pourGameSpec,
 };

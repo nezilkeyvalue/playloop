@@ -53,6 +53,7 @@ import { createSliceGame } from "@/lib/runtime/games/slice";
 import { createShooterGame } from "@/lib/runtime/games/shooter";
 import { createSweetSpotGame } from "@/lib/runtime/games/sweetSpot";
 import { createRunnerGame } from "@/lib/runtime/games/runner";
+import { createPourGame } from "@/lib/runtime/games/pour";
 
 type GameModuleFactory = () => GameModule;
 
@@ -71,6 +72,7 @@ const REGISTRY: Partial<Record<TemplateId, GameModuleFactory>> = {
   shooter: createShooterGame,
   sweet_spot: createSweetSpotGame,
   runner: createRunnerGame,
+  pour: createPourGame,
 };
 
 export interface MountOptions {
