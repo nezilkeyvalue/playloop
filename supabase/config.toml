@@ -159,11 +159,16 @@ enabled = true
 # repointed the LIVE project's site_url at localhost. Local development is
 # served by additional_redirect_urls below instead, which is additive and can't
 # break production.
-site_url = "https://playloop-beta.vercel.app"
+site_url = "https://playloop-jade.vercel.app"
 # A list of *exact* URLs that auth providers are permitted to redirect to post
 # authentication. These must match app/auth/callback/route.ts's path exactly —
 # Supabase compares the whole string, not a prefix.
 additional_redirect_urls = [
+  # Work account (alex.v@keyvalue.systems) — the live deployment.
+  "https://playloop-jade.vercel.app/auth/callback",
+  "https://playloop-alexv-3300s-projects.vercel.app/auth/callback",
+  # Old personal-account deployment. Kept only so that project keeps working
+  # until it is deliberately retired; delete these two lines with it.
   "https://playloop-beta.vercel.app/auth/callback",
   "https://playloop-alexvarghese77-8729.vercel.app/auth/callback",
   "http://localhost:3000/auth/callback",
