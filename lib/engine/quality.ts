@@ -19,7 +19,7 @@
 // only applies the reject/flag thresholds against that already-computed
 // asset.content.textDensity.
 
-import { isCatalogueProductAsset } from "@/lib/engine/catalogue";
+import { exemptFromPhashDedup, isCatalogueProductAsset } from "@/lib/engine/catalogue";
 import type { RawAsset } from "@/lib/engine/types";
 import { contrastRatioFromLuminance, luminanceOfHex } from "./palette";
 import { hammingDistance } from "./cutout";
@@ -181,7 +181,10 @@ function dedupeByPhash(survivors: RawAsset[], rejected: RejectedAsset[]): Qualit
       continue;
     }
     const duplicateOf = kept.find(
-      (existing) => existing.phash && hammingDistance(existing.phash, asset.phash) < DUPLICATE_HAMMING_THRESHOLD,
+      (existing) =>
+        existing.phash &&
+        hammingDistance(existing.phash, asset.phash) < DUPLICATE_HAMMING_THRESHOLD &&
+        !exemptFromPhashDedup(existing, asset),
     );
     if (duplicateOf) {
       rejected.push({ asset, reasons: [`duplicate of ${duplicateOf.id} (phash distance < ${DUPLICATE_HAMMING_THRESHOLD})`] });
