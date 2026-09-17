@@ -39,7 +39,7 @@ export default function DemoStorefrontPage() {
         <h1 className="text-3xl font-semibold sm:text-4xl">Small-batch roasted, shipped weekly.</h1>
         <p className="mx-auto mt-3 max-w-md text-ink/60">
           This is a mock storefront — every product below is a placeholder. It exists to show one
-          thing: an embedded PlayLoop game sitting in a normal page, not a special demo harness.
+          thing: an embedded Playloop game sitting in a normal page, not a special demo harness.
         </p>
       </section>
 
@@ -63,7 +63,7 @@ export default function DemoStorefrontPage() {
       <section className="mx-auto max-w-5xl px-6 pb-16">
         <div className="mb-3 flex items-baseline justify-between">
           <h2 className="text-lg font-semibold">Play &amp; save</h2>
-          <span className="text-xs uppercase tracking-wide text-ink/40">Powered by PlayLoop</span>
+          <span className="text-xs uppercase tracking-wide text-ink/40">Powered by Playloop</span>
         </div>
 
         {/* This div + script pair is copy-pasted verbatim from what a
@@ -85,7 +85,7 @@ export default function DemoStorefrontPage() {
       </section>
 
       <footer className="border-t border-ink/10 py-8 text-center text-xs text-ink/40">
-        Mock storefront for demo purposes only — PlayLoop build spec §19/§21.
+        Mock storefront for demo purposes only — Playloop build spec §19/§21.
       </footer>
     </div>
   );

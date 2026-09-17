@@ -1762,7 +1762,7 @@ function RewardRow({
             htmlFor={codeId}
             hint={
               code.trim() === ""
-                ? "Leave blank and PlayLoop shows each winner a randomly generated placeholder code that isn't redeemable in your store."
+                ? "Leave blank and Playloop shows each winner a randomly generated placeholder code that isn't redeemable in your store."
                 : undefined
             }
             error={codeError}

@@ -113,7 +113,7 @@ function EmbedPanel() {
   function buildIframeFallback(slug: string): string {
     const appUrl =
       typeof window !== "undefined" ? window.location.origin : "https://playloop.app";
-    return `<iframe src="${appUrl}/play/${slug}" style="width:100%;border:0;min-height:600px" sandbox="allow-scripts allow-same-origin allow-popups" title="PlayLoop game"></iframe>`;
+    return `<iframe src="${appUrl}/play/${slug}" style="width:100%;border:0;min-height:600px" sandbox="allow-scripts allow-same-origin allow-popups" title="Playloop game"></iframe>`;
   }
 
   async function handlePublish() {

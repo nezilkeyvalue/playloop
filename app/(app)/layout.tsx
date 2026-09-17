@@ -24,9 +24,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="min-h-screen bg-background">
         <header className="sticky top-0 z-40 border-b border-border bg-background">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-            <Link href="/" className="flex items-center gap-2">
-              <Logomark className="h-7 w-7" />
-              <span className="font-display text-lg font-semibold tracking-tight">PlayLoop</span>
+            <Link href="/" className="flex items-center">
+              <Logomark className="h-20 w-auto" />
             </Link>
             <nav className="flex items-center gap-1 text-sm">
               {NAV_LINKS.map((link) => {
