@@ -1190,7 +1190,7 @@ function StaticScreenPreview({
 
   return (
     <div
-      role="img"
+      role="group"
       aria-label={`Preview of the ${
         kind === "idle" ? "start screen" : "end summary"
       } as players will see it`}
@@ -1198,13 +1198,28 @@ function StaticScreenPreview({
       className="h-full w-full"
       style={{ minHeight: 480 }}
     >
-      {/* inert: this is a picture of the game, not the game. renderStaticScreen
-          builds real <button>s via makeButton and wires them to no-ops, and its
-          <h2> would otherwise duplicate the panel's own heading in the outline
-          — inert takes all of that out of the tab order and the a11y tree at
-          once. The role/aria-label live on the OUTER node deliberately: inert
-          on the same element would prune the label with everything else. */}
-      <div ref={ref} inert className="h-full w-full" style={{ minHeight: 480 }} />
+      {/* The idle screen is still fully `inert`: this is a picture of the
+          game, not the game — renderStaticScreen builds a real <button> via
+          makeButton wired to a no-op, and a real <h2> that would otherwise
+          duplicate the panel's own heading in the outline, so `inert` takes
+          both out of the tab order and the a11y tree at once.
+
+          The reward screen is NOT inert: its gallery of engaged products can
+          carry real, meaningful links to each product's actual page (see
+          RawAsset.data.productUrl in lib/engine/types.ts) — those need to
+          stay genuinely clickable/focusable even in this "preview" tab, so
+          `inert` (which has no per-descendant opt-out) can't wrap this one.
+          renderStaticScreen instead disables its own no-op buttons/inputs
+          directly (`button.disabled = true`, same for the email field) so
+          only the real links remain interactive. role="group" (not "img")
+          on this wrapper reflects that: the reward preview genuinely has
+          live content inside it now, not just a flat picture. */}
+      <div
+        ref={ref}
+        inert={kind === "idle" ? true : undefined}
+        className="h-full w-full"
+        style={{ minHeight: 480 }}
+      />
     </div>
   );
 }

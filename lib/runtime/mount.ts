@@ -597,6 +597,16 @@ export function renderStaticScreen(
   if (scoreEl) scoreEl.textContent = String(exampleScore);
   const emailField = content.querySelector<HTMLInputElement>("[data-role='email-input']");
   if (emailField) emailField.disabled = true;
+  // The "Get my code"/"Play again" buttons are wired to no-ops here (there's
+  // no live session for either to act on) — `disabled` takes them out of the
+  // tab order and marks them correctly for assistive tech, same job the
+  // container's `inert` used to do wholesale. Doing it per-element instead
+  // means the gallery's product links (real, meaningful, not no-ops) can be
+  // left alone: app/(app)/games/[id]/page.tsx no longer applies `inert` to
+  // this specific preview, precisely so those links stay clickable.
+  for (const button of content.querySelectorAll<HTMLButtonElement>("button")) {
+    button.disabled = true;
+  }
   shell.appendChild(content);
   return shell;
 }
