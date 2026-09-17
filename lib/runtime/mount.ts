@@ -364,7 +364,25 @@ function mountGame(
     const email = emailField?.value?.trim() ?? "";
     if (!email) return false;
     const ok = await captureLead(sessionToken, email);
-    if (status) status.textContent = ok ? "Sent — check your inbox." : "Saved for later — we'll email it once this game goes live.";
+    // NOT "Sent — check your inbox."
+    //
+    // Nothing is sent. POST /api/leads only writes a row to the `leads`
+    // table; there is no mail transport in this codebase at all (no
+    // dependency, no SMTP config) — confirmed by grepping package.json.
+    // Telling a player to check an inbox that will never receive anything is
+    // worse than saying nothing, and with real coupon pools it costs them
+    // their reward: they wait for an email instead of copying the code that
+    // is on screen right now.
+    //
+    // TODO(email): once the Resend marketplace integration is installed
+    // (`vercel integration add resend/resend-email` — blocked on accepting
+    // its terms in the dashboard) and a sending domain is verified, send the
+    // claimed coupon code here and restore a delivery-confirming message.
+    if (status) {
+      status.textContent = ok
+        ? "Got it — we've saved your email. Copy your code above to use it now."
+        : "Couldn't save that email — copy your code above instead.";
+    }
     if (ok) trackEvent("lead_captured", { slug });
     return ok;
   }
