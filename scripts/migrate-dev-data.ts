@@ -24,9 +24,13 @@ import { promises as fs } from "fs";
 import path from "path";
 import { createClient } from "@supabase/supabase-js";
 
-// .env.local is not loaded automatically outside `next dev`.
+// Next.js loads .env files itself; a plain tsx script does not. Both names are
+// tried because Next.js supports either and this repo has used both — loading
+// only ".env.local" silently produced "SUPABASE_URL must be set" on a checkout
+// whose file was named ".env". dotenv does not overwrite already-set vars, so
+// the first file listed wins and a real shell env still beats both.
 import { config as loadEnv } from "dotenv";
-loadEnv({ path: ".env.local" });
+loadEnv({ path: [".env.local", ".env"] });
 
 const DEV_DATA_DIR = path.join(process.cwd(), "dev-data");
 const DEV_BLOB_DIR = path.join(DEV_DATA_DIR, "blob");

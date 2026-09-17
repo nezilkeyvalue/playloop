@@ -151,14 +151,21 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-# Set from the environment so `supabase config push` promotes the same file to
-# every deployment. Locally this is http://localhost:3000 (see .env.local);
-# in production set NEXT_PUBLIC_APP_URL to the real origin before pushing.
-site_url = "env(NEXT_PUBLIC_APP_URL)"
+# HARD-CODED to the production origin, deliberately.
+#
+# This was `env(NEXT_PUBLIC_APP_URL)` and that was a trap: one Supabase project
+# serves both local dev and production, so a `supabase config push` run from a
+# laptop (where NEXT_PUBLIC_APP_URL is http://localhost:3000) silently
+# repointed the LIVE project's site_url at localhost. Local development is
+# served by additional_redirect_urls below instead, which is additive and can't
+# break production.
+site_url = "https://playloop-beta.vercel.app"
 # A list of *exact* URLs that auth providers are permitted to redirect to post
 # authentication. These must match app/auth/callback/route.ts's path exactly —
 # Supabase compares the whole string, not a prefix.
 additional_redirect_urls = [
+  "https://playloop-beta.vercel.app/auth/callback",
+  "https://playloop-alexvarghese77-8729.vercel.app/auth/callback",
   "http://localhost:3000/auth/callback",
   "http://127.0.0.1:3000/auth/callback",
   "http://localhost:3000/**",

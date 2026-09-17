@@ -6,3 +6,8 @@ node_modules
 .DS_Store
 /dev-data
 *.tsbuildinfo
+.vercel
+# Broad on purpose (.env, .env.local, .env.production, …) — but the committed
+# template must stay visible, or a fresh clone has nothing to copy from.
+.env*
+!.env.example
