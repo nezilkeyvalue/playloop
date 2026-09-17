@@ -781,6 +781,23 @@ function renderCouponBlock(
   codeLine.textContent = serverCode ?? "";
   box.appendChild(codeLine);
 
+  // Without this the block is a lone button over an empty space, giving the
+  // player no reason to believe it is where their reward lives.
+  const prompt = document.createElement("p");
+  prompt.dataset.role = "coupon-prompt";
+  prompt.textContent = tier.percentOff != null
+    ? `Your ${tier.percentOff}% off code`
+    : "Your code";
+  prompt.style.margin = "0 0 6px";
+  prompt.style.fontSize = "12px";
+  prompt.style.fontWeight = "600";
+  prompt.style.letterSpacing = "0.04em";
+  prompt.style.textTransform = "uppercase";
+  prompt.style.opacity = "0.7";
+  prompt.style.color = brand.foreground;
+  prompt.style.display = serverCode ? "none" : "block";
+  box.insertBefore(prompt, codeLine);
+
   const status = document.createElement("p");
   status.dataset.role = "coupon-status";
   status.style.margin = "4px 0 0";
@@ -846,12 +863,14 @@ function renderCouponBlock(
         // an expired offer are the same experience, and the honest framing is
         // that there is nothing to hand over right now.
         status.textContent = "No codes left right now — check back soon.";
+        prompt.style.display = "none";
         button.style.display = "none";
         return;
       }
 
       codeLine.textContent = claimed;
       codeLine.style.display = "block";
+      prompt.style.display = "none";
       button.style.marginTop = "8px";
 
       const copied = await writeToClipboard(claimed);
@@ -1008,13 +1027,26 @@ function renderRewardState(
   emailInput.style.flex = "1 1 160px";
   emailRow.appendChild(emailInput);
 
-  // Fixed string, not copy.emailPrompt: that field is the input's
-  // placeholder, and a natural placeholder ("Enter your email for your
-  // code") makes a button wider than the card. A dedicated button label
-  // would mean adding a GameCopy field in lib/engine/types.ts — a shared
-  // contract change for pure cosmetics — so the verb is hardcoded here.
-  const emailButton = makeButton("Get my code", brand.accent, brand.background);
+  // "Email it to me", NOT "Get my code".
+  //
+  // This button only captures a lead. Once the coupon block above it existed,
+  // "Get my code" sat directly beneath a "Copy my code" button and read as
+  // the way to obtain the code — so players pressed it, got an email capture,
+  // and reported that finishing the game granted no reward. Two buttons on
+  // one screen must not both look like the way to get the thing.
+  //
+  // Still a fixed string rather than a GameCopy field: copy.emailPrompt is
+  // the input's placeholder, and a natural placeholder makes a button wider
+  // than the card. Adding a field to the shared contract for a button label
+  // is not worth it.
+  const emailButton = makeButton("Email it to me", brand.accent, brand.background);
   emailButton.style.padding = "8px 14px";
+  // Secondary: the coupon block is the primary action, and two solid accent
+  // buttons stacked read as equal choices.
+  emailButton.style.background = "transparent";
+  emailButton.style.color = brand.foreground;
+  emailButton.style.border = `1px solid ${brand.foreground}55`;
+  emailButton.style.fontWeight = "600";
   emailButton.addEventListener("click", onSubmitEmail);
   emailRow.appendChild(emailButton);
   wrap.appendChild(emailRow);
