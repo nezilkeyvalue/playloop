@@ -10,7 +10,6 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Legacy aliases — most of the app is mid-migration to the
         // semantic tokens below; keep these until every page is converted.
         ink: "#0B0B0F",
         paper: "#FAFAF8",
@@ -24,7 +23,8 @@ const config: Config = {
         primary: "rgb(var(--primary) / <alpha-value>)",
         "primary-foreground": "rgb(var(--primary-foreground) / <alpha-value>)",
         secondary: "rgb(var(--secondary) / <alpha-value>)",
-        "secondary-foreground": "rgb(var(--secondary-foreground) / <alpha-value>)",
+        "secondary-foreground":
+          "rgb(var(--secondary-foreground) / <alpha-value>)",
         success: "rgb(var(--success) / <alpha-value>)",
         warning: "rgb(var(--warning) / <alpha-value>)",
         destructive: "rgb(var(--destructive) / <alpha-value>)",
@@ -32,14 +32,17 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
-        display: ["var(--font-display)", "var(--font-sans)", "system-ui", "sans-serif"],
+        display: [
+          "var(--font-display)",
+          "var(--font-sans)",
+          "system-ui",
+          "sans-serif",
+        ],
       },
-      // Quiet, barely-there elevation — no color, no glow. A hairline
-      // border does most of the separation work; shadow is just enough
-      // to lift a card off the page.
       boxShadow: {
         card: "0 1px 2px rgb(0 0 0 / 0.04), 0 1px 1px rgb(0 0 0 / 0.03)",
-        elevated: "0 4px 16px -4px rgb(0 0 0 / 0.10), 0 2px 4px -2px rgb(0 0 0 / 0.06)",
+        elevated:
+          "0 4px 16px -4px rgb(0 0 0 / 0.10), 0 2px 4px -2px rgb(0 0 0 / 0.06)",
       },
       keyframes: {
         "fade-up": {

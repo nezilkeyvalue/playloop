@@ -20,7 +20,16 @@
 //   stageBackground — optional; brand gradient if unfilled.
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
-import { drawAssetContain } from "@/lib/runtime/games/spriteRender";
+import {
+  drawAssetContain,
+  drawBrandBackground,
+  fillGlossyCircle,
+  shadeHex,
+  withDropShadow,
+  updateCelebrations,
+  drawCelebration,
+  type Celebration,
+} from "@/lib/runtime/games/spriteRender";
 
 // Scoring constants, chosen so maxRealisticScore() at the capability's
 // default tuning (roundCount 6) lands close to guess_price.json's
@@ -32,6 +41,9 @@ const REALISTIC_ROUND_FACTOR = 0.9;
 const SLIDER_MARGIN = 32;
 const SLIDER_HEIGHT = 12;
 const SLIDER_KNOB_RADIUS = 14;
+const ROUND_INTRO_DURATION = 0.35;
+const SCORE_FLASH_LIFE = 0.9;
+const SCORE_FLASH_RISE_PX = 26;
 
 export function maxRealisticScore(tuning: Record<string, number>): number {
   const roundCount = tuning.roundCount ?? 6;
@@ -76,7 +88,9 @@ class GuessPriceGame implements GameModule {
   private sliderMax = 100_00; // minor units; recomputed in init()
   private results: RoundResult[] = [];
   private ended = false;
-  private roundLockFlashTimer = 0;
+  private scoreFlash: { text: string; life: number } | null = null;
+  private roundIntroT = 0; // seconds since the current round's hero appeared; drives its scale-in
+  private celebrations: Celebration[] = [];
 
   init(ctx: RuntimeContext): void {
     this.ctx = ctx;
@@ -114,7 +128,12 @@ class GuessPriceGame implements GameModule {
 
     this.totalElapsed += dt;
     this.roundTimeLeft -= dt;
-    if (this.roundLockFlashTimer > 0) this.roundLockFlashTimer -= dt;
+    this.roundIntroT += dt;
+    if (this.scoreFlash) {
+      this.scoreFlash.life -= dt;
+      if (this.scoreFlash.life <= 0) this.scoreFlash = null;
+    }
+    this.celebrations = updateCelebrations(this.celebrations, dt);
 
     // --- slider control: drag or arrow keys ---
     const track = this.sliderTrackRect();
@@ -147,20 +166,27 @@ class GuessPriceGame implements GameModule {
 
     // Background
     if (!this.ctx.roles.stageBackground?.assets.length) {
-      const gradient = c.createLinearGradient(0, 0, stage.width, stage.height);
-      gradient.addColorStop(0, brand.background);
-      gradient.addColorStop(1, brand.accent + "22");
-      c.fillStyle = gradient;
-      c.fillRect(0, 0, stage.width, stage.height);
+      drawBrandBackground(c, stage.width, stage.height, brand.background, brand.accent);
     } else {
       const bg = this.ctx.roles.stageBackground!.assets[0]?.image ?? null;
       if (bg) c.drawImage(bg, 0, 0, stage.width, stage.height);
     }
 
     const hero = this.roundOrder[this.roundIndex];
+    let heroCx = stage.width / 2;
+    let heroCy = stage.height * 0.16;
     if (hero?.image) {
       const size = Math.min(stage.width, stage.height) * 0.5;
-      drawAssetContain(c, hero, stage.width / 2 - size / 2, stage.height * 0.16, size, size);
+      // A quick ease-out scale-in when a round's hero first appears, so a
+      // fresh round reads as a small reveal rather than an abrupt swap.
+      const introProgress = Math.min(1, this.roundIntroT / ROUND_INTRO_DURATION);
+      const scale = 0.85 + 0.15 * (1 - Math.pow(1 - introProgress, 3));
+      const drawSize = size * scale;
+      heroCx = stage.width / 2;
+      heroCy = stage.height * 0.16 + size / 2;
+      withDropShadow(c, () =>
+        drawAssetContain(c, hero, heroCx - drawSize / 2, heroCy - drawSize / 2, drawSize, drawSize),
+      );
     }
 
     this.drawSlider(c);
@@ -174,22 +200,30 @@ class GuessPriceGame implements GameModule {
       c.restore();
     }
 
-    if (this.roundLockFlashTimer > 0) {
-      const last = this.results[this.results.length - 1];
-      if (last) {
-        c.save();
-        c.fillStyle = brand.accent;
-        c.font = `700 22px ${fontFamilyForCanvas(brand.fontFamily)}`;
-        c.textAlign = "center";
-        c.fillText(`+${last.points}`, stage.width / 2, stage.height * 0.16 - 10);
-        c.restore();
-      }
+    if (this.scoreFlash) {
+      const lifeRatio = clamp01(this.scoreFlash.life / SCORE_FLASH_LIFE);
+      let alpha = 1;
+      if (lifeRatio > 0.85) alpha = (1 - lifeRatio) / 0.15;
+      else if (lifeRatio < 0.4) alpha = lifeRatio / 0.4;
+
+      c.save();
+      c.globalAlpha = clamp01(alpha);
+      c.fillStyle = brand.accent;
+      c.font = `800 24px ${fontFamilyForCanvas(brand.fontFamily)}`;
+      c.textAlign = "center";
+      c.fillText(this.scoreFlash.text, stage.width / 2, heroCy - 20 - (1 - lifeRatio) * SCORE_FLASH_RISE_PX);
+      c.restore();
+    }
+
+    for (const cel of this.celebrations) {
+      drawCelebration(c, cel, Math.min(stage.width, stage.height) * 0.22, brand.accent);
     }
   }
 
   teardown(): void {
     this.roundOrder = [];
     this.results = [];
+    this.celebrations = [];
   }
 
   maxRealisticScore(tuning: Record<string, number>): number {
@@ -200,6 +234,7 @@ class GuessPriceGame implements GameModule {
     const roundSeconds = this.ctx.tuning.roundSeconds ?? 7;
     this.roundTimeLeft = roundSeconds;
     this.guessMinor = Math.round(this.sliderMax / 2);
+    this.roundIntroT = 0;
 
     // Every round shows a real hero regardless of guess accuracy, so
     // showing it at all is a genuine engagement — not gated on scoring.
@@ -215,7 +250,19 @@ class GuessPriceGame implements GameModule {
       const points = scoreRound(this.guessMinor, hero.data.priceMinor, tolerancePercent);
       this.ctx.addScore(points);
       this.results.push({ asset: hero, guessMinor: this.guessMinor, priceMinor: hero.data.priceMinor, points });
-      this.roundLockFlashTimer = 0.9;
+      this.scoreFlash = { text: `+${points}`, life: SCORE_FLASH_LIFE };
+      // The moment of success: locking in a guess on a real hero is worth
+      // the same brief "look at this" beat every other template gives its
+      // catch/pop/hit — this template never used the Celebration primitive
+      // before despite showing a real product every single round.
+      if (hero.image) {
+        this.celebrations.push({
+          asset: hero,
+          x: this.ctx.stage.width / 2,
+          y: this.ctx.stage.height * 0.16 + (Math.min(this.ctx.stage.width, this.ctx.stage.height) * 0.5) / 2,
+          t: 0,
+        });
+      }
     }
 
     this.roundIndex += 1;
@@ -246,19 +293,23 @@ class GuessPriceGame implements GameModule {
     const knobY = track.y + track.height / 2;
 
     c.save();
-    c.fillStyle = brand.foreground + "22";
+    c.fillStyle = brand.foreground + "18";
     roundedRect(c, track.x, track.y, track.width, track.height, track.height / 2);
     c.fill();
 
-    c.fillStyle = brand.accent;
+    const fillGrad = c.createLinearGradient(track.x, 0, knobX, 0);
+    fillGrad.addColorStop(0, shadeHex(brand.accent, -0.1));
+    fillGrad.addColorStop(1, brand.accent);
+    c.fillStyle = fillGrad;
     roundedRect(c, track.x, track.y, Math.max(track.height, knobX - track.x), track.height, track.height / 2);
     c.fill();
-
-    c.beginPath();
-    c.fillStyle = brand.accent;
-    c.arc(knobX, knobY, SLIDER_KNOB_RADIUS, 0, Math.PI * 2);
-    c.fill();
     c.restore();
+
+    withDropShadow(
+      c,
+      () => fillGlossyCircle(c, knobX, knobY, SLIDER_KNOB_RADIUS, brand.accent),
+      { blur: 8, offsetY: 3 },
+    );
 
     c.save();
     c.fillStyle = brand.foreground;

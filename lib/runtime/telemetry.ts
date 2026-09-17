@@ -54,8 +54,15 @@ async function postWithRetry<T>(url: string, body: unknown): Promise<T | null> {
  * if the route 404s or the network fails — mount.ts treats a null token as
  * "run the game anyway, just don't expect finish()/leads() to do anything".
  */
-export async function beginSession(slug: string): Promise<string | null> {
-  const result = await postWithRetry<{ sessionToken: string }>("/api/plays/start", { slug });
+export async function beginSession(
+  slug: string,
+  options?: { replayOfSessionToken?: string | null },
+): Promise<string | null> {
+  const body: { slug: string; replayOfSessionToken?: string } = { slug };
+  if (options?.replayOfSessionToken) {
+    body.replayOfSessionToken = options.replayOfSessionToken;
+  }
+  const result = await postWithRetry<{ sessionToken: string }>("/api/plays/start", body);
   return result?.sessionToken ?? null;
 }
 
@@ -141,8 +148,16 @@ export async function captureLead(
  * later is a one-line change here, not a change at every call site in
  * mount.ts.
  */
-export function trackEvent(event: TelemetryEvent, detail?: Record<string, unknown>): void {
-  if (typeof console !== "undefined") {
-    console.debug(`[playloop] event: ${event}`, detail ?? {});
-  }
+export type TrackEventContext = {
+  slug: string;
+  sessionToken?: string | null;
+} & Record<string, unknown>;
+
+/** Fire-and-forget analytics ingest — never throws into the game loop. */
+export function trackEvent(event: TelemetryEvent, ctx: TrackEventContext): void {
+  const { slug, sessionToken, ...detail } = ctx;
+  const body: Record<string, unknown> = { slug, event };
+  if (sessionToken) body.sessionToken = sessionToken;
+  if (Object.keys(detail).length > 0) body.detail = detail;
+  void postWithRetry<{ ok: boolean }>("/api/analytics/events", body);
 }

@@ -15,9 +15,9 @@ const display = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "PlayLoop — Make your brand playable in 60 seconds",
+  title: "Playloop — Make your brand playable in 60 seconds",
   description:
-    "Paste a website URL. PlayLoop builds a playable game from your brand and products, ready to embed in one line.",
+    "Paste a website URL. Playloop builds a playable game from your brand and products, ready to embed in one line.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

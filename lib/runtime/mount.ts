@@ -19,15 +19,17 @@ import type {
   GameCapability,
   GameSpec,
   Placement,
+  RewardTier,
   TemplateId,
 } from "@/lib/engine/types";
 import { getCapability } from "@/lib/capabilities";
 import type { GameModule, LoadedAsset, ResolvedRole, RuntimeContext } from "@/lib/runtime/gameModule";
-import { isBrandLogoUrl } from "@/lib/runtime/games/spriteRender";
+import { isBrandLogoUrl, shadeHex } from "@/lib/runtime/games/spriteRender";
 import { createInput } from "@/lib/runtime/input";
 import { startLoop, type LoopHandle } from "@/lib/runtime/loop";
-import { animateCountUp, resolveReward } from "@/lib/runtime/reward";
-import { mountStage, type StageController } from "@/lib/runtime/stage";
+import { entryTier } from "@/lib/engine/specRules";
+import { animateCountUp, nextTierAbove, resolveReward } from "@/lib/runtime/reward";
+import { mountStage, type StageController, type StageSizeOverride } from "@/lib/runtime/stage";
 import {
   beginSession,
   captureLead,
@@ -92,6 +94,18 @@ export interface MountOptions {
    * hosted /play/:slug page.
    */
   autoStart?: boolean;
+  /**
+   * A merchant-chosen size for this specific embed, layered on top of the
+   * template's own capability constraints (see stage.ts's StageSizeOverride
+   * doc comment — it can cap width and set a literal height, but never
+   * shrink below what the template declares as its own usable minimum).
+   * Threaded in from app/play/[slug]/page.tsx's ?width=/?height=, which in
+   * turn come from the embed snippet's data-width/data-height (see
+   * lib/engine/embedSnippet.ts). Omitted everywhere else — the editor's own
+   * preview, fixtures, and any caller with no merchant sizing choice to
+   * honor.
+   */
+  sizeOverride?: StageSizeOverride;
 }
 
 export interface MountHandle {
@@ -115,7 +129,16 @@ export function mount(
     return renderUnavailable(container, "This game's configuration is missing.");
   }
 
-  return mountGame(spec, container, placement, slug, capability, factory, options.autoStart ?? false);
+  return mountGame(
+    spec,
+    container,
+    placement,
+    slug,
+    capability,
+    factory,
+    options.autoStart ?? false,
+    options.sizeOverride,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +151,7 @@ function mountGame(
   capability: GameCapability,
   factory: GameModuleFactory,
   autoStart: boolean,
+  sizeOverride: StageSizeOverride | undefined,
 ): MountHandle {
   const brand = spec.brand;
   const copy = spec.copy;
@@ -175,12 +199,81 @@ function mountGame(
 
   // --- stage sizing --------------------------------------------------------
   const constraint = capability.placements[placement];
-  const stageController: StageController = mountStage(canvas, container, placement, constraint, () => {
-    shell.style.height = `${stageController.size.height}px`;
-  });
+  const stageController: StageController = mountStage(
+    canvas,
+    container,
+    placement,
+    constraint,
+    () => {
+      // Re-fit on every resize too, not just re-apply the stage height: a
+      // narrower box can wrap the SAME reward/idle copy onto more lines,
+      // needing more height than it did a moment ago (see
+      // fitShellToOverlay's doc comment for why this can't just be
+      // stageController.size.height).
+      fitShellToOverlay(shell, overlay, stageController.size.height);
+    },
+    sizeOverride,
+  );
   shell.style.height = `${stageController.size.height}px`;
 
-  setOverlay(overlay, canvas, stageController, renderLoadingState(), overlayBackdrop);
+  // Re-fits the shell whenever the CURRENTLY shown overlay content's own
+  // rendered size changes after setOverlay() already ran — a coupon code
+  // line toggling visible, a "no codes left" status line appearing, the
+  // score count-up text changing width. Every such mutation site would
+  // otherwise have to remember to re-measure itself (fragile, easy to miss
+  // one now or later); observing the content element directly catches all
+  // of them. Re-created per setOverlay() call since the observed element
+  // changes each time; disconnected in teardown().
+  let contentResizeObserver: ResizeObserver | null = null;
+
+  function setOverlay(content: HTMLElement | null) {
+    contentResizeObserver?.disconnect();
+    contentResizeObserver = null;
+    overlay.innerHTML = "";
+    if (!content) {
+      canvas.style.visibility = "visible";
+      overlay.style.background = "transparent";
+      overlay.style.pointerEvents = "none";
+      shell.style.height = `${stageController.size.height}px`;
+      return;
+    }
+    // Hide and clear the play canvas whenever chrome is shown. A semi-
+    // transparent overlay backdrop alone is not enough — the last game
+    // frame (product sprites, sweet-spot bar, etc.) composites through and
+    // reads as broken overlap with the reward controls.
+    canvas.style.visibility = "hidden";
+    stageController.ctx.clearRect(0, 0, stageController.size.width, stageController.size.height);
+    overlay.style.background = overlayBackdrop;
+    overlay.style.pointerEvents = "auto";
+
+    // A brief fade + scale-in on every screen swap (idle -> play -> reward)
+    // instead of an instant innerHTML replace, so the transition itself
+    // reads as a deliberate beat rather than a jump-cut. Two rAFs, not one:
+    // the style change has to land in a frame the browser has already
+    // painted the pre-transition (opacity 0) state for, or the transition
+    // never has a starting frame to animate from.
+    content.style.opacity = "0";
+    content.style.transform = "scale(0.98)";
+    content.style.transition = "opacity 0.22s ease, transform 0.22s ease";
+    overlay.appendChild(content);
+    fitShellToOverlay(shell, overlay, stageController.size.height);
+
+    if (typeof ResizeObserver !== "undefined") {
+      contentResizeObserver = new ResizeObserver(() => {
+        fitShellToOverlay(shell, overlay, stageController.size.height);
+      });
+      contentResizeObserver.observe(content);
+    }
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        content.style.opacity = "1";
+        content.style.transform = "scale(1)";
+      });
+    });
+  }
+
+  setOverlay(renderLoadingState());
 
   // --- input ----------------------------------------------------------------
   // Bound to the canvas, not the shell: the shell also contains the overlay
@@ -203,6 +296,8 @@ function mountGame(
   let score = 0;
   let engagedAssetIds = new Set<string>();
   let activeSessionToken: Promise<string | null> | null = null;
+  /** Previous play's token — passed on replay so analytics can link sessions. */
+  let lastSessionToken: string | null = null;
   let destroyed = false;
 
   function addScore(delta: number) {
@@ -263,15 +358,20 @@ function mountGame(
     });
 
   function showIdleScreen() {
-    setOverlay(overlay, canvas, stageController, renderIdleState(brand, copy, () => startPlay(false)), overlayBackdrop);
+    setOverlay(renderIdleState(brand, copy, () => startPlay(false)));
   }
 
   function startPlay(isReplay: boolean) {
     score = 0;
     engagedAssetIds = new Set();
-    setOverlay(overlay, canvas, stageController, null, overlayBackdrop); // hide chrome; the game renders on canvas
-    activeSessionToken = beginSession(slug);
-    trackEvent(isReplay ? "replay" : "start", { slug });
+    setOverlay(null); // hide chrome; the game renders on canvas
+    activeSessionToken = beginSession(slug, {
+      replayOfSessionToken: isReplay ? lastSessionToken : null,
+    });
+    void activeSessionToken.then((token) => {
+      if (token) lastSessionToken = token;
+      trackEvent(isReplay ? "replay" : "start", { slug, sessionToken: token });
+    });
 
     const mod = factory();
     gameModule = mod;
@@ -321,10 +421,7 @@ function mountGame(
     // game frame (sweet-spot bar, falling products, etc.) otherwise sits on
     // the canvas under semi-transparent chrome and reads as broken overlap.
     setOverlay(
-      overlay,
-      canvas,
-      stageController,
-      renderRewardState(brand, copy, resolved.tier, null, engagedAssets, () => {
+      renderRewardState(brand, copy, resolved.tier, resolved.tierIndex !== -1, finalScore, nextTierAbove(finalScore, spec.rewards), null, engagedAssets, () => {
         void submitLead(sessionToken);
       }, () => {
         startPlay(true);
@@ -337,11 +434,10 @@ function mountGame(
         await finishedSignal;
         const claim = await claimCoupon(sessionToken);
         if (claim.status === "ok") {
-          trackEvent("reward_revealed", { slug, coupon: "claimed" });
+          trackEvent("reward_revealed", { slug, sessionToken, coupon: "claimed" });
         }
         return claim.code;
       }),
-      overlayBackdrop,
     );
 
     sessionToken = activeSessionToken ? await activeSessionToken : null;
@@ -365,7 +461,13 @@ function mountGame(
       if (el) el.textContent = String(value);
     });
 
-    trackEvent("reward_revealed", { slug, score: finalScore, tier: resolved.tier.label });
+    trackEvent("reward_revealed", {
+      slug,
+      sessionToken,
+      score: finalScore,
+      tier: resolved.tier.label,
+    });
+    trackEvent("complete", { slug, sessionToken, score: finalScore });
   }
 
   async function submitLead(sessionToken: string | null): Promise<boolean> {
@@ -399,7 +501,7 @@ function mountGame(
           ? "Sent — check your inbox."
           : "Got it — we've saved your email. Copy your code above to use it now.";
     }
-    if (ok) trackEvent("lead_captured", { slug });
+    if (ok) trackEvent("lead_captured", { slug, sessionToken });
     return ok;
   }
 
@@ -409,6 +511,7 @@ function mountGame(
     gameModule?.teardown();
     input.destroy();
     stageController.destroy();
+    contentResizeObserver?.disconnect();
     container.innerHTML = "";
   }
 
@@ -552,10 +655,20 @@ function loadImage(url: string, timeoutMs = 6000): Promise<HTMLImageElement | nu
  */
 const STATIC_PREVIEW_EXAMPLE_SCORE = 128;
 
+/** Score to preview the reward screen at when the caller names none: exactly
+ * the entry tier's threshold, so the merchant sees the reward state by
+ * default. A fixed 128 used to do this only because every spec had a tier at
+ * minScore 0; now that the entry bar is wherever the merchant put it, a
+ * constant lands below it as often as not and previews the near-miss screen
+ * to someone who opened the panel to check their coupon terms. */
+function defaultPreviewScore(spec: GameSpec): number {
+  return entryTier(spec.rewards)?.minScore ?? STATIC_PREVIEW_EXAMPLE_SCORE;
+}
+
 export function renderStaticScreen(
   kind: "idle" | "reward",
   spec: GameSpec,
-  exampleScore: number = STATIC_PREVIEW_EXAMPLE_SCORE,
+  exampleScore: number = defaultPreviewScore(spec),
 ): HTMLElement {
   const { brand, copy } = spec;
   ensureGoogleFontLoaded(brand.fontFamily);
@@ -581,7 +694,12 @@ export function renderStaticScreen(
     return shell;
   }
 
-  const { tier } = resolveReward(STATIC_PREVIEW_EXAMPLE_SCORE, spec.rewards);
+  // Resolved from `exampleScore`, not from the constant. They were different
+  // numbers: the editor's per-tier "preview" button sets exampleScore to that
+  // tier's minScore, but the tier shown was always whatever 128 resolved to,
+  // so previewing the 20%-off tier rendered the 10%-off one.
+  const resolvedPreview = resolveReward(exampleScore, spec.rewards);
+  const tier = resolvedPreview.tier;
   // No live session to draw a real engagement list from here — a
   // representative sample of the spec's own assets stands in, same spirit
   // as STATIC_PREVIEW_EXAMPLE_SCORE faking a score for this same preview.
@@ -594,7 +712,21 @@ export function renderStaticScreen(
     .filter((a) => !isBrandLogoUrl(a.spriteUrl, brand.logoUrl))
     .slice(0, 4)
     .map((a) => ({ spriteUrl: a.spriteUrl, name: a.data?.name, productUrl: a.data?.productUrl }));
-  const content = renderRewardState(brand, copy, tier, null, engagedSample, () => {}, () => {});
+  // Same earned/near-miss logic as the live screen rather than a forced "won"
+  // state, so a merchant who previews a score below their entry bar sees
+  // exactly what that player will see.
+  const content = renderRewardState(
+    brand,
+    copy,
+    tier,
+    resolvedPreview.tierIndex !== -1,
+    exampleScore,
+    nextTierAbove(exampleScore, spec.rewards),
+    null,
+    engagedSample,
+    () => {},
+    () => {},
+  );
   const scoreEl = content.querySelector<HTMLElement>("[data-role='score-value']");
   if (scoreEl) scoreEl.textContent = String(exampleScore);
   const emailField = content.querySelector<HTMLInputElement>("[data-role='email-input']");
@@ -619,29 +751,43 @@ function opaqueOverlayBackdrop(background: string): string {
   return "#ffffff";
 }
 
-function setOverlay(
-  overlay: HTMLElement,
-  canvas: HTMLCanvasElement,
-  stage: StageController,
-  content: HTMLElement | null,
-  backdrop: string,
-) {
-  overlay.innerHTML = "";
+/**
+ * Overlay chrome (idle/reward) is sized for whatever it actually contains,
+ * never for the stage's gameplay aspect ratio — a reward tier plus coupon
+ * terms plus an engaged-products gallery plus an email form routinely needs
+ * more height than a template's `preferredAspect`-derived box, and the
+ * shell's own `overflow: hidden` (there so gameplay never visibly spills
+ * past its box) was silently clipping that content instead of ever growing
+ * to fit it.
+ *
+ * Measured off the CONTENT element itself (`overlay`'s one child), not off
+ * `overlay` — confirmed live that `overlay.scrollHeight` under-reports an
+ * overflowing child here: `overlay` is `justify-content: center` (mountGame's
+ * DOM scaffold), and centered ("safe"-aligned) flex overflow doesn't
+ * reliably become part of a container's own scrollable overflow the way
+ * start-aligned overflow does — the trailing end of a tall reward screen
+ * (the replay button, past a full coupon block + gallery) was still
+ * clipped even once this function existed, because it was sizing to a
+ * number smaller than the content actually needed. `content` is an
+ * ordinary block box with no centering of its own, so its scrollHeight is
+ * an unambiguous measurement of what it actually needs. `overlay`'s own
+ * padding (set once in mountGame) isn't part of that box, so it's added
+ * back in from the live computed style rather than duplicated as a
+ * hardcoded number that could silently drift out of sync with it.
+ *
+ * Only ever GROWS the shell past the stage's own height, never shrinks
+ * below it — gameplay's canvas box is untouched.
+ */
+function fitShellToOverlay(shell: HTMLElement, overlay: HTMLElement, stageHeight: number): void {
+  const content = overlay.firstElementChild as HTMLElement | null;
   if (!content) {
-    canvas.style.visibility = "visible";
-    overlay.style.background = "transparent";
-    overlay.style.pointerEvents = "none";
+    shell.style.height = `${stageHeight}px`;
     return;
   }
-  // Hide and clear the play canvas whenever chrome is shown. A semi-
-  // transparent overlay backdrop alone is not enough — the last game frame
-  // (product sprites, sweet-spot bar, etc.) composites through and reads as
-  // broken overlap with the reward controls.
-  canvas.style.visibility = "hidden";
-  stage.ctx.clearRect(0, 0, stage.size.width, stage.size.height);
-  overlay.style.background = backdrop;
-  overlay.style.pointerEvents = "auto";
-  overlay.appendChild(content);
+  const overlayStyle = getComputedStyle(overlay);
+  const verticalPadding =
+    parseFloat(overlayStyle.paddingTop || "0") + parseFloat(overlayStyle.paddingBottom || "0");
+  shell.style.height = `${Math.max(stageHeight, content.scrollHeight + verticalPadding)}px`;
 }
 
 function renderLoadingState(): HTMLElement {
@@ -659,7 +805,7 @@ function renderLoadingState(): HTMLElement {
  * branding at all before). Returns null when there's no logo to show,
  * matching the "skip silently" convention used elsewhere for missing
  * per-asset data. */
-function renderBrandLogo(logoUrl: string | undefined): HTMLImageElement | null {
+function renderBrandLogo(logoUrl: string | undefined, height: string = "32px"): HTMLImageElement | null {
   if (!logoUrl) return null;
 
   const logo = document.createElement("img");
@@ -676,7 +822,7 @@ function renderBrandLogo(logoUrl: string | undefined): HTMLImageElement | null {
   // must hold on arbitrary third-party host pages the embed script runs
   // on, not just this app's own CSS.
   logo.style.display = "block";
-  logo.style.height = "32px";
+  logo.style.height = height;
   logo.style.width = "auto";
   logo.style.marginTop = "0";
   logo.style.marginBottom = "8px";
@@ -689,7 +835,10 @@ function renderBrandLogo(logoUrl: string | undefined): HTMLImageElement | null {
 function renderIdleState(brand: GameSpec["brand"], copy: GameSpec["copy"], onStart: () => void): HTMLElement {
   const wrap = document.createElement("div");
 
-  const logo = renderBrandLogo(brand.logoUrl);
+  // Scales with both the embed's width and height (same clamp+vw technique
+  // as the headline below), not a fixed px, so it reads clearly on a large
+  // placement without overflowing a short/narrow one.
+  const logo = renderBrandLogo(brand.logoUrl, "clamp(40px, min(10vw, 18vh), 96px)");
   if (logo) wrap.appendChild(logo);
 
   const headline = document.createElement("h2");
@@ -786,9 +935,21 @@ function renderEngagedGallery(engaged: EngagedAsset[], brand: GameSpec["brand"])
     item.style.borderRadius = "12px";
     item.style.border = `1px solid ${brand.foreground}1a`;
     item.style.background = `${brand.foreground}0a`;
-    item.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)";
+    item.style.boxShadow = "0 2px 10px -2px rgba(0,0,0,0.14)";
     item.style.color = "inherit";
     item.style.scrollSnapAlign = "start";
+    item.style.transition = "transform 0.15s ease, box-shadow 0.15s ease";
+
+    if (asset.productUrl) {
+      item.addEventListener("pointerenter", () => {
+        item.style.transform = "translateY(-2px)";
+        item.style.boxShadow = "0 6px 16px -4px rgba(0,0,0,0.2)";
+      });
+      item.addEventListener("pointerleave", () => {
+        item.style.transform = "none";
+        item.style.boxShadow = "0 2px 10px -2px rgba(0,0,0,0.14)";
+      });
+    }
 
     const thumb = document.createElement("img");
     thumb.src = asset.spriteUrl;
@@ -852,9 +1013,10 @@ function renderCouponBlock(
   box.dataset.role = "coupon-block";
   box.style.marginTop = "8px";
   box.style.padding = "10px";
-  box.style.borderRadius = "10px";
-  box.style.border = `1px solid ${brand.foreground}22`;
-  box.style.background = `${brand.accent}0F`;
+  box.style.borderRadius = "12px";
+  box.style.border = `1px solid ${brand.accent}30`;
+  box.style.background = `linear-gradient(180deg, ${brand.accent}14, ${brand.accent}08)`;
+  box.style.boxShadow = `0 4px 14px -6px ${brand.accent}55`;
   box.style.textAlign = "center";
 
   const codeLine = document.createElement("div");
@@ -1044,10 +1206,98 @@ function formatExpiry(iso: string): string {
   }
 }
 
+/**
+ * Shown instead of a coupon block when the score cleared no tier.
+ *
+ * Reward tiers no longer start at 0 (REWARD_MIN_SCORE_FLOOR in
+ * lib/engine/specRules.ts), so falling short is an ordinary outcome rather
+ * than an edge case, and the screen has to give the player somewhere to go.
+ * It states the gap as a number and names what closes it, because "you didn't
+ * win" is a stop sign and "40 points from 10% off" is a target.
+ *
+ * `nextTier` is null only when the spec declares no tiers at all (a
+ * thanks-for-playing game). There is nothing to aim at then, so the copy
+ * stays warm and generic rather than inventing a threshold.
+ */
+function renderNearMissBlock(
+  brand: GameSpec["brand"],
+  finalScore: number,
+  nextTier: RewardTier | null,
+): HTMLElement {
+  const box = document.createElement("div");
+  box.dataset.role = "near-miss";
+  box.style.width = "100%";
+  box.style.margin = "4px 0 2px";
+  box.style.padding = "12px";
+  box.style.boxSizing = "border-box";
+  box.style.borderRadius = "12px";
+  box.style.border = `1px solid ${brand.foreground}22`;
+  box.style.background = `${brand.foreground}0d`;
+
+  const line = document.createElement("p");
+  line.dataset.role = "near-miss-line";
+  line.style.margin = "0";
+  line.style.fontSize = "14px";
+  line.style.fontWeight = "600";
+  line.style.lineHeight = "1.35";
+
+  if (!nextTier) {
+    line.textContent = "Thanks for playing — go again and beat your score.";
+    box.appendChild(line);
+    return box;
+  }
+
+  // Never below 1: this block only renders when the score missed every tier,
+  // so the gap is real, but Math.max keeps a rounding slip from printing
+  // "0 more points to go".
+  const gap = Math.max(1, nextTier.minScore - finalScore);
+  line.textContent = `${gap} more ${gap === 1 ? "point" : "points"} and ${nextTier.label} is yours.`;
+  box.appendChild(line);
+
+  const sub = document.createElement("p");
+  sub.style.margin = "4px 0 0";
+  sub.style.fontSize = "12px";
+  sub.style.opacity = "0.75";
+  sub.textContent = `You scored ${finalScore}. ${nextTier.minScore} unlocks it — one more run should do it.`;
+  box.appendChild(sub);
+
+  // How close they got, as a bar. A number alone under-sells a near miss;
+  // seeing the bar almost full is what makes the replay feel worth it.
+  const track = document.createElement("div");
+  track.style.marginTop = "10px";
+  track.style.height = "6px";
+  track.style.borderRadius = "999px";
+  track.style.overflow = "hidden";
+  track.style.background = `${brand.foreground}22`;
+
+  const fill = document.createElement("div");
+  fill.dataset.role = "near-miss-progress";
+  fill.style.height = "100%";
+  fill.style.borderRadius = "999px";
+  fill.style.background = brand.accent;
+  // Floor of 6% so a zero or near-zero score still shows a sliver of bar
+  // rather than an empty track that reads as a rendering bug. Guard the
+  // divide: minScore is validated above 0, but this runs against whatever
+  // spec the embed was handed.
+  const ratio = nextTier.minScore > 0 ? finalScore / nextTier.minScore : 0;
+  fill.style.width = `${Math.min(100, Math.max(6, Math.round(ratio * 100)))}%`;
+  track.appendChild(fill);
+  box.appendChild(track);
+
+  return box;
+}
+
 function renderRewardState(
   brand: GameSpec["brand"],
   copy: GameSpec["copy"],
   tier: GameSpec["rewards"][number],
+  /** False when the score cleared no tier's minScore — `tier` is then
+   * reward.ts's NO_REWARD_FALLBACK, not something the player won. */
+  earned: boolean,
+  /** The score just played, for the shortfall line. */
+  finalScore: number,
+  /** Cheapest tier still out of reach, or null when there is none. */
+  nextTier: RewardTier | null,
   serverCode: string | null,
   engaged: EngagedAsset[],
   onSubmitEmail: () => void,
@@ -1088,22 +1338,41 @@ function renderRewardState(
   // The code no longer lives on this line. It is claimed on demand by the
   // coupon block below, because a code shown here would have to be consumed
   // from the pool before the player had asked for it.
-  tierLine.textContent = tier.label;
+  //
+  // When nothing was earned, `tier` is NO_REWARD_FALLBACK and its label
+  // ("Thanks for playing") closes the screen down — it reads like the end of
+  // the interaction at the exact moment the player still has a reason to
+  // continue. The near-miss block below supplies the heading instead.
+  tierLine.textContent = earned ? tier.label : "So close!";
   tierLine.style.margin = "0 0 4px";
   tierLine.style.fontSize = "16px";
   tierLine.style.fontWeight = "600";
   tierLine.style.color = brand.accent;
   wrap.appendChild(tierLine);
 
-  if (tier.percentOff != null) {
+  // Only a tier the player actually cleared gets a coupon block. `earned` is
+  // load-bearing beyond the percentOff check: the fallback tier carries
+  // percentOff: null today, but reading the flag means a future fallback
+  // can't start handing out a claim button by accident.
+  if (earned && tier.percentOff != null) {
     wrap.appendChild(renderCouponBlock(brand, tier, serverCode, onClaimCoupon));
+  }
+
+  if (!earned) {
+    wrap.appendChild(renderNearMissBlock(brand, finalScore, nextTier));
   }
 
   const gallery = renderEngagedGallery(engaged, brand);
   if (gallery) wrap.appendChild(gallery);
 
+  // Lead capture only when there is a code to capture a lead *for*. The
+  // button says "Email it to me"; with no reward, "it" is nothing, and a
+  // player who types their address gets a confirmation for a message that
+  // could never contain anything. The near-miss screen keeps a single
+  // obvious action — play again — and asks for the email on the run that
+  // actually wins something.
   const emailRow = document.createElement("div");
-  emailRow.style.display = "flex";
+  emailRow.style.display = earned ? "flex" : "none";
   emailRow.style.gap = "8px";
   emailRow.style.marginTop = "8px";
   emailRow.style.flexWrap = "wrap";
@@ -1133,12 +1402,15 @@ function renderRewardState(
   // the input's placeholder, and a natural placeholder makes a button wider
   // than the card. Adding a field to the shared contract for a button label
   // is not worth it.
-  const emailButton = makeButton("Email it to me", brand.accent, brand.background);
-  emailButton.style.padding = "8px 14px";
   // Secondary: the coupon block is the primary action, and two solid accent
-  // buttons stacked read as equal choices.
-  emailButton.style.background = "transparent";
-  emailButton.style.color = brand.foreground;
+  // buttons stacked read as equal choices. Built as a transparent button
+  // directly (not a solid one overridden after the fact) — makeButton's
+  // hover/press states and shadow are computed from the background it's
+  // given, so building solid and then papering over it with a transparent
+  // background left a stale accent-coloured shadow behind an otherwise
+  // outline-style button.
+  const emailButton = makeButton("Email it to me", "transparent", brand.foreground);
+  emailButton.style.padding = "8px 14px";
   emailButton.style.border = `1px solid ${brand.foreground}55`;
   emailButton.style.fontWeight = "600";
   emailButton.addEventListener("click", onSubmitEmail);
@@ -1153,10 +1425,21 @@ function renderRewardState(
   emailStatus.style.minHeight = "1.2em";
   wrap.appendChild(emailStatus);
 
-  const replayButton = makeButton(copy.ctaReplay, "transparent", brand.foreground);
-  replayButton.style.marginTop = "10px";
-  replayButton.style.border = `1px solid ${brand.foreground}55`;
-  replayButton.style.color = brand.foreground;
+  // Solid accent when nothing was earned, outline when something was.
+  //
+  // The hierarchy follows what the player still has to do. With a coupon on
+  // screen, claiming it is the primary action and replaying is the quiet
+  // alternative. With no coupon, replaying IS the only way to get one, and
+  // leaving it as the same faint outline button it has always been buried
+  // the one thing this screen is asking for.
+  const replayButton = earned
+    ? makeButton(copy.ctaReplay, "transparent", brand.foreground)
+    : makeButton(copy.ctaReplay, brand.accent, brand.background);
+  replayButton.style.marginTop = earned ? "10px" : "4px";
+  if (earned) {
+    replayButton.style.border = `1px solid ${brand.foreground}55`;
+    replayButton.style.color = brand.foreground;
+  }
   replayButton.addEventListener("click", onReplay);
   wrap.appendChild(replayButton);
 
@@ -1193,8 +1476,41 @@ function makeButton(label: string, background: string, foregroundOnAccent: strin
   button.style.fontSize = "14px";
   button.style.fontWeight = "700";
   button.style.cursor = "pointer";
-  button.style.background = background;
-  button.style.color = background === "transparent" ? foregroundOnAccent : bestTextColor(background);
+  button.style.transition = "transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease";
+
+  const isTransparent = background === "transparent";
+  button.style.background = isTransparent
+    ? "transparent"
+    : `linear-gradient(180deg, ${shadeHex(background, 0.08)}, ${shadeHex(background, -0.06)})`;
+  button.style.color = isTransparent ? foregroundOnAccent : bestTextColor(background);
+  // A solid pill sitting flat on the page reads as inert; a coloured,
+  // slightly-elevated shadow plus a press/hover response makes it read as
+  // the one interactive thing on the idle/reward screen. Skipped for the
+  // transparent "secondary" button (replay) — it deliberately stays flat
+  // so it doesn't visually compete with the primary action beside it.
+  button.style.boxShadow = isTransparent ? "none" : `0 6px 16px -4px ${background}80`;
+
+  if (!isTransparent) {
+    button.addEventListener("pointerenter", () => {
+      button.style.transform = "translateY(-1px)";
+      button.style.filter = "brightness(1.04)";
+    });
+    button.addEventListener("pointerleave", () => {
+      button.style.transform = "none";
+      button.style.filter = "none";
+    });
+    button.addEventListener("pointerdown", () => {
+      button.style.transform = "translateY(0) scale(0.97)";
+      button.style.boxShadow = `0 2px 8px -2px ${background}80`;
+    });
+    const release = () => {
+      button.style.transform = "translateY(-1px)";
+      button.style.boxShadow = `0 6px 16px -4px ${background}80`;
+    };
+    button.addEventListener("pointerup", release);
+    button.addEventListener("pointercancel", release);
+  }
+
   return button;
 }
 

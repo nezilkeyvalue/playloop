@@ -15,7 +15,14 @@ const PRODUCTS = [
   { name: "Seasonal Blend", price: "$18.00", tone: "#A96A3B" },
 ];
 
-const EMBED_SNIPPET = `<div data-playloop="demo-catch"></div>
+const EMBED_SNIPPET = `<div data-playloop="demo-catch" data-placement="section"></div>
+<script src="/embed.js" async></script>`;
+
+// A second, separate embed on the same page showing the "modal" placement —
+// embed.js renders this one as a trigger BUTTON, not the game itself, and
+// only builds the overlay + iframe the first time a visitor clicks it.
+const MODAL_EMBED_SNIPPET = `<div data-playloop="demo-guess-price" data-placement="modal"
+     data-trigger-label="Guess the price & win"></div>
 <script src="/embed.js" async></script>`;
 
 export default function DemoStorefrontPage() {
@@ -39,7 +46,7 @@ export default function DemoStorefrontPage() {
         <h1 className="text-3xl font-semibold sm:text-4xl">Small-batch roasted, shipped weekly.</h1>
         <p className="mx-auto mt-3 max-w-md text-ink/60">
           This is a mock storefront — every product below is a placeholder. It exists to show one
-          thing: an embedded PlayLoop game sitting in a normal page, not a special demo harness.
+          thing: an embedded Playloop game sitting in a normal page, not a special demo harness.
         </p>
       </section>
 
@@ -63,7 +70,7 @@ export default function DemoStorefrontPage() {
       <section className="mx-auto max-w-5xl px-6 pb-16">
         <div className="mb-3 flex items-baseline justify-between">
           <h2 className="text-lg font-semibold">Play &amp; save</h2>
-          <span className="text-xs uppercase tracking-wide text-ink/40">Powered by PlayLoop</span>
+          <span className="text-xs uppercase tracking-wide text-ink/40">Powered by Playloop</span>
         </div>
 
         {/* This div + script pair is copy-pasted verbatim from what a
@@ -72,7 +79,7 @@ export default function DemoStorefrontPage() {
             sandboxed iframe at /play/demo-catch, and auto-sizes it via
             postMessage — nothing else on this page knows the game exists. */}
         <div className="overflow-hidden rounded-2xl border border-ink/10 bg-white shadow-sm">
-          <div data-playloop="demo-catch" />
+          <div data-playloop="demo-catch" data-placement="section" />
           <script src="/embed.js" async />
         </div>
 
@@ -84,8 +91,29 @@ export default function DemoStorefrontPage() {
         </details>
       </section>
 
+      {/* --- second embed: same loader script, "modal" placement --------
+          embed.js turns this host div into a trigger button and only
+          builds the overlay + game iframe on the first click — nothing
+          about this section's markup differs except data-placement. */}
+      <section className="mx-auto max-w-5xl px-6 pb-16">
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="text-lg font-semibold">Or trigger it from a button</h2>
+          <span className="text-xs uppercase tracking-wide text-ink/40">Modal placement</span>
+        </div>
+        <div className="rounded-2xl border border-dashed border-ink/15 bg-white/60 p-8 text-center">
+          <div data-playloop="demo-guess-price" data-placement="modal" data-trigger-label="Guess the price & win" />
+          <script src="/embed.js" async />
+        </div>
+        <details className="mt-3 text-xs text-ink/50">
+          <summary className="cursor-pointer select-none">View embed code</summary>
+          <pre className="mt-2 overflow-x-auto rounded-lg bg-ink/5 p-3 text-[11px] leading-relaxed text-ink/70">
+            {MODAL_EMBED_SNIPPET}
+          </pre>
+        </details>
+      </section>
+
       <footer className="border-t border-ink/10 py-8 text-center text-xs text-ink/40">
-        Mock storefront for demo purposes only — PlayLoop build spec §19/§21.
+        Mock storefront for demo purposes only — Playloop build spec §19/§21.
       </footer>
     </div>
   );

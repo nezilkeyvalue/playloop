@@ -51,6 +51,26 @@ export function resolveReward(score: number, rewards: RewardTier[]): ResolvedRew
 }
 
 /**
+ * The cheapest tier the score did NOT clear, i.e. the one to dangle in front
+ * of a player who fell short. Null when they already cleared everything (or
+ * the spec has no tiers).
+ *
+ * Exists because reward tiers no longer start at 0 (REWARD_MIN_SCORE_FLOOR in
+ * lib/engine/specRules.ts): finishing below every threshold is now an ordinary
+ * outcome, and "you earned nothing" on its own is a dead end. The reward
+ * screen turns this tier into a concrete target — how many points short, and
+ * what they unlock — so the obvious next move is to press Play again.
+ */
+export function nextTierAbove(score: number, rewards: RewardTier[]): RewardTier | null {
+  let next: RewardTier | null = null;
+  for (const tier of rewards) {
+    if (tier.minScore <= score) continue;
+    if (next === null || tier.minScore < next.minScore) next = tier;
+  }
+  return next;
+}
+
+/**
  * Animates a numeric value from `from` to `to` over `durationMs`, calling
  * `onTick` every frame — used to count the score up before revealing the
  * reward tier, per the "earned, not handed" framing in build spec §1.

@@ -140,6 +140,25 @@ const PICKER_META_FALLBACK: Partial<Record<TemplateId, { name: string; summary: 
   runner: { name: runnerCapability.name, summary: runnerCapability.summary },
 };
 
+/** Templates with a real runtime module wired into lib/runtime/mount.ts's
+ * REGISTRY — the ones a player can actually load, as opposed to `match`/
+ * `stack` (reserved in TemplateId with no capability or runtime at all).
+ * Mirrors mount.ts's REGISTRY keys; a new template touches both (see
+ * docs/ADDING_A_TEMPLATE.md) so keep this list in sync with it. Used to
+ * restrict the game editor's "change template" picker to templates that
+ * will actually mount, rather than every id listCapabilities() knows about. */
+export const RUNTIME_TEMPLATES: TemplateId[] = [
+  "catch",
+  "guess_price",
+  "chain_pop",
+  "chomp",
+  "whack",
+  "simon",
+  "slice",
+  "shooter",
+  "sweet_spot",
+];
+
 export function requireCapability(id: TemplateId): GameCapability {
   const cap = registry[id];
   if (!cap) throw new Error(`Unknown or unimplemented template capability: ${id}`);

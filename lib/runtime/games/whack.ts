@@ -20,7 +20,8 @@
 //   stageBackground — optional; brand gradient if unfilled
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
-import { drawAssetContain } from "@/lib/runtime/games/spriteRender";
+import { drawAssetContain, drawBrandBackground, withDropShadow } from "@/lib/runtime/games/spriteRender";
+import { drawHazardShape, drawMoleCreatureShape } from "@/lib/runtime/games/shapeLibrary";
 
 // Scoring constants. Chosen so maxRealisticScore() at the capability's
 // *default* tuning (popRateHz 1.1, durationSec 35, hazardRatio 0.2) lands
@@ -34,30 +35,51 @@ const HAZARD_PENALTY = 35;
 const REALISTIC_HIT_RATE = 0.75; // fraction of pops a competent player taps in time
 
 const HOLE_ITEM_SIZE = 68;
-const HOLE_RADIUS_FACTOR = 0.42; // fraction of cell size drawn as the burrow
+// Both pairs are fractions of cellSize, sized so a hole's mound (the wider
+// of the two) stays well under half the cell spacing — mound RADIUS 0.35
+// means a 0.7*cellSize diameter, leaving a clear gap to its neighbours
+// instead of adjacent mounds overlapping into one continuous ridge (the
+// previous factors put the mound diameter at 1.28x cellSize, guaranteeing
+// overlap regardless of grid spacing).
+const HOLE_RADIUS_X_FACTOR = 0.21; // the dark opening
+const HOLE_RADIUS_Y_FACTOR = 0.132;
+const MOUND_RADIUS_X_FACTOR = 0.35; // the raised dirt rim around it
+const MOUND_RADIUS_Y_FACTOR = 0.22;
 const HIT_PAD_FACTOR = 1.15; // generous tap target for touch
-const POP_ANIM_SEC = 0.12;
+const RISE_SEC = 0.22; // slide-up/down duration — was a flat 0.12s linear scale, no travel
+const CLIP_UNTIL = 0.5; // below this fraction of rise, the mole is still clipped inside the hole
+const HIT_SINK_SEC = 0.16; // bonk-and-sink duration once whacked, before the hole clears
 const GRID_PADDING = 20;
 const FLOATING_TEXT_LIFE = 0.6;
 const FLOAT_RISE_PX = 26;
-const HAMMER_ANIM_SEC = 0.32;
-const HAMMER_SWING_FRACTION = 0.45; // portion of HAMMER_ANIM_SEC spent swinging down; the rest is impact, recoil and fade
-// Angles measured from "handle straight up, head raised above it", negative =
-// counter-clockwise. The hammer pivots around a fixed grip (the hand) placed
-// up and to the right of the target, so the head arcs down onto it.
-const HAMMER_START_DEG = -40; // wound up: head raised high above the target
-const HAMMER_IMPACT_DEG = -135; // struck: head down on the target, handle angled up to the hand
-const HAMMER_RECOIL_DEG = 16; // slight bounce back off the target as it fades
+const PARTICLES_PER_HIT = 9;
+const HAMMER_SWING_SEC = 0.4; // wind-up + strike + recoil + settle needs more room than a bare slam
+const HAMMER_HEAD_SIZE = 46;
+
+// Fixed, not brand-derived — a hole is dirt regardless of the brand's own
+// palette, the same reasoning shooter.ts's starfield stays a fixed dark
+// space palette instead of tinting with brand.background (a bright pink
+// brand background forced onto "soil" would read as a bug, not a theme).
+const DIRT_LIGHT = "#C9A063";
+const DIRT_MID = "#9C7239";
+const DIRT_DARK = "#5B3E22";
+const HOLE_DEEP = "#1a1006";
+
+interface Occupant {
+  kind: "mole" | "hazard";
+  asset: LoadedAsset | null;
+  fullDuration: number;
+  timer: number;
+  /** Set the instant a player successfully taps this occupant — switches
+   * drawHole into the short bonk-and-sink animation instead of the normal
+   * rise/duck cycle, and update() clears the hole once it finishes. */
+  hitT: number | null;
+}
 
 interface Hole {
   cx: number;
   cy: number;
-  occupant: {
-    kind: "mole" | "hazard";
-    asset: LoadedAsset | null;
-    fullDuration: number;
-    timer: number;
-  } | null;
+  occupant: Occupant | null;
 }
 
 interface FloatingText {
@@ -69,14 +91,82 @@ interface FloatingText {
   maxLife: number;
 }
 
-/** A brief hammer-strike effect at wherever the player just tapped. */
-interface HammerHit {
+interface Particle {
   x: number;
   y: number;
+  vx: number;
+  vy: number;
   life: number;
   maxLife: number;
-  /** False for a whiff — same swing, weaker impact burst. */
-  landed: boolean;
+  color: string;
+}
+
+interface HammerSwing {
+  x: number;
+  y: number;
+  t: number; // 0..1 through HAMMER_SWING_SEC
+}
+
+/** Standard "overshoot then settle" easing — used for the mole's rise so
+ * popping up reads as a lively spring rather than a linear slide. */
+function easeOutBack(t: number): number {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  const p = t - 1;
+  return 1 + c3 * p * p * p + c1 * p * p;
+}
+
+function easeInQuad(t: number): number {
+  return t * t;
+}
+
+// Hammer swing phases, as fractions of HAMMER_SWING_SEC — a real hammering
+// motion is wind-up, strike, recoil, settle, not a single slam-and-retract
+// (which read as a blip rather than a hit). `travel` follows the same
+// convention drawHammer already used (0 = fully raised, 1 = at the target),
+// but now ranges slightly negative during anticipation (raised even higher
+// than idle rest, i.e. the wind-up) and dips back up after impact for the
+// recoil bounce before settling back to idle-raised.
+const HAMMER_PHASE_ANTICIPATE = 0.16;
+const HAMMER_PHASE_STRIKE = 0.42;
+const HAMMER_PHASE_RECOIL = 0.66;
+
+function hammerPose(t: number): { travel: number; angle: number; squash: number } {
+  const IDLE_TILT = -0.06;
+  let travel: number;
+  let angle: number;
+
+  if (t < HAMMER_PHASE_ANTICIPATE) {
+    // Wind-up: lift higher than rest and lean back, gathering to strike.
+    const p = t / HAMMER_PHASE_ANTICIPATE;
+    const eased = 1 - Math.pow(1 - p, 2);
+    travel = -0.18 * eased;
+    angle = IDLE_TILT + -0.22 * eased;
+  } else if (t < HAMMER_PHASE_STRIKE) {
+    // Strike: fast, accelerating drop from the wind-up to full contact.
+    const p = (t - HAMMER_PHASE_ANTICIPATE) / (HAMMER_PHASE_STRIKE - HAMMER_PHASE_ANTICIPATE);
+    const eased = p * p;
+    travel = -0.18 + 1.18 * eased;
+    angle = IDLE_TILT + -0.22 * (1 - eased);
+  } else if (t < HAMMER_PHASE_RECOIL) {
+    // Recoil: a small bounce back up off the impact, like a real mallet
+    // rebounding rather than freezing on contact.
+    const p = (t - HAMMER_PHASE_STRIKE) / (HAMMER_PHASE_RECOIL - HAMMER_PHASE_STRIKE);
+    const eased = 1 - Math.pow(1 - p, 2);
+    travel = 1 - 0.82 * eased;
+    angle = IDLE_TILT + 0.08 * eased;
+  } else {
+    // Settle: ease the recoil bounce back down to the raised idle pose.
+    const p = (t - HAMMER_PHASE_RECOIL) / (1 - HAMMER_PHASE_RECOIL);
+    const eased = p * p * (3 - 2 * p);
+    travel = 0.18 * (1 - eased);
+    angle = IDLE_TILT + 0.08 * (1 - eased);
+  }
+
+  // A sharp squash right at the impact instant (t crossing HAMMER_PHASE_STRIKE),
+  // independent of the travel curve's own post-impact bounce.
+  const squash = Math.max(0, 1 - Math.abs(t - HAMMER_PHASE_STRIKE) / 0.05);
+  return { travel, angle, squash };
 }
 
 export function maxRealisticScore(tuning: Record<string, number>): number {
@@ -107,8 +197,15 @@ class WhackGame implements GameModule {
   private elapsed = 0;
   private ended = false;
   private floatingTexts: FloatingText[] = [];
-  private hammerHits: HammerHit[] = [];
-  private groundTexture: CanvasPattern | null = null;
+  private particles: Particle[] = [];
+  private hammer: HammerSwing | null = null;
+  /** A hole tapped this swing, not yet resolved — resolves (score, particles,
+   * the mole's own bonk reaction) once the hammer's animation actually
+   * reaches HAMMER_PHASE_STRIKE, not at the instant of the tap. Without
+   * this, the score/particle burst fired the moment you tapped, while the
+   * hammer was still mid wind-up — the mole looked hit before the hammer
+   * ever arrived. */
+  private pendingWhack: Hole | null = null;
 
   private moles: LoadedAsset[] = [];
   private hazards: LoadedAsset[] = [];
@@ -120,8 +217,9 @@ class WhackGame implements GameModule {
     this.elapsed = 0;
     this.ended = false;
     this.floatingTexts = [];
-    this.hammerHits = [];
-    this.groundTexture = null;
+    this.particles = [];
+    this.hammer = null;
+    this.pendingWhack = null;
 
     this.moles = ctx.roles.mole?.assets ?? [];
     this.hazards = ctx.roles.hazard?.assets ?? [];
@@ -143,9 +241,17 @@ class WhackGame implements GameModule {
 
     // --- pop timers ---
     for (const hole of this.holes) {
-      if (!hole.occupant) continue;
-      hole.occupant.timer -= dt;
-      if (hole.occupant.timer <= 0) hole.occupant = null; // ducked away unmissed, no penalty
+      const occupant = hole.occupant;
+      if (!occupant) continue;
+      if (occupant.hitT !== null) {
+        // Already whacked — sinking through the short bonk animation
+        // (drawHole handles the visual), not the normal duck-away timer.
+        occupant.hitT += dt;
+        if (occupant.hitT >= HIT_SINK_SEC) hole.occupant = null;
+        continue;
+      }
+      occupant.timer -= dt;
+      if (occupant.timer <= 0) hole.occupant = null; // ducked away unmissed, no penalty
     }
 
     // --- spawning ---
@@ -159,39 +265,54 @@ class WhackGame implements GameModule {
 
     // --- input: tap a hole ---
     if (input.justPressed) {
-      const hitRadius = (this.cellSize * HOLE_RADIUS_FACTOR + HOLE_ITEM_SIZE / 2) * 0.5 * HIT_PAD_FACTOR;
-      let struck: Hole | null = null;
+      const hitRadius = (this.cellSize * HOLE_RADIUS_X_FACTOR + HOLE_ITEM_SIZE / 2) * 0.5 * HIT_PAD_FACTOR;
+      let hitHole: Hole | null = null;
       for (const hole of this.holes) {
-        if (!hole.occupant) continue;
+        if (!hole.occupant || hole.occupant.hitT !== null) continue;
         const dx = input.pointerX - hole.cx;
         const dy = input.pointerY - hole.cy;
         if (dx * dx + dy * dy <= hitRadius * hitRadius) {
-          struck = hole; // one tap hits at most one hole
-          break;
+          hitHole = hole;
+          break; // one tap hits at most one hole
         }
       }
-
-      // The hammer swings on every tap. A miss still strikes — where the
-      // player actually tapped — so a whiff reads as a missed swing rather
-      // than a dead click.
-      this.hammerHits.push({
-        x: struck ? struck.cx : input.pointerX,
-        y: struck ? struck.cy : input.pointerY,
-        life: HAMMER_ANIM_SEC,
-        maxLife: HAMMER_ANIM_SEC,
-        landed: struck !== null,
-      });
-
-      if (struck) this.whack(struck);
+      // The hammer slams down wherever the player tapped, hit or miss — a
+      // whiffed swing is still feedback that the tap registered. A landed
+      // hit snaps the slam to the hole's centre instead of the raw tap
+      // point, so the hammer visually lands square on the mole rather than
+      // wherever inside the generous touch-friendly hit pad the tap fell.
+      // A fast double-tap can land before the previous swing ever reaches
+      // HAMMER_PHASE_STRIKE — resolve it now rather than silently dropping
+      // that hit when this new swing overwrites pendingWhack below.
+      if (this.pendingWhack) this.whack(this.pendingWhack);
+      this.hammer = { x: hitHole?.cx ?? input.pointerX, y: hitHole?.cy ?? input.pointerY, t: 0 };
+      this.pendingWhack = hitHole;
     }
+
+    if (this.hammer) {
+      const wasBeforeStrike = this.hammer.t < HAMMER_PHASE_STRIKE;
+      this.hammer.t += dt / HAMMER_SWING_SEC;
+      // Resolve the actual hit exactly when the hammer's own animation
+      // reaches the target, not at the instant of the tap — see
+      // pendingWhack's doc comment.
+      if (this.pendingWhack && wasBeforeStrike && this.hammer.t >= HAMMER_PHASE_STRIKE) {
+        this.whack(this.pendingWhack);
+        this.pendingWhack = null;
+      }
+      if (this.hammer.t >= 1) this.hammer = null;
+    }
+
+    this.particles = this.particles.filter((p) => {
+      p.vy += 360 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+      return p.life > 0;
+    });
 
     this.floatingTexts = this.floatingTexts.filter((t) => {
       t.life -= dt;
       return t.life > 0;
-    });
-    this.hammerHits = this.hammerHits.filter((h) => {
-      h.life -= dt;
-      return h.life > 0;
     });
 
     const durationSec = tuning.durationSec ?? 35;
@@ -205,20 +326,7 @@ class WhackGame implements GameModule {
     const { stage, brand } = this.ctx;
 
     if (this.hasStageBackgroundFallback) {
-      const gradient = c.createLinearGradient(0, 0, 0, stage.height);
-      gradient.addColorStop(0, brand.background);
-      gradient.addColorStop(1, shade(brand.background, -0.06));
-      c.fillStyle = gradient;
-      c.fillRect(0, 0, stage.width, stage.height);
-
-      const texture = this.ensureGroundTexture(c);
-      if (texture) {
-        c.save();
-        c.globalAlpha = 0.5;
-        c.fillStyle = texture;
-        c.fillRect(0, 0, stage.width, stage.height);
-        c.restore();
-      }
+      drawBrandBackground(c, stage.width, stage.height, brand.background, brand.accent);
     } else {
       const bg = this.ctx.roles.stageBackground?.assets[0]?.image ?? null;
       if (bg) c.drawImage(bg, 0, 0, stage.width, stage.height);
@@ -226,6 +334,16 @@ class WhackGame implements GameModule {
 
     for (const hole of this.holes) {
       this.drawHole(c, hole);
+    }
+
+    for (const p of this.particles) {
+      c.save();
+      c.globalAlpha = Math.max(0, p.life / p.maxLife);
+      c.fillStyle = p.color;
+      c.beginPath();
+      c.arc(p.x, p.y, 3, 0, Math.PI * 2);
+      c.fill();
+      c.restore();
     }
 
     for (const t of this.floatingTexts) {
@@ -239,56 +357,15 @@ class WhackGame implements GameModule {
       c.restore();
     }
 
-    for (const hit of this.hammerHits) {
-      this.drawHammer(c, hit);
-    }
+    if (this.hammer) this.drawHammer(c, this.hammer);
   }
 
   teardown(): void {
     this.holes = [];
     this.floatingTexts = [];
-    this.hammerHits = [];
-    this.groundTexture = null;
-  }
-
-  /** A small tiled speckle-and-scuff pattern, generated once per game instance
-   * and reused as a fillRect pattern — cheaper than redrawing speckles in a
-   * loop every frame. Only used behind the generated gradient fallback; a
-   * real stageBackground asset already has its own texture. */
-  private ensureGroundTexture(c: CanvasRenderingContext2D): CanvasPattern | null {
-    if (this.groundTexture) return this.groundTexture;
-
-    const tile = document.createElement("canvas");
-    tile.width = 56;
-    tile.height = 56;
-    const tc = tile.getContext("2d");
-    if (!tc) return null;
-
-    const { brand } = this.ctx;
-    const dark = shade(brand.foreground, 0.7);
-    tc.strokeStyle = dark + "33";
-    tc.lineWidth = 2;
-    tc.beginPath();
-    tc.moveTo(0, 18);
-    tc.lineTo(56, 12);
-    tc.moveTo(4, 44);
-    tc.lineTo(50, 50);
-    tc.stroke();
-
-    tc.fillStyle = dark + "40";
-    for (const [x, y, r] of [
-      [10, 8, 2.4],
-      [40, 20, 1.6],
-      [22, 34, 2],
-      [48, 42, 1.8],
-    ] as const) {
-      tc.beginPath();
-      tc.arc(x, y, r, 0, Math.PI * 2);
-      tc.fill();
-    }
-
-    this.groundTexture = c.createPattern(tile, "repeat");
-    return this.groundTexture;
+    this.particles = [];
+    this.hammer = null;
+    this.pendingWhack = null;
   }
 
   maxRealisticScore(tuning: Record<string, number>): number {
@@ -332,17 +409,24 @@ class WhackGame implements GameModule {
     const asset = pool.length > 0 ? pool[Math.floor(random() * pool.length)]! : null;
 
     const upTimeSec = tuning.upTimeSec ?? 0.9;
-    hole.occupant = { kind, asset: asset ?? null, fullDuration: upTimeSec, timer: upTimeSec };
+    hole.occupant = { kind, asset: asset ?? null, fullDuration: upTimeSec, timer: upTimeSec, hitT: null };
   }
 
   private whack(hole: Hole): void {
     const occupant = hole.occupant;
-    if (!occupant) return;
-    hole.occupant = null;
+    if (!occupant || occupant.hitT !== null) return;
+    // Don't clear the hole yet — drawHole plays a brief bonk-and-sink
+    // animation first (update()'s hitT-driven branch clears it once that
+    // finishes), so a successful tap reads as an impact, not a disappearance.
+    occupant.hitT = 0;
 
     if (occupant.kind === "mole") {
       this.ctx.addScore(POINTS_PER_WHACK);
+      // A generated-shape fallback (no real asset) is never "engaged with" —
+      // same rule as every other template's hazards/decoys/synthesized-
+      // filler exclusion (see CLAUDE.md).
       if (occupant.asset) this.ctx.recordEngagement(occupant.asset.id);
+      this.spawnParticles(hole.cx, hole.cy - this.cellSize * 0.2, this.ctx.brand.accent);
       this.floatingTexts.push({
         x: hole.cx,
         y: hole.cy - this.cellSize * 0.3,
@@ -353,6 +437,7 @@ class WhackGame implements GameModule {
       });
     } else {
       this.ctx.addScore(-HAZARD_PENALTY);
+      this.spawnParticles(hole.cx, hole.cy - this.cellSize * 0.2, "#c94b4b");
       this.floatingTexts.push({
         x: hole.cx,
         y: hole.cy - this.cellSize * 0.3,
@@ -364,215 +449,273 @@ class WhackGame implements GameModule {
     }
   }
 
+  private spawnParticles(x: number, y: number, color: string): void {
+    const { random } = this.ctx;
+    for (let i = 0; i < PARTICLES_PER_HIT; i++) {
+      const angle = (i / PARTICLES_PER_HIT) * Math.PI * 2 + random() * 0.4;
+      const speed = 70 + random() * 110;
+      this.particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 70,
+        life: 0.3 + random() * 0.25,
+        maxLife: 0.55,
+        color,
+      });
+    }
+  }
+
+  /** Draws one hole: a raised dirt mound with a dark opening (the "3D
+   * burrow"), then whatever's currently occupying it. An occupant's
+   * vertical position — not just its scale — animates: it slides up out
+   * of the dark opening as it pops (clipped to the opening while still
+   * mostly below ground, per CLIP_UNTIL, so it genuinely looks like it's
+   * emerging rather than fading in above the hole), and slides back down
+   * into it when it ducks away or gets whacked. */
   private drawHole(c: CanvasRenderingContext2D, hole: Hole): void {
-    const { brand } = this.ctx;
-    const holeRadius = this.cellSize * HOLE_RADIUS_FACTOR;
-    const cx = hole.cx;
-    const cy = hole.cy + holeRadius * 0.2;
+    const holeRadiusX = this.cellSize * HOLE_RADIUS_X_FACTOR;
+    const holeRadiusY = this.cellSize * HOLE_RADIUS_Y_FACTOR;
+    const moundRadiusX = this.cellSize * MOUND_RADIUS_X_FACTOR;
+    const moundRadiusY = this.cellSize * MOUND_RADIUS_Y_FACTOR;
 
-    // Depth, built from back to front, never asset-dependent so the grid
-    // reads clearly even before anything has popped:
-    //   1. a soft cast shadow (the mound blocking light behind it)
-    //   2. a raised dirt mound around the hole
-    //   3. the burrow interior, always much darker than the ground and
-    //      lighter toward the near (bottom) lip where light spills in
-    //   4. a lit highlight along the mound's back edge
-    // Everything is derived from brand.background so the hole stays a dark
-    // void on a light brand and clamps to black (against a lightened mound)
-    // on a dark one — never a light disc that reads as a lid.
-    const lightGround = brightness(brand.background) > 0.5;
-
+    // Ambient contact shadow, grounding the mound against the backdrop.
     c.save();
+    c.globalAlpha = 0.18;
+    c.fillStyle = "#000000";
     c.beginPath();
-    c.ellipse(cx, cy + holeRadius * 0.3, holeRadius * 1.2, holeRadius * 0.45, 0, 0, Math.PI * 2);
-    c.fillStyle = "rgba(0,0,0,0.16)";
+    c.ellipse(hole.cx, hole.cy + moundRadiusY * 0.35, moundRadiusX * 1.05, moundRadiusY * 0.7, 0, 0, Math.PI * 2);
     c.fill();
     c.restore();
 
-    c.save();
+    // Raised dirt mound — a radial gradient standing in for a directional
+    // light hitting a bump, so the ring around the opening reads as raised
+    // ground rather than a flat coloured halo.
+    const moundGrad = c.createRadialGradient(
+      hole.cx - moundRadiusX * 0.25,
+      hole.cy - moundRadiusY * 0.3,
+      moundRadiusX * 0.1,
+      hole.cx,
+      hole.cy,
+      moundRadiusX,
+    );
+    moundGrad.addColorStop(0, DIRT_LIGHT);
+    moundGrad.addColorStop(0.6, DIRT_MID);
+    moundGrad.addColorStop(1, DIRT_DARK);
+    c.fillStyle = moundGrad;
     c.beginPath();
-    c.ellipse(cx, cy, holeRadius * 1.14, holeRadius * 0.68, 0, 0, Math.PI * 2);
-    c.fillStyle = shade(brand.background, lightGround ? -0.12 : 0.16);
+    c.ellipse(hole.cx, hole.cy, moundRadiusX, moundRadiusY, 0, 0, Math.PI * 2);
     c.fill();
-    c.restore();
 
-    const burrowGradient = c.createRadialGradient(cx, cy + holeRadius * 0.22, holeRadius * 0.06, cx, cy, holeRadius);
-    burrowGradient.addColorStop(0, shade(brand.background, lightGround ? -0.52 : -0.9));
-    burrowGradient.addColorStop(1, shade(brand.background, lightGround ? -0.82 : -1));
-    c.save();
+    // The dark opening — a radial gradient sinking to near-black at the
+    // centre, the actual "looking down into a hole" cue.
+    const holeGrad = c.createRadialGradient(
+      hole.cx,
+      hole.cy - holeRadiusY * 0.2,
+      1,
+      hole.cx,
+      hole.cy,
+      holeRadiusX,
+    );
+    holeGrad.addColorStop(0, HOLE_DEEP);
+    holeGrad.addColorStop(1, DIRT_DARK);
+    c.fillStyle = holeGrad;
     c.beginPath();
-    c.ellipse(cx, cy, holeRadius, holeRadius * 0.55, 0, 0, Math.PI * 2);
-    c.fillStyle = burrowGradient;
+    c.ellipse(hole.cx, hole.cy, holeRadiusX, holeRadiusY, 0, 0, Math.PI * 2);
     c.fill();
-    c.restore();
 
+    // A thin lit lip along the near (bottom) rim of the opening — the
+    // single highlight that sells the opening as having depth/a raised
+    // edge, rather than being a flat dark ellipse painted on the mound.
     c.save();
+    c.globalAlpha = 0.5;
+    c.strokeStyle = DIRT_LIGHT;
+    c.lineWidth = Math.max(1, holeRadiusY * 0.16);
     c.beginPath();
-    c.ellipse(cx, cy, holeRadius * 1.14, holeRadius * 0.68, 0, Math.PI, Math.PI * 2);
-    c.strokeStyle = "#ffffff66";
-    c.lineWidth = 2;
+    c.ellipse(hole.cx, hole.cy, holeRadiusX * 0.96, holeRadiusY * 0.96, 0, Math.PI * 0.08, Math.PI * 0.92);
     c.stroke();
     c.restore();
 
-    if (!hole.occupant) return;
+    const occupant = hole.occupant;
+    if (!occupant) return;
 
-    const elapsedSinceSpawn = hole.occupant.fullDuration - hole.occupant.timer;
-    let scale = 1;
-    if (elapsedSinceSpawn < POP_ANIM_SEC) {
-      scale = elapsedSinceSpawn / POP_ANIM_SEC;
-    } else if (hole.occupant.timer < POP_ANIM_SEC) {
-      scale = hole.occupant.timer / POP_ANIM_SEC;
-    }
-    scale = Math.max(0, Math.min(1, scale));
-    if (scale <= 0) return;
-
-    const size = HOLE_ITEM_SIZE * scale;
-    const half = size / 2;
-    const itemCy = hole.cy - holeRadius * 0.15;
-
-    if (hole.occupant.asset?.image) {
-      drawAssetContain(c, hole.occupant.asset, hole.cx - half, itemCy - half, size, size);
-      this.drawPointBadge(c, hole.occupant.kind, hole.cx, itemCy - half, scale);
+    if (occupant.hitT !== null) {
+      this.drawBonkedOccupant(c, hole, occupant, holeRadiusX, holeRadiusY);
       return;
     }
 
-    c.save();
-    c.beginPath();
-    if (hole.occupant.kind === "hazard") {
-      c.fillStyle = brand.secondaryAccent || "#3a3a3a";
-      roundedRect(c, hole.cx - half, itemCy - half, size, size, 10 * scale);
-      c.fill();
-    } else {
-      c.fillStyle = brand.accent;
-      c.arc(hole.cx, itemCy, half, 0, Math.PI * 2);
-      c.fill();
-    }
-    c.restore();
+    // linearProgress drives the clip cutoff (still emerging vs. fully out);
+    // eased drives the actual scale/position, so the pop has a lively
+    // spring to it instead of a linear slide.
+    const elapsedSinceSpawn = occupant.fullDuration - occupant.timer;
+    const rising = elapsedSinceSpawn < RISE_SEC;
+    const linearProgress = rising
+      ? clamp01(elapsedSinceSpawn / RISE_SEC)
+      : clamp01(occupant.timer / RISE_SEC);
+    if (linearProgress <= 0 && !rising) return;
+    const eased = rising ? easeOutBack(linearProgress) : easeInQuad(linearProgress);
 
-    this.drawPointBadge(c, hole.occupant.kind, hole.cx, itemCy - half, scale);
+    this.drawOccupant(c, hole, occupant, eased, linearProgress, holeRadiusX, holeRadiusY);
   }
 
-  /** What this pop is worth, on a pill above it — so a player can read the
-   * cost of a decoy before swinging rather than only after being penalised.
-   * Rides the same pop-in/duck-out `scale` as the sprite it labels. */
-  private drawPointBadge(
+  private drawOccupant(
     c: CanvasRenderingContext2D,
-    kind: "mole" | "hazard",
+    hole: Hole,
+    occupant: Occupant,
+    eased: number,
+    linearProgress: number,
+    holeRadiusX: number,
+    holeRadiusY: number,
+  ): void {
+    const restY = hole.cy - holeRadiusY * 1.05;
+    const hiddenY = hole.cy + holeRadiusY * 0.6;
+    const itemCy = hiddenY + (restY - hiddenY) * eased;
+    const scale = Math.max(0.15, 0.5 + 0.5 * eased);
+    const size = HOLE_ITEM_SIZE * scale;
+    const half = size / 2;
+
+    // Contact shadow on the mound, fading in as the occupant rises clear
+    // of the opening — otherwise a fully-popped mole looks like it's
+    // floating above the ground instead of standing on it.
+    if (linearProgress > CLIP_UNTIL) {
+      const shadowAlpha = ((linearProgress - CLIP_UNTIL) / (1 - CLIP_UNTIL)) * 0.28;
+      c.save();
+      c.globalAlpha = shadowAlpha;
+      c.fillStyle = "#000000";
+      c.beginPath();
+      c.ellipse(hole.cx, hole.cy - holeRadiusY * 0.1, holeRadiusX * 0.7, holeRadiusY * 0.5, 0, 0, Math.PI * 2);
+      c.fill();
+      c.restore();
+    }
+
+    const stillEmerging = linearProgress < CLIP_UNTIL;
+    if (stillEmerging) {
+      c.save();
+      c.beginPath();
+      c.ellipse(hole.cx, hole.cy, holeRadiusX, holeRadiusY, 0, 0, Math.PI * 2);
+      c.clip();
+    }
+
+    this.drawOccupantSprite(c, occupant, hole.cx, itemCy, half, scale);
+
+    if (stillEmerging) c.restore();
+  }
+
+  /** The short "bonk" reaction once a hole's occupant has been tapped: an
+   * instant squash-flat (wide/short instead of the round resting pose) that
+   * sinks straight down into the opening — the visual payoff for a
+   * successful hit, instead of the occupant just vanishing on contact. */
+  private drawBonkedOccupant(
+    c: CanvasRenderingContext2D,
+    hole: Hole,
+    occupant: Occupant,
+    holeRadiusX: number,
+    holeRadiusY: number,
+  ): void {
+    const t = clamp01((occupant.hitT ?? 0) / HIT_SINK_SEC);
+    const restY = hole.cy - holeRadiusY * 1.05;
+    const itemCy = restY + (hole.cy - restY) * t;
+    const scaleY = Math.max(0.25, 1 - t * 0.9);
+    const scaleX = 1 + (1 - scaleY) * 0.5;
+    const half = HOLE_ITEM_SIZE / 2;
+
+    c.save();
+    c.beginPath();
+    c.ellipse(hole.cx, hole.cy, holeRadiusX, holeRadiusY, 0, 0, Math.PI * 2);
+    c.clip();
+    c.translate(hole.cx, itemCy);
+    c.scale(scaleX, scaleY);
+    c.translate(-hole.cx, -itemCy);
+    this.drawOccupantSprite(c, occupant, hole.cx, itemCy, half, 1);
+    c.restore();
+  }
+
+  private drawOccupantSprite(
+    c: CanvasRenderingContext2D,
+    occupant: Occupant,
     cx: number,
-    itemTop: number,
+    cy: number,
+    half: number,
     scale: number,
   ): void {
     const { brand } = this.ctx;
-    const text = kind === "mole" ? `+${POINTS_PER_WHACK}` : `-${HAZARD_PENALTY}`;
-    const fill = kind === "mole" ? brand.accent : brand.secondaryAccent || "#c0392b";
-    const fontSize = Math.max(11, this.cellSize * 0.13) * scale;
-    if (fontSize < 6) return;
+    const size = half * 2;
 
-    c.save();
-    c.font = `800 ${fontSize}px ${fontFamilyForCanvas(brand.fontFamily)}`;
-    c.textAlign = "center";
-    c.textBaseline = "middle";
-
-    const padX = fontSize * 0.55;
-    const width = c.measureText(text).width + padX * 2;
-    const height = fontSize * 1.5;
-    // Top-row pops sit close enough to the stage edge that the pill would
-    // otherwise clip off-canvas.
-    const cy = Math.max(height / 2 + 2, itemTop - height * 0.75);
-
-    c.fillStyle = "rgba(0,0,0,0.18)";
-    roundedRect(c, cx - width / 2, cy - height / 2 + 2, width, height, height / 2);
-    c.fill();
-
-    c.fillStyle = fill;
-    roundedRect(c, cx - width / 2, cy - height / 2, width, height, height / 2);
-    c.fill();
-
-    c.fillStyle = brightness(fill) > 0.6 ? "#111111" : "#ffffff";
-    c.fillText(text, cx, cy + fontSize * 0.05);
-    c.restore();
-  }
-
-  /** A quick vector hammer — no image asset needed, matching the
-   * generated-shape style already used for the burrow/hazard fallback.
-   *
-   * The sprite is a normal hammer: handle rising from the grip, head sitting
-   * on top of it. The grip is a *fixed* point up and to the right of the
-   * target, and the hammer pivots around it, so the head starts raised high
-   * above the target and arcs down onto it — the head travels the whole
-   * distance rather than the sprite just tilting in place. Impact is sold by
-   * accelerating into it, squashing the head against the target, a burst on
-   * the ground plane, and a small recoil as it lifts away. */
-  private drawHammer(c: CanvasRenderingContext2D, hit: HammerHit): void {
-    const t = 1 - hit.life / hit.maxLife;
-    const swinging = t < HAMMER_SWING_FRACTION;
-    const swingT = Math.min(1, t / HAMMER_SWING_FRACTION);
-    const afterT = swinging ? 0 : (t - HAMMER_SWING_FRACTION) / (1 - HAMMER_SWING_FRACTION);
-
-    const angleDeg = swinging
-      ? HAMMER_START_DEG + (HAMMER_IMPACT_DEG - HAMMER_START_DEG) * swingT * swingT // accelerate into the hit
-      : HAMMER_IMPACT_DEG + HAMMER_RECOIL_DEG * (1 - (1 - afterT) * (1 - afterT));
-    const alpha = 1 - afterT * afterT;
-    if (alpha <= 0) return;
-
-    const headDist = this.cellSize * 0.72; // grip → head centre
-    const headW = this.cellSize * 0.42;
-    const headH = this.cellSize * 0.24;
-    // The grip is fixed wherever the hand would have to be for the head to
-    // land centred on the target at the impact angle.
-    const impactAngle = (HAMMER_IMPACT_DEG * Math.PI) / 180;
-    const gripX = hit.x - headDist * Math.sin(impactAngle);
-    const gripY = hit.y + headDist * Math.cos(impactAngle);
-
-    if (!swinging) this.drawImpactBurst(c, hit, afterT, alpha);
-
-    c.save();
-    c.globalAlpha = alpha;
-    c.translate(gripX, gripY);
-    c.rotate((angleDeg * Math.PI) / 180);
-
-    c.fillStyle = "#8a5a34";
-    roundedRect(c, -this.cellSize * 0.042, -headDist + headH * 0.2, this.cellSize * 0.084, headDist, 4);
-    c.fill();
-
-    // Head, flattening against the target on contact and relaxing over the hold.
-    const squash = swinging ? 1 : 1 - 0.18 * Math.max(0, 1 - afterT * 4);
-    c.translate(0, -headDist);
-    c.scale(1 + (1 - squash) * 0.7, squash);
-
-    c.fillStyle = this.ctx.brand.accent;
-    roundedRect(c, -headW / 2, -headH / 2, headW, headH, 5);
-    c.fill();
-    c.fillStyle = "#ffffff38";
-    roundedRect(c, -headW / 2 + 3, -headH / 2 + 3, headW - 6, headH * 0.3, 3);
-    c.fill();
-
-    c.restore();
-  }
-
-  /** The shock of the landing, spreading along the ground plane (same ellipse
-   * squash as the holes) — full strength on a landed hit, faint dust on a whiff. */
-  private drawImpactBurst(c: CanvasRenderingContext2D, hit: HammerHit, afterT: number, alpha: number): void {
-    const burstT = Math.min(1, afterT * 2.2);
-    const radius = this.cellSize * (hit.landed ? 0.5 : 0.32) * (0.35 + burstT * 0.65);
-
-    c.save();
-    c.globalAlpha = alpha * (1 - burstT) * (hit.landed ? 0.9 : 0.45);
-    c.strokeStyle = hit.landed ? this.ctx.brand.accent : shade(this.ctx.brand.foreground, 0.45);
-    c.lineWidth = hit.landed ? 3 : 2;
-    c.lineCap = "round";
-
-    c.beginPath();
-    c.ellipse(hit.x, hit.y, radius, radius * 0.55, 0, 0, Math.PI * 2);
-    c.stroke();
-
-    for (let i = 0; i < 4; i++) {
-      const a = (Math.PI / 4) * (i * 2 + 1);
-      c.beginPath();
-      c.moveTo(hit.x + Math.cos(a) * radius * 0.75, hit.y + Math.sin(a) * radius * 0.75 * 0.55);
-      c.lineTo(hit.x + Math.cos(a) * radius * 1.15, hit.y + Math.sin(a) * radius * 1.15 * 0.55);
-      c.stroke();
+    if (occupant.asset?.image) {
+      withDropShadow(c, () => drawAssetContain(c, occupant.asset!, cx - half, cy - half, size, size), {
+        blur: 10 * scale,
+        offsetY: 5 * scale,
+      });
+      return;
     }
+
+    if (occupant.kind === "hazard") {
+      drawHazardShape(c, cx, cy, size, brand.secondaryAccent || "#3a3a3a");
+    } else {
+      drawMoleCreatureShape(c, cx, cy, size, brand.accent);
+    }
+  }
+
+  /** A stylised mallet that slams straight down at the last tap location
+   * (hit or miss — a whiff is still feedback the tap registered) and
+   * retracts. Purely procedural: this template has no `hammer` role/asset,
+   * and a real hammer prop wouldn't come from product extraction anyway.
+   *
+   * Local coordinate space is built around the head's CONTACT point (its
+   * bottom face) sitting at the origin: the head occupies y in
+   * [-headH, 0] and the handle extends further up from there, so
+   * translating the origin straight up/down (raised <-> swing.y) alone
+   * produces a believable vertical slam. An earlier version centred the
+   * head on the origin and rotated the whole assembly around it — with the
+   * handle hanging off one side, that rotation swung the handle out at a
+   * disconnected diagonal instead of reading as a downward hit. */
+  private drawHammer(c: CanvasRenderingContext2D, swing: HammerSwing): void {
+    const liftDistance = HAMMER_HEAD_SIZE * 2.6;
+    const { travel, angle, squash } = hammerPose(swing.t);
+    const contactY = swing.y - liftDistance * (1 - travel);
+
+    c.save();
+    c.translate(swing.x, contactY);
+    c.scale(1 + squash * 0.12, 1 - squash * 0.12);
+    c.rotate(angle);
+
+    withDropShadow(
+      c,
+      () => {
+        const headW = HAMMER_HEAD_SIZE;
+        const headH = HAMMER_HEAD_SIZE * 0.62;
+        const handleLen = HAMMER_HEAD_SIZE * 1.9;
+
+        // Handle — extends upward from the top of the head toward the
+        // (implied, off-frame) hand.
+        const handleGrad = c.createLinearGradient(0, -headH - handleLen, 0, -headH);
+        handleGrad.addColorStop(0, "#8A5F31");
+        handleGrad.addColorStop(1, "#C9975A");
+        c.fillStyle = handleGrad;
+        roundedRect(c, -headW * 0.07, -headH - handleLen, headW * 0.14, handleLen, headW * 0.07);
+        c.fill();
+
+        // Head — a wooden/rubber mallet block, bottom face at the origin
+        // (the actual contact point), with a lighter top face for a
+        // simple two-tone 3D read.
+        const headGrad = c.createLinearGradient(-headW / 2, -headH, -headW / 2, 0);
+        headGrad.addColorStop(0, "#E8A24A");
+        headGrad.addColorStop(1, "#B9702B");
+        c.fillStyle = headGrad;
+        roundedRect(c, -headW / 2, -headH, headW, headH, headH * 0.28);
+        c.fill();
+
+        c.fillStyle = "rgba(255,255,255,0.35)";
+        roundedRect(c, -headW / 2 + headW * 0.08, -headH + headH * 0.1, headW * 0.5, headH * 0.28, headH * 0.14);
+        c.fill();
+
+        // Metal collar band, just below the handle / above the head base.
+        c.fillStyle = "#8B8F98";
+        c.fillRect(-headW * 0.12, -headH * 0.34, headW * 0.24, headH * 0.22);
+      },
+      { blur: 8, offsetY: 4 },
+    );
+
     c.restore();
   }
 }
@@ -586,29 +729,6 @@ function roundedRect(c: CanvasRenderingContext2D, x: number, y: number, w: numbe
   c.arcTo(x, y + h, x, y, radius);
   c.arcTo(x, y, x + w, y, radius);
   c.closePath();
-}
-
-/** Perceived brightness (0..1) of a #rrggbb hex colour. */
-function brightness(hex: string): number {
-  const clean = hex.replace("#", "");
-  if (clean.length !== 6) return 0.5;
-  const num = parseInt(clean, 16);
-  return (0.299 * ((num >> 16) & 0xff) + 0.587 * ((num >> 8) & 0xff) + 0.114 * (num & 0xff)) / 255;
-}
-
-/** Darkens (negative amt) or lightens a #rrggbb hex colour by `amt` (-1..1). */
-function shade(hex: string, amt: number): string {
-  const clean = hex.replace("#", "");
-  if (clean.length !== 6) return hex;
-  const num = parseInt(clean, 16);
-  let r = (num >> 16) & 0xff;
-  let g = (num >> 8) & 0xff;
-  let b = num & 0xff;
-  const adjust = (channel: number) => Math.min(255, Math.max(0, Math.round(channel + 255 * amt)));
-  r = adjust(r);
-  g = adjust(g);
-  b = adjust(b);
-  return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function fontFamilyForCanvas(fontFamily: string): string {

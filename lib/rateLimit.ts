@@ -88,6 +88,13 @@ export function checkRateLimit(params: {
   return ipResult;
 }
 
+/** Public analytics event ingest — generous per-IP bucket for embed traffic. */
+const ANALYTICS_IP_CONFIG: RateLimitConfig = { limit: 120, windowMs: 60_000 };
+
+export function checkAnalyticsEventRateLimit(ip: string): RateLimitResult {
+  return check(`analytics:ip:${ip}`, ANALYTICS_IP_CONFIG);
+}
+
 /** Test/dev helper. */
 export function resetRateLimits(): void {
   buckets.clear();

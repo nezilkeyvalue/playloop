@@ -24,6 +24,7 @@ import { isCouponExpired, originalTierIndexFromSortedIndex } from "@/lib/engine/
 import { generateSlug } from "@/lib/slug";
 import { resolveMaxRealisticScoreForSpec } from "@/lib/engine/scoreCeiling";
 import type {
+  AnalyticsEvent,
   CouponRecord,
   CouponTierStats,
   GameRecord,
@@ -36,6 +37,14 @@ import type {
   PlayRecord,
   RewardTier,
 } from "@/lib/engine/types";
+import type {
+  AccountAnalytics,
+  AnalyticsDateRange,
+  GameAnalytics,
+  GameAnalyticsEventRecord,
+} from "@/lib/analytics/types";
+import { inAnalyticsRange } from "@/lib/analytics/types";
+import { buildAccountAnalytics, buildGameAnalytics } from "@/lib/analytics/aggregate";
 
 // ---------------------------------------------------------------------------
 // Dev-mode storage: a tiny JSON-file-per-table store under ./dev-data/.
@@ -91,12 +100,14 @@ const gamesMutex = createMutex();
 const jobsMutex = createMutex();
 const playsMutex = createMutex();
 const leadsMutex = createMutex();
+const analyticsEventsMutex = createMutex();
 
 const GAMES_FILE = "games.json";
 const JOBS_FILE = "jobs.json";
 const PLAYS_FILE = "plays.json";
 const LEADS_FILE = "leads.json";
 const COUPONS_FILE = "coupons.json";
+const ANALYTICS_EVENTS_FILE = "game_analytics_events.json";
 
 // ---------------------------------------------------------------------------
 // Supabase row <-> camelCase mapping (schema.sql columns are snake_case).
@@ -263,6 +274,26 @@ interface LeadRow {
   phone: string | null;
   consent: boolean;
   created_at: string;
+}
+
+interface AnalyticsEventRow {
+  id: string;
+  game_id: string;
+  play_id: string | null;
+  event: string;
+  detail: Record<string, unknown> | null;
+  created_at: string;
+}
+
+function analyticsEventRowToRecord(row: AnalyticsEventRow): GameAnalyticsEventRecord {
+  return {
+    id: row.id,
+    gameId: row.game_id,
+    playId: row.play_id,
+    event: row.event as AnalyticsEvent,
+    detail: row.detail,
+    createdAt: row.created_at,
+  };
 }
 
 function leadRowToRecord(row: LeadRow): LeadRecord {
@@ -490,6 +521,13 @@ export async function deleteGame(id: string): Promise<void> {
       const rows = await readDevTable<LeadRecord>(LEADS_FILE);
       await writeDevTable(LEADS_FILE, rows.filter((l) => l.gameId !== id));
     });
+    await analyticsEventsMutex.run(async () => {
+      const rows = await readDevTable<GameAnalyticsEventRecord>(ANALYTICS_EVENTS_FILE);
+      await writeDevTable(
+        ANALYTICS_EVENTS_FILE,
+        rows.filter((e) => e.gameId !== id),
+      );
+    });
     return;
   }
   const supabase = getSupabaseServerClient();
@@ -584,6 +622,35 @@ export async function getJob(id: string): Promise<Job | null> {
   return data ? jobRowToRecord(data as JobRow) : null;
 }
 
+/**
+ * The job that originally generated a game — the only place `AssetInventory`
+ * survives (games.spec never stores it). Used by the template-switch route
+ * to re-run the matcher against the site's real assets. Manual-mode games
+ * never had a job at all (app/api/games/route.ts creates them directly), so
+ * `null` here is an expected, honest answer, not an error condition.
+ * Most-recent by `created_at` in case a game somehow has more than one
+ * associated job row — there's no code path that produces that today, but
+ * "newest" is the safer tie-break if it ever does.
+ */
+export async function getJobByGameId(gameId: string): Promise<Job | null> {
+  if (isDevMode()) {
+    const rows = await readDevTable<Job>(JOBS_FILE);
+    const matches = rows.filter((j) => j.gameId === gameId);
+    matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    return matches[0] ?? null;
+  }
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("*")
+    .eq("game_id", gameId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? jobRowToRecord(data as JobRow) : null;
+}
+
 // ---------------------------------------------------------------------------
 // Plays
 // ---------------------------------------------------------------------------
@@ -663,11 +730,22 @@ export async function getPlayBySession(sessionToken: string): Promise<PlayRecord
  */
 export async function startPlay(
   gameId: string,
-  meta?: { referrer?: string | null; device?: "mobile" | "desktop" | null },
+  meta?: {
+    referrer?: string | null;
+    device?: "mobile" | "desktop" | null;
+    replayOfSessionToken?: string | null;
+  },
 ): Promise<{ sessionToken: string; playId: string }> {
   const id = randomUUID();
   const sessionToken = nanoid(24);
   const now = new Date().toISOString();
+
+  let replayOf: string | null = null;
+  if (meta?.replayOfSessionToken) {
+    const prior = await findPlayBySession(meta.replayOfSessionToken);
+    if (prior && prior.gameId === gameId) replayOf = prior.id;
+  }
+
   const record: PlayRecord = {
     id,
     gameId,
@@ -676,7 +754,7 @@ export async function startPlay(
     finishedAt: null,
     score: null,
     tierIndex: null,
-    replayOf: null,
+    replayOf,
     referrer: meta?.referrer ?? null,
     device: meta?.device ?? null,
     country: null,
@@ -854,8 +932,214 @@ export async function recordLead(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Analytics events (build spec §16)
+// ---------------------------------------------------------------------------
+
+export async function recordAnalyticsEvent(input: {
+  gameId: string;
+  playId?: string | null;
+  event: AnalyticsEvent;
+  detail?: Record<string, unknown> | null;
+}): Promise<GameAnalyticsEventRecord> {
+  const now = new Date().toISOString();
+  const record: GameAnalyticsEventRecord = {
+    id: randomUUID(),
+    gameId: input.gameId,
+    playId: input.playId ?? null,
+    event: input.event,
+    detail: input.detail ?? null,
+    createdAt: now,
+  };
+
+  if (isDevMode()) {
+    return analyticsEventsMutex.run(async () => {
+      const rows = await readDevTable<GameAnalyticsEventRecord>(ANALYTICS_EVENTS_FILE);
+      rows.push(record);
+      await writeDevTable(ANALYTICS_EVENTS_FILE, rows);
+      return record;
+    });
+  }
+
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("game_analytics_events")
+    .insert({
+      id: record.id,
+      game_id: record.gameId,
+      play_id: record.playId,
+      event: record.event,
+      detail: record.detail,
+      created_at: record.createdAt,
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return analyticsEventRowToRecord(data as AnalyticsEventRow);
+}
+
+export async function listAnalyticsEventsForGames(
+  gameIds: string[],
+  range: AnalyticsDateRange,
+): Promise<GameAnalyticsEventRecord[]> {
+  if (gameIds.length === 0) return [];
+
+  if (isDevMode()) {
+    const rows = await readDevTable<GameAnalyticsEventRecord>(ANALYTICS_EVENTS_FILE);
+    return rows.filter(
+      (e) => gameIds.includes(e.gameId) && inAnalyticsRange(e.createdAt, range),
+    );
+  }
+
+  const supabase = getSupabaseServerClient();
+  let query = supabase
+    .from("game_analytics_events")
+    .select("*")
+    .in("game_id", gameIds)
+    .order("created_at", { ascending: true });
+  if (range.from) query = query.gte("created_at", range.from);
+  if (range.to) query = query.lte("created_at", range.to);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data as AnalyticsEventRow[]).map(analyticsEventRowToRecord);
+}
+
+export async function listPlaysForGames(
+  gameIds: string[],
+  range: AnalyticsDateRange,
+): Promise<PlayRecord[]> {
+  if (gameIds.length === 0) return [];
+
+  if (isDevMode()) {
+    const rows = await readDevTable<PlayRecord>(PLAYS_FILE);
+    return rows.filter(
+      (p) => gameIds.includes(p.gameId) && inAnalyticsRange(p.startedAt, range),
+    );
+  }
+
+  const supabase = getSupabaseServerClient();
+  let query = supabase.from("plays").select("*").in("game_id", gameIds);
+  if (range.from) query = query.gte("started_at", range.from);
+  if (range.to) query = query.lte("started_at", range.to);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data as PlayRow[]).map(playRowToRecord);
+}
+
+export async function listLeadsForGames(
+  gameIds: string[],
+  range: AnalyticsDateRange,
+): Promise<LeadRecord[]> {
+  if (gameIds.length === 0) return [];
+
+  if (isDevMode()) {
+    const rows = await readDevTable<LeadRecord>(LEADS_FILE);
+    return rows.filter(
+      (l) => gameIds.includes(l.gameId) && inAnalyticsRange(l.createdAt, range),
+    );
+  }
+
+  const supabase = getSupabaseServerClient();
+  let query = supabase.from("leads").select("*").in("game_id", gameIds);
+  if (range.from) query = query.gte("created_at", range.from);
+  if (range.to) query = query.lte("created_at", range.to);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data as LeadRow[]).map(leadRowToRecord);
+}
+
+export async function listClaimedCouponsForGames(
+  gameIds: string[],
+): Promise<{ playId: string; gameId: string }[]> {
+  if (gameIds.length === 0) return [];
+
+  if (isDevMode()) {
+    const rows = await readDevTable<CouponRecord>(COUPONS_FILE);
+    return rows
+      .filter((c) => gameIds.includes(c.gameId) && c.claimedByPlayId !== null)
+      .map((c) => ({ playId: c.claimedByPlayId!, gameId: c.gameId }));
+  }
+
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("coupons")
+    .select("game_id, claimed_by_play_id")
+    .in("game_id", gameIds)
+    .not("claimed_by_play_id", "is", null);
+  if (error) throw error;
+  return (data ?? []).map((row: { game_id: string; claimed_by_play_id: string }) => ({
+    gameId: row.game_id,
+    playId: row.claimed_by_play_id,
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // Analytics (build spec §16)
 // ---------------------------------------------------------------------------
+
+export async function getGameAnalytics(
+  gameId: string,
+  range: AnalyticsDateRange,
+): Promise<GameAnalytics | null> {
+  const game = await getGameById(gameId);
+  if (!game) return null;
+
+  const gameIds = [gameId];
+  const [plays, leads, events, couponTiers, claimedRows] = await Promise.all([
+    listPlaysForGames(gameIds, range),
+    listLeadsForGames(gameIds, range),
+    listAnalyticsEventsForGames(gameIds, range),
+    getCouponStats(gameId),
+    listClaimedCouponsForGames(gameIds),
+  ]);
+
+  const claimedPlayIds = new Set(
+    claimedRows.filter((c) => c.gameId === gameId).map((c) => c.playId),
+  );
+
+  return buildGameAnalytics({
+    game,
+    range,
+    plays,
+    leads,
+    events,
+    couponTiers,
+    claimedPlayIds,
+  });
+}
+
+export async function getAccountAnalytics(
+  accountId: string | null,
+  range: AnalyticsDateRange,
+): Promise<AccountAnalytics> {
+  const games = await listGames(accountId);
+  const gameIds = games.map((g) => g.id);
+
+  const [plays, leads, events, claimedRows] = await Promise.all([
+    listPlaysForGames(gameIds, range),
+    listLeadsForGames(gameIds, range),
+    listAnalyticsEventsForGames(gameIds, range),
+    listClaimedCouponsForGames(gameIds),
+  ]);
+
+  const claimedByGame = new Map<string, Set<string>>();
+  for (const row of claimedRows) {
+    let set = claimedByGame.get(row.gameId);
+    if (!set) {
+      set = new Set();
+      claimedByGame.set(row.gameId, set);
+    }
+    set.add(row.playId);
+  }
+
+  return buildAccountAnalytics({
+    range,
+    games,
+    plays,
+    leads,
+    events,
+    claimedByGame,
+  });
+}
 
 export async function getGameStats(gameId: string): Promise<{
   plays: number;
@@ -867,78 +1151,28 @@ export async function getGameStats(gameId: string): Promise<{
   deviceSplit: { mobile: number; desktop: number };
   topReferrers: { referrer: string; count: number }[];
 }> {
-  let plays: PlayRecord[];
-  let leads: LeadRecord[];
-
-  if (isDevMode()) {
-    const [allPlays, allLeads] = await Promise.all([
-      readDevTable<PlayRecord>(PLAYS_FILE),
-      readDevTable<LeadRecord>(LEADS_FILE),
-    ]);
-    plays = allPlays.filter((p) => p.gameId === gameId);
-    leads = allLeads.filter((l) => l.gameId === gameId);
-  } else {
-    const supabase = getSupabaseServerClient();
-    const [{ data: playRows, error: playsErr }, { data: leadRows, error: leadsErr }] =
-      await Promise.all([
-        supabase.from("plays").select("*").eq("game_id", gameId),
-        supabase.from("leads").select("*").eq("game_id", gameId),
-      ]);
-    if (playsErr) throw playsErr;
-    if (leadsErr) throw leadsErr;
-    plays = (playRows as PlayRow[]).map(playRowToRecord);
-    leads = (leadRows as LeadRow[]).map(leadRowToRecord);
+  const analytics = await getGameAnalytics(gameId, { from: null, to: null });
+  if (!analytics) {
+    return {
+      plays: 0,
+      completionRate: 0,
+      avgScore: 0,
+      replayRate: 0,
+      rewardsByTier: [],
+      leadsCaptured: 0,
+      deviceSplit: { mobile: 0, desktop: 0 },
+      topReferrers: [],
+    };
   }
-
-  const game = await getGameById(gameId);
-  const totalPlays = plays.length;
-  const finished = plays.filter((p) => p.finishedAt !== null);
-  const completionRate = totalPlays > 0 ? finished.length / totalPlays : 0;
-
-  const scored = finished.filter((p) => p.score !== null) as (PlayRecord & { score: number })[];
-  const avgScore =
-    scored.length > 0 ? scored.reduce((sum, p) => sum + p.score, 0) / scored.length : 0;
-
-  const replays = plays.filter((p) => p.replayOf !== null);
-  const replayRate = totalPlays > 0 ? replays.length / totalPlays : 0;
-
-  const tierCounts = new Map<number, number>();
-  for (const p of finished) {
-    if (p.tierIndex !== null && p.tierIndex >= 0) {
-      tierCounts.set(p.tierIndex, (tierCounts.get(p.tierIndex) ?? 0) + 1);
-    }
-  }
-  const rewards = game?.spec.rewards ?? [];
-  const sortedRewards = [...rewards].sort((a, b) => a.minScore - b.minScore);
-  const rewardsByTier = sortedRewards.map((tier, idx) => ({
-    label: tier.label,
-    count: tierCounts.get(idx) ?? 0,
-  }));
-
-  const deviceSplit = { mobile: 0, desktop: 0 };
-  for (const p of plays) {
-    if (p.device === "mobile") deviceSplit.mobile += 1;
-    else if (p.device === "desktop") deviceSplit.desktop += 1;
-  }
-
-  const referrerCounts = new Map<string, number>();
-  for (const p of plays) {
-    if (p.referrer) referrerCounts.set(p.referrer, (referrerCounts.get(p.referrer) ?? 0) + 1);
-  }
-  const topReferrers = [...referrerCounts.entries()]
-    .map(([referrer, count]) => ({ referrer, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 10);
-
   return {
-    plays: totalPlays,
-    completionRate,
-    avgScore,
-    replayRate,
-    rewardsByTier,
-    leadsCaptured: leads.length,
-    deviceSplit,
-    topReferrers,
+    plays: analytics.plays,
+    completionRate: analytics.completionRate,
+    avgScore: analytics.avgScore,
+    replayRate: analytics.replayRate,
+    rewardsByTier: analytics.rewardsByTier,
+    leadsCaptured: analytics.leadsCaptured,
+    deviceSplit: analytics.deviceSplit,
+    topReferrers: analytics.topReferrers,
   };
 }
 

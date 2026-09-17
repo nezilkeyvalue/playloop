@@ -410,7 +410,7 @@ function ManualBuildWizard() {
             className="mt-0.5 accent-primary"
           />
           <span>
-            I own these images, or have permission to use them, and give PlayLoop permission
+            I own these images, or have permission to use them, and give Playloop permission
             to use them to build this game.
           </span>
         </label>

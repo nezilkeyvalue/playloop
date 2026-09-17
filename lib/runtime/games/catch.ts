@@ -23,10 +23,13 @@
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
 import {
   drawAssetContain,
+  drawBrandBackground,
+  withDropShadow,
   updateCelebrations,
   drawCelebration,
   type Celebration,
 } from "@/lib/runtime/games/spriteRender";
+import { drawGemShape, drawHazardShape, drawBasketShape } from "@/lib/runtime/games/shapeLibrary";
 
 // Scoring constants. Chosen so maxRealisticScore() at the capability's
 // *default* tuning (spawnRateHz 1.2, durationSec 40, hazardRatio 0.2) lands
@@ -54,6 +57,19 @@ interface FallingItem {
   size: number;
 }
 
+interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  color: string;
+}
+
+const PARTICLES_PER_CATCH = 8;
+const BASKET_SQUASH_DURATION = 0.16;
+
 export function maxRealisticScore(tuning: Record<string, number>): number {
   const spawnRateHz = tuning.spawnRateHz ?? 1.2;
   const durationSec = tuning.durationSec ?? 40;
@@ -74,7 +90,9 @@ class CatchGame implements GameModule {
   private ctx!: RuntimeContext;
   private items: FallingItem[] = [];
   private celebrations: Celebration[] = [];
+  private particles: Particle[] = [];
   private basketX = 0;
+  private basketSquashT = 0;
   private spawnTimer = 0;
   private elapsed = 0;
   private ended = false;
@@ -88,10 +106,12 @@ class CatchGame implements GameModule {
     this.ctx = ctx;
     this.items = [];
     this.celebrations = [];
+    this.particles = [];
     this.spawnTimer = 0;
     this.elapsed = 0;
     this.ended = false;
     this.basketX = ctx.stage.width / 2;
+    this.basketSquashT = 0;
 
     this.collectibles = ctx.roles.collectible?.assets ?? [];
     this.hazards = ctx.roles.hazard?.assets ?? [];
@@ -137,14 +157,17 @@ class CatchGame implements GameModule {
         Math.abs(item.x - this.basketX) <= halfBasket + item.size / 2;
 
       if (caught) {
+        this.basketSquashT = BASKET_SQUASH_DURATION;
         if (item.kind === "collectible") {
           this.ctx.addScore(POINTS_PER_CATCH);
+          this.spawnParticles(item.x, item.y, this.ctx.brand.accent);
           if (item.asset?.image) {
             this.ctx.recordEngagement(item.asset.id);
             this.celebrations.push({ asset: item.asset, x: item.x, y: item.y, t: 0 });
           }
         } else {
           this.ctx.addScore(-HAZARD_PENALTY);
+          this.spawnParticles(item.x, item.y, "#c94b4b");
         }
         continue; // consumed
       }
@@ -156,6 +179,14 @@ class CatchGame implements GameModule {
     }
     this.items = survivors;
     this.celebrations = updateCelebrations(this.celebrations, dt);
+    if (this.basketSquashT > 0) this.basketSquashT = Math.max(0, this.basketSquashT - dt);
+    this.particles = this.particles.filter((p) => {
+      p.vy += 420 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+      return p.life > 0;
+    });
 
     const durationSec = tuning.durationSec ?? 40;
     if (this.elapsed >= durationSec) {
@@ -169,11 +200,7 @@ class CatchGame implements GameModule {
 
     // Background
     if (this.hasStageBackgroundFallback) {
-      const gradient = c.createLinearGradient(0, 0, 0, stage.height);
-      gradient.addColorStop(0, brand.background);
-      gradient.addColorStop(1, shade(brand.background, -0.06));
-      c.fillStyle = gradient;
-      c.fillRect(0, 0, stage.width, stage.height);
+      drawBrandBackground(c, stage.width, stage.height, brand.background, brand.accent);
     } else {
       const bg = this.ctx.roles.stageBackground?.assets[0]?.image ?? null;
       if (bg) c.drawImage(bg, 0, 0, stage.width, stage.height);
@@ -187,6 +214,16 @@ class CatchGame implements GameModule {
     // Basket
     this.drawBasket(c);
 
+    for (const p of this.particles) {
+      c.save();
+      c.globalAlpha = Math.max(0, p.life / p.maxLife);
+      c.fillStyle = p.color;
+      c.beginPath();
+      c.arc(p.x, p.y, 3, 0, Math.PI * 2);
+      c.fill();
+      c.restore();
+    }
+
     // Celebrations (a brief grow-and-fade on the just-caught product) draw
     // last so they read as the clear focal point.
     for (const celebration of this.celebrations) {
@@ -197,6 +234,24 @@ class CatchGame implements GameModule {
   teardown(): void {
     this.items = [];
     this.celebrations = [];
+    this.particles = [];
+  }
+
+  private spawnParticles(x: number, y: number, color: string): void {
+    const { random } = this.ctx;
+    for (let i = 0; i < PARTICLES_PER_CATCH; i++) {
+      const angle = (i / PARTICLES_PER_CATCH) * Math.PI * 2 + random() * 0.4;
+      const speed = 60 + random() * 100;
+      this.particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 60,
+        life: 0.35 + random() * 0.25,
+        maxLife: 0.6,
+        color,
+      });
+    }
   }
 
   maxRealisticScore(tuning: Record<string, number>): number {
@@ -225,23 +280,18 @@ class CatchGame implements GameModule {
     const half = item.size / 2;
 
     if (item.asset?.image) {
-      drawAssetContain(c, item.asset, item.x - half, item.y - half, item.size, item.size);
+      withDropShadow(c, () => drawAssetContain(c, item.asset!, item.x - half, item.y - half, item.size, item.size));
       return;
     }
 
-    // generatedShape fallback: hazard as a dark chip, collectible as a
-    // brand-accent circle, so the mechanic still works with 0 sprite assets.
-    c.save();
-    c.beginPath();
-    c.fillStyle = item.kind === "hazard" ? brand.secondaryAccent || "#3a3a3a" : brand.accent;
+    // generatedShape fallback — a hand-drawn hazard burst or gem instead of
+    // a flat rect/circle, so the mechanic still works (and looks
+    // deliberate) with 0 sprite assets.
     if (item.kind === "hazard") {
-      roundedRect(c, item.x - half, item.y - half, item.size, item.size, 10);
-      c.fill();
+      drawHazardShape(c, item.x, item.y, item.size, brand.secondaryAccent || "#3a3a3a");
     } else {
-      c.arc(item.x, item.y, half, 0, Math.PI * 2);
-      c.fill();
+      drawGemShape(c, item.x, item.y, item.size, brand.accent);
     }
-    c.restore();
   }
 
   private drawBasket(c: CanvasRenderingContext2D): void {
@@ -249,43 +299,27 @@ class CatchGame implements GameModule {
     const x = this.basketX - BASKET_WIDTH / 2;
     const y = stage.height - BASKET_HEIGHT - 8;
 
-    if (this.catcherAsset?.image) {
-      drawAssetContain(c, this.catcherAsset, x, y, BASKET_WIDTH, BASKET_HEIGHT);
-      return;
-    }
+    // A brief squash-bounce on every catch — wider and shorter for an
+    // instant, easing back — so the basket reads as reacting to the catch
+    // instead of items just silently vanishing into it.
+    const squash = this.basketSquashT > 0 ? this.basketSquashT / BASKET_SQUASH_DURATION : 0;
+    const scaleX = 1 + 0.1 * squash;
+    const scaleY = 1 - 0.16 * squash;
+    const cx = this.basketX;
+    const cy = y + BASKET_HEIGHT;
 
     c.save();
-    c.fillStyle = brand.accent;
-    roundedRect(c, x, y, BASKET_WIDTH, BASKET_HEIGHT, 14);
-    c.fill();
+    c.translate(cx, cy);
+    c.scale(scaleX, scaleY);
+    c.translate(-cx, -cy);
+
+    if (this.catcherAsset?.image) {
+      withDropShadow(c, () => drawAssetContain(c, this.catcherAsset!, x, y, BASKET_WIDTH, BASKET_HEIGHT));
+    } else {
+      drawBasketShape(c, x, y, BASKET_WIDTH, BASKET_HEIGHT, brand.accent);
+    }
     c.restore();
   }
-}
-
-function roundedRect(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  const radius = Math.min(r, w / 2, h / 2);
-  c.beginPath();
-  c.moveTo(x + radius, y);
-  c.arcTo(x + w, y, x + w, y + h, radius);
-  c.arcTo(x + w, y + h, x, y + h, radius);
-  c.arcTo(x, y + h, x, y, radius);
-  c.arcTo(x, y, x + w, y, radius);
-  c.closePath();
-}
-
-/** Darkens (negative amt) or lightens a #rrggbb hex colour by `amt` (-1..1). */
-function shade(hex: string, amt: number): string {
-  const clean = hex.replace("#", "");
-  if (clean.length !== 6) return hex;
-  const num = parseInt(clean, 16);
-  let r = (num >> 16) & 0xff;
-  let g = (num >> 8) & 0xff;
-  let b = num & 0xff;
-  const adjust = (channel: number) => Math.min(255, Math.max(0, Math.round(channel + 255 * amt)));
-  r = adjust(r);
-  g = adjust(g);
-  b = adjust(b);
-  return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
 export function createCatchGame(): GameModule {

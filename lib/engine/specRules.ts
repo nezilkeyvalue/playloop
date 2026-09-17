@@ -94,6 +94,16 @@ export const PERCENT_OFF_MAX = 90;
 export const REWARD_LABEL_MAX = 48;
 export const REWARD_CODE_MAX = 32;
 
+/** The lowest threshold a reward tier may unlock at.
+ *
+ * Deliberately 1, not 0. A tier at 0 pays out to a player who scored
+ * nothing — including one who started the game and immediately ran the
+ * clock down — so the discount is not earned, it is handed to anyone who
+ * loads the embed. Every tier now sits above zero, which makes "scored
+ * below every tier" a real outcome; the runtime answers it with the
+ * play-again nudge in mount.ts rather than a coupon. */
+export const REWARD_MIN_SCORE_FLOOR = 1;
+
 /** What a coupon code may contain after uppercasing. Deliberately narrow:
  * the value is shown on the end screen and typed into a checkout box by
  * hand, so spaces and punctuation that look alike are excluded. */
@@ -173,6 +183,13 @@ export function validateRewardTier(
     issues.push({ field: "minScore", message: "Enter a number." });
   } else if (tier.minScore < 0) {
     issues.push({ field: "minScore", message: "Min score can't be negative." });
+  } else if (tier.minScore < REWARD_MIN_SCORE_FLOOR) {
+    issues.push({
+      field: "minScore",
+      message:
+        "A reward has to be earned — set a min score of at least " +
+        `${REWARD_MIN_SCORE_FLOOR}. Players who fall short are asked to play again.`,
+    });
   } else if (maxScore !== undefined && tier.minScore >= maxScore) {
     issues.push({
       field: "minScore",
@@ -250,22 +267,35 @@ export function validateRewardList(
   return results;
 }
 
-/** True when the list is empty, or its lowest minScore is exactly 0.
- *  This is brain.ts's invariant expressed as a predicate. */
-export function hasBaselineTier(tiers: { minScore: number }[]): boolean {
-  if (tiers.length === 0) return true;
-  return Math.min(...tiers.map((tier) => tier.minScore)) === 0;
+/** The lowest tier in the list, or null when there are none. This is the bar
+ *  a player has to clear to earn anything at all — the editor shows it, and
+ *  the runtime counts the shortfall against it. */
+export function entryTier<T extends { minScore: number }>(tiers: T[]): T | null {
+  let lowest: T | null = null;
+  for (const tier of tiers) {
+    if (lowest === null || tier.minScore < lowest.minScore) lowest = tier;
+  }
+  return lowest;
 }
 
 /** Threshold for a newly added tier that cannot collide with an existing
- *  one: 0 when the list is empty, else max(existing)+1 clamped below
- *  maxScore (or halfway between max(existing) and maxScore when there is
- *  headroom). */
+ *  one: an opening bar around 30% of the realistic ceiling when the list is
+ *  empty, else max(existing)+1 clamped below maxScore (or halfway between
+ *  max(existing) and maxScore when there is headroom).
+ *
+ *  Never 0 — see REWARD_MIN_SCORE_FLOOR. The first tier a merchant adds used
+ *  to open at 0, which made "everybody wins" the default the moment they
+ *  touched the rewards panel. */
 export function suggestNextMinScore(
   existing: { minScore: number }[],
   maxScore?: number,
 ): number {
-  if (existing.length === 0) return 0;
+  if (existing.length === 0) {
+    if (maxScore === undefined) return REWARD_MIN_SCORE_FLOOR;
+    // Below maxScore even for a tiny ceiling: `>= maxScore` is a validation
+    // error, so a suggestion has to land strictly under it.
+    return Math.max(REWARD_MIN_SCORE_FLOOR, Math.min(Math.round(maxScore * 0.3), maxScore - 1));
+  }
   const top = Math.max(...existing.map((tier) => tier.minScore));
   // Halfway only when there's real room; with 2 points or less of headroom
   // the midpoint rounds back onto `top` and collides with the tier we're

@@ -91,7 +91,7 @@ export const catchGameSpec: GameSpec = {
     stageBackground: { fallback: "brandGradient" },
   },
   rewards: [
-    { minScore: 0, label: "10% off", percentOff: 10, code: "CATCH10" },
+    { minScore: 225, label: "10% off", percentOff: 10, code: "CATCH10" },
     { minScore: 450, label: "15% off", percentOff: 15, code: "CATCH15" },
     { minScore: 900, label: "20% off", percentOff: 20, code: "CATCH20" },
   ],
@@ -149,7 +149,7 @@ export const guessPriceGameSpec: GameSpec = {
     stageBackground: { fallback: "brandGradient" },
   },
   rewards: [
-    { minScore: 0, label: "10% off", percentOff: 10, code: "GUESS10" },
+    { minScore: 250, label: "10% off", percentOff: 10, code: "GUESS10" },
     { minScore: 500, label: "15% off", percentOff: 15, code: "GUESS15" },
     { minScore: 950, label: "20% off", percentOff: 20, code: "GUESS20" },
   ],
@@ -207,7 +207,7 @@ export const chainPopGameSpec: GameSpec = {
     stageBackground: { fallback: "brandGradient" },
   },
   rewards: [
-    { minScore: 0, label: "10% off", percentOff: 10, code: "POP10" },
+    { minScore: 250, label: "10% off", percentOff: 10, code: "POP10" },
     { minScore: 500, label: "15% off", percentOff: 15, code: "POP15" },
     { minScore: 950, label: "20% off", percentOff: 20, code: "POP20" },
   ],
@@ -267,7 +267,7 @@ export const chompGameSpec: GameSpec = {
     stageBackground: { fallback: "brandGradient" },
   },
   rewards: [
-    { minScore: 0, label: "10% off", percentOff: 10, code: "CHOMP10" },
+    { minScore: 225, label: "10% off", percentOff: 10, code: "CHOMP10" },
     { minScore: 450, label: "15% off", percentOff: 15, code: "CHOMP15" },
     { minScore: 850, label: "20% off", percentOff: 20, code: "CHOMP20" },
   ],
@@ -325,7 +325,7 @@ export const shooterGameSpec: GameSpec = {
     ship: { fallback: "generatedShape" },
   },
   rewards: [
-    { minScore: 0, label: "10% off", percentOff: 10, code: "NOVA10" },
+    { minScore: 150, label: "10% off", percentOff: 10, code: "NOVA10" },
     { minScore: 300, label: "15% off", percentOff: 15, code: "NOVA15" },
     { minScore: 550, label: "20% off", percentOff: 20, code: "NOVA20" },
   ],
@@ -388,7 +388,7 @@ export const whackGameSpec: GameSpec = {
     stageBackground: { fallback: "brandGradient" },
   },
   rewards: [
-    { minScore: 0, label: "10% off", percentOff: 10, code: "WHACK10" },
+    { minScore: 200, label: "10% off", percentOff: 10, code: "WHACK10" },
     { minScore: 400, label: "15% off", percentOff: 15, code: "WHACK15" },
     { minScore: 800, label: "20% off", percentOff: 20, code: "WHACK20" },
   ],
@@ -446,7 +446,7 @@ export const sweetSpotGameSpec: GameSpec = {
     stageBackground: { fallback: "brandGradient" },
   },
   rewards: [
-    { minScore: 0, label: "5% off", percentOff: 5, code: "BLOOM5" },
+    { minScore: 120, label: "5% off", percentOff: 5, code: "BLOOM5" },
     { minScore: 240, label: "10% off", percentOff: 10, code: "BLOOM10" },
     { minScore: 520, label: "15% off", percentOff: 15, code: "BLOOM15" },
   ],
@@ -511,7 +511,7 @@ export const simonGameSpec: GameSpec = {
     stageBackground: { fallback: "brandGradient" },
   },
   rewards: [
-    { minScore: 0, label: "10% off", percentOff: 10, code: "BEAT10" },
+    { minScore: 175, label: "10% off", percentOff: 10, code: "BEAT10" },
     { minScore: 350, label: "15% off", percentOff: 15, code: "BEAT15" },
     { minScore: 700, label: "20% off", percentOff: 20, code: "BEAT20" },
   ],
@@ -574,7 +574,7 @@ export const sliceGameSpec: GameSpec = {
     stageBackground: { fallback: "brandGradient" },
   },
   rewards: [
-    { minScore: 0, label: "10% off", percentOff: 10, code: "SLICE10" },
+    { minScore: 200, label: "10% off", percentOff: 10, code: "SLICE10" },
     { minScore: 400, label: "15% off", percentOff: 15, code: "SLICE15" },
     { minScore: 800, label: "20% off", percentOff: 20, code: "SLICE20" },
   ],
@@ -650,7 +650,7 @@ export const skincareGameSpec: GameSpec = {
     collectible: skincareCollectibles.map((a) => a.id),
   },
   rewards: [
-    { minScore: 0, label: "10% off", percentOff: 10, code: "GLOW10" },
+    { minScore: 225, label: "10% off", percentOff: 10, code: "GLOW10" },
     { minScore: 450, label: "15% off", percentOff: 15, code: "GLOW15" },
     { minScore: 900, label: "20% off", percentOff: 20, code: "GLOW20" },
   ],
@@ -691,7 +691,7 @@ export const sneakerGameSpec: GameSpec = {
     hero: sneakerHeroes.map((a) => a.id),
   },
   rewards: [
-    { minScore: 0, label: "10% off", percentOff: 10, code: "KICKS10" },
+    { minScore: 250, label: "10% off", percentOff: 10, code: "KICKS10" },
     { minScore: 500, label: "15% off", percentOff: 15, code: "KICKS15" },
     { minScore: 950, label: "20% off", percentOff: 20, code: "KICKS20" },
   ],
