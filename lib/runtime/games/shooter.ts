@@ -33,10 +33,12 @@ import {
   colorAdjustFilterString,
   createBlurredBackdrop,
   drawArcText,
+  withDropShadow,
   updateCelebrations,
   drawCelebration,
   type Celebration,
 } from "@/lib/runtime/games/spriteRender";
+import { drawStarShape } from "@/lib/runtime/games/shapeLibrary";
 
 // Scoring constants, chosen so maxRealisticScore() at the capability's
 // default tuning (spawnRateHz 1.0, durationSec 40, targetRatio 0.4) lands
@@ -509,6 +511,22 @@ class ShooterGame implements GameModule {
     const { brand } = this.ctx;
     const half = size / 2;
 
+    // Cast the chip's drop shadow as one clean circular silhouette before
+    // the clipped, multi-layer content below (backdrop fill + optional
+    // blurred backdrop + image) draws on top and fully covers it — drawing
+    // each of those layers with its own shadow active would double up into
+    // a muddy stacked shadow instead of one crisp lift off the starfield.
+    withDropShadow(
+      c,
+      () => {
+        c.beginPath();
+        c.arc(x, y, half, 0, Math.PI * 2);
+        c.fillStyle = "#000";
+        c.fill();
+      },
+      { blur: 10, offsetY: 4 },
+    );
+
     c.save();
     c.beginPath();
     c.arc(x, y, half, 0, Math.PI * 2);
@@ -674,25 +692,6 @@ function drawNebula(c: CanvasRenderingContext2D, x: number, y: number, radius: n
   c.beginPath();
   c.arc(x, y, radius, 0, Math.PI * 2);
   c.fill();
-}
-
-function drawStarShape(c: CanvasRenderingContext2D, cx: number, cy: number, radius: number, fill: string): void {
-  const spikes = 5;
-  const inner = radius * 0.5;
-  c.save();
-  c.beginPath();
-  for (let i = 0; i < spikes * 2; i++) {
-    const r = i % 2 === 0 ? radius : inner;
-    const angle = (Math.PI / spikes) * i - Math.PI / 2;
-    const px = cx + Math.cos(angle) * r;
-    const py = cy + Math.sin(angle) * r;
-    if (i === 0) c.moveTo(px, py);
-    else c.lineTo(px, py);
-  }
-  c.closePath();
-  c.fillStyle = fill;
-  c.fill();
-  c.restore();
 }
 
 function roundedRect(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {

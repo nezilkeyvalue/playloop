@@ -23,7 +23,7 @@ import type {
 } from "@/lib/engine/types";
 import { getCapability } from "@/lib/capabilities";
 import type { GameModule, LoadedAsset, ResolvedRole, RuntimeContext } from "@/lib/runtime/gameModule";
-import { isBrandLogoUrl } from "@/lib/runtime/games/spriteRender";
+import { isBrandLogoUrl, shadeHex } from "@/lib/runtime/games/spriteRender";
 import { createInput } from "@/lib/runtime/input";
 import { startLoop, type LoopHandle } from "@/lib/runtime/loop";
 import { animateCountUp, resolveReward } from "@/lib/runtime/reward";
@@ -629,7 +629,23 @@ function setOverlay(
   stage.ctx.clearRect(0, 0, stage.size.width, stage.size.height);
   overlay.style.background = backdrop;
   overlay.style.pointerEvents = "auto";
+
+  // A brief fade + scale-in on every screen swap (idle -> play -> reward)
+  // instead of an instant innerHTML replace, so the transition itself
+  // reads as a deliberate beat rather than a jump-cut. Two rAFs, not one:
+  // the style change has to land in a frame the browser has already
+  // painted the pre-transition (opacity 0) state for, or the transition
+  // never has a starting frame to animate from.
+  content.style.opacity = "0";
+  content.style.transform = "scale(0.98)";
+  content.style.transition = "opacity 0.22s ease, transform 0.22s ease";
   overlay.appendChild(content);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      content.style.opacity = "1";
+      content.style.transform = "scale(1)";
+    });
+  });
 }
 
 function renderLoadingState(): HTMLElement {
@@ -647,7 +663,7 @@ function renderLoadingState(): HTMLElement {
  * branding at all before). Returns null when there's no logo to show,
  * matching the "skip silently" convention used elsewhere for missing
  * per-asset data. */
-function renderBrandLogo(logoUrl: string | undefined): HTMLImageElement | null {
+function renderBrandLogo(logoUrl: string | undefined, height: string = "32px"): HTMLImageElement | null {
   if (!logoUrl) return null;
 
   const logo = document.createElement("img");
@@ -664,7 +680,7 @@ function renderBrandLogo(logoUrl: string | undefined): HTMLImageElement | null {
   // must hold on arbitrary third-party host pages the embed script runs
   // on, not just this app's own CSS.
   logo.style.display = "block";
-  logo.style.height = "32px";
+  logo.style.height = height;
   logo.style.width = "auto";
   logo.style.marginTop = "0";
   logo.style.marginBottom = "8px";
@@ -677,7 +693,10 @@ function renderBrandLogo(logoUrl: string | undefined): HTMLImageElement | null {
 function renderIdleState(brand: GameSpec["brand"], copy: GameSpec["copy"], onStart: () => void): HTMLElement {
   const wrap = document.createElement("div");
 
-  const logo = renderBrandLogo(brand.logoUrl);
+  // Scales with both the embed's width and height (same clamp+vw technique
+  // as the headline below), not a fixed px, so it reads clearly on a large
+  // placement without overflowing a short/narrow one.
+  const logo = renderBrandLogo(brand.logoUrl, "clamp(40px, min(10vw, 18vh), 96px)");
   if (logo) wrap.appendChild(logo);
 
   const headline = document.createElement("h2");
@@ -774,9 +793,21 @@ function renderEngagedGallery(engaged: EngagedAsset[], brand: GameSpec["brand"])
     item.style.borderRadius = "12px";
     item.style.border = `1px solid ${brand.foreground}1a`;
     item.style.background = `${brand.foreground}0a`;
-    item.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)";
+    item.style.boxShadow = "0 2px 10px -2px rgba(0,0,0,0.14)";
     item.style.color = "inherit";
     item.style.scrollSnapAlign = "start";
+    item.style.transition = "transform 0.15s ease, box-shadow 0.15s ease";
+
+    if (asset.productUrl) {
+      item.addEventListener("pointerenter", () => {
+        item.style.transform = "translateY(-2px)";
+        item.style.boxShadow = "0 6px 16px -4px rgba(0,0,0,0.2)";
+      });
+      item.addEventListener("pointerleave", () => {
+        item.style.transform = "none";
+        item.style.boxShadow = "0 2px 10px -2px rgba(0,0,0,0.14)";
+      });
+    }
 
     const thumb = document.createElement("img");
     thumb.src = asset.spriteUrl;
@@ -840,9 +871,10 @@ function renderCouponBlock(
   box.dataset.role = "coupon-block";
   box.style.marginTop = "8px";
   box.style.padding = "10px";
-  box.style.borderRadius = "10px";
-  box.style.border = `1px solid ${brand.foreground}22`;
-  box.style.background = `${brand.accent}0F`;
+  box.style.borderRadius = "12px";
+  box.style.border = `1px solid ${brand.accent}30`;
+  box.style.background = `linear-gradient(180deg, ${brand.accent}14, ${brand.accent}08)`;
+  box.style.boxShadow = `0 4px 14px -6px ${brand.accent}55`;
   box.style.textAlign = "center";
 
   const codeLine = document.createElement("div");
@@ -1121,12 +1153,15 @@ function renderRewardState(
   // the input's placeholder, and a natural placeholder makes a button wider
   // than the card. Adding a field to the shared contract for a button label
   // is not worth it.
-  const emailButton = makeButton("Email it to me", brand.accent, brand.background);
-  emailButton.style.padding = "8px 14px";
   // Secondary: the coupon block is the primary action, and two solid accent
-  // buttons stacked read as equal choices.
-  emailButton.style.background = "transparent";
-  emailButton.style.color = brand.foreground;
+  // buttons stacked read as equal choices. Built as a transparent button
+  // directly (not a solid one overridden after the fact) — makeButton's
+  // hover/press states and shadow are computed from the background it's
+  // given, so building solid and then papering over it with a transparent
+  // background left a stale accent-coloured shadow behind an otherwise
+  // outline-style button.
+  const emailButton = makeButton("Email it to me", "transparent", brand.foreground);
+  emailButton.style.padding = "8px 14px";
   emailButton.style.border = `1px solid ${brand.foreground}55`;
   emailButton.style.fontWeight = "600";
   emailButton.addEventListener("click", onSubmitEmail);
@@ -1181,8 +1216,41 @@ function makeButton(label: string, background: string, foregroundOnAccent: strin
   button.style.fontSize = "14px";
   button.style.fontWeight = "700";
   button.style.cursor = "pointer";
-  button.style.background = background;
-  button.style.color = background === "transparent" ? foregroundOnAccent : bestTextColor(background);
+  button.style.transition = "transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease";
+
+  const isTransparent = background === "transparent";
+  button.style.background = isTransparent
+    ? "transparent"
+    : `linear-gradient(180deg, ${shadeHex(background, 0.08)}, ${shadeHex(background, -0.06)})`;
+  button.style.color = isTransparent ? foregroundOnAccent : bestTextColor(background);
+  // A solid pill sitting flat on the page reads as inert; a coloured,
+  // slightly-elevated shadow plus a press/hover response makes it read as
+  // the one interactive thing on the idle/reward screen. Skipped for the
+  // transparent "secondary" button (replay) — it deliberately stays flat
+  // so it doesn't visually compete with the primary action beside it.
+  button.style.boxShadow = isTransparent ? "none" : `0 6px 16px -4px ${background}80`;
+
+  if (!isTransparent) {
+    button.addEventListener("pointerenter", () => {
+      button.style.transform = "translateY(-1px)";
+      button.style.filter = "brightness(1.04)";
+    });
+    button.addEventListener("pointerleave", () => {
+      button.style.transform = "none";
+      button.style.filter = "none";
+    });
+    button.addEventListener("pointerdown", () => {
+      button.style.transform = "translateY(0) scale(0.97)";
+      button.style.boxShadow = `0 2px 8px -2px ${background}80`;
+    });
+    const release = () => {
+      button.style.transform = "translateY(-1px)";
+      button.style.boxShadow = `0 6px 16px -4px ${background}80`;
+    };
+    button.addEventListener("pointerup", release);
+    button.addEventListener("pointercancel", release);
+  }
+
   return button;
 }
 

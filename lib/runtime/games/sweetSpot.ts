@@ -30,11 +30,15 @@
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
 import {
   drawAssetContain,
+  drawBrandBackground,
+  fillGlossyRoundedRect,
+  withDropShadow,
   updateCelebrations,
   drawCelebration,
   isBrandLogoUrl,
   type Celebration,
 } from "@/lib/runtime/games/spriteRender";
+import { drawMedallionShape } from "@/lib/runtime/games/shapeLibrary";
 
 // Scoring constants. Chosen so maxRealisticScore() at the capability's
 // *default* tuning (sweepSpeedHz 0.7, zoneWidth 0.2, zoneShrink 0.9,
@@ -60,6 +64,7 @@ const MAX_SPEED_MULTIPLIER = 2.6;
 
 const FEEDBACK_SEC = 0.45; // how long a hit/miss flash stays up
 const HUD_HEIGHT = 34; // reserved strip at the top for score + lives
+const PARTICLES_PER_HIT = 10;
 
 export function maxRealisticScore(tuning: Record<string, number>): number {
   const sweepSpeedHz = tuning.sweepSpeedHz ?? 0.7;
@@ -81,6 +86,16 @@ export function maxRealisticScore(tuning: Record<string, number>): number {
   return Math.round(expectedHits * (POINTS_PER_HIT + ACCURACY_BONUS * AVG_ACCURACY));
 }
 
+interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  color: string;
+}
+
 class SweetSpotGame implements GameModule {
   id: "sweet_spot" = "sweet_spot";
 
@@ -97,9 +112,19 @@ class SweetSpotGame implements GameModule {
   private streak = 0;
   private feedback: { kind: "hit" | "miss"; t: number; at: number } | null = null;
   private celebrations: Celebration[] = [];
+  private particles: Particle[] = [];
   private prizePool: LoadedAsset[] = [];
   private prizeIndex = 0;
   private ended = false;
+
+  // The bar's last-rendered layout — recomputed every render() call, read
+  // back by lockIn() (called from update(), one frame behind at most) so a
+  // hit/miss particle burst can spawn at the marker's actual on-screen
+  // position without redoing render()'s own width/height-driven layout math.
+  private barX = 0;
+  private barY = 0;
+  private barW = 0;
+  private barH = 14;
 
   init(ctx: RuntimeContext): void {
     this.ctx = ctx;
@@ -113,6 +138,7 @@ class SweetSpotGame implements GameModule {
     this.streak = 0;
     this.feedback = null;
     this.celebrations = [];
+    this.particles = [];
     this.ended = false;
     this.prizePool = ctx.roles.prize?.assets ?? [];
     this.prizeIndex = 0;
@@ -137,6 +163,13 @@ class SweetSpotGame implements GameModule {
       this.feedback.t -= dt;
       if (this.feedback.t <= 0) this.feedback = null;
     }
+    this.particles = this.particles.filter((p) => {
+      p.vy += 420 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+      return p.life > 0;
+    });
 
     // Advance the marker, bouncing at both ends.
     const baseHz = tuning.sweepSpeedHz ?? 0.7;
@@ -167,6 +200,7 @@ class SweetSpotGame implements GameModule {
       this.hits += 1;
       this.streak += 1;
       this.feedback = { kind: "hit", t: FEEDBACK_SEC, at: this.markerPos };
+      this.spawnParticles(this.barX + this.markerPos * this.barW, this.barY + this.barH / 2, this.ctx.brand.accent);
 
       // The moment of success: the prize on screen is what the player just
       // won, so that is the asset worth recording and celebrating. Guard on
@@ -198,6 +232,7 @@ class SweetSpotGame implements GameModule {
       this.streak = 0;
       this.livesLeft -= 1;
       this.feedback = { kind: "miss", t: FEEDBACK_SEC, at: this.markerPos };
+      this.spawnParticles(this.barX + this.markerPos * this.barW, this.barY + this.barH / 2, "#c94b4b");
     }
 
     this.zoneCenter = this.pickZoneCenter();
@@ -231,6 +266,10 @@ class SweetSpotGame implements GameModule {
     const barMargin = Math.max(20, Math.min(48, w * 0.08));
     const barX = barMargin;
     const barW = Math.max(40, w - barMargin * 2);
+    this.barX = barX;
+    this.barY = barY;
+    this.barW = barW;
+    this.barH = barH;
 
     this.renderPrize(c, w, prizeY, prizeSize);
     this.renderBar(c, barX, barY, barW, barH);
@@ -248,9 +287,36 @@ class SweetSpotGame implements GameModule {
       c.globalAlpha = 1;
     }
 
+    for (const p of this.particles) {
+      c.save();
+      c.globalAlpha = Math.max(0, p.life / p.maxLife);
+      c.fillStyle = p.color;
+      c.beginPath();
+      c.arc(p.x, p.y, 3, 0, Math.PI * 2);
+      c.fill();
+      c.restore();
+    }
+
     // Last, so the thing the player just won is the clear focal point.
     for (const cel of this.celebrations) {
       drawCelebration(c, cel, prizeSize * 0.7, brand.accent);
+    }
+  }
+
+  private spawnParticles(x: number, y: number, color: string): void {
+    const { random } = this.ctx;
+    for (let i = 0; i < PARTICLES_PER_HIT; i++) {
+      const angle = (i / PARTICLES_PER_HIT) * Math.PI * 2 + random() * 0.4;
+      const speed = 60 + random() * 110;
+      this.particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 60,
+        life: 0.35 + random() * 0.25,
+        maxLife: 0.6,
+        color,
+      });
     }
   }
 
@@ -269,11 +335,7 @@ class SweetSpotGame implements GameModule {
       return;
     }
     // brandGradient fallback.
-    const grad = c.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0, brand.background);
-    grad.addColorStop(1, mix(brand.background, brand.accent, 0.18));
-    c.fillStyle = grad;
-    c.fillRect(0, 0, w, h);
+    drawBrandBackground(c, w, h, brand.background, brand.accent);
   }
 
   /** The product (or logo) being played for. Scaled to CONTAIN inside its
@@ -291,27 +353,41 @@ class SweetSpotGame implements GameModule {
     const asset = this.prizePool[this.prizeIndex] ?? null;
     const radius = size / 2;
 
-    c.save();
-    c.beginPath();
-    roundRect(c, x, y, size, size, radius);
-    c.closePath();
-    c.clip();
+    if (!asset?.image) {
+      // "logo" fallback had nothing to give — a designed medallion (glossy
+      // fill + ring + star) instead of a plain flat dot.
+      withDropShadow(c, () => drawMedallionShape(c, x + size / 2, y + size / 2, size * 0.42, brand.accent));
+      c.strokeStyle = withAlpha(brand.foreground, 0.16);
+      c.lineWidth = 2;
+      c.beginPath();
+      roundRect(c, x, y, size, size, radius);
+      c.stroke();
+      const name = asset?.data?.name;
+      if (name) {
+        c.fillStyle = withAlpha(brand.foreground, 0.85);
+        c.font = `600 15px ${brand.fontFamily}, system-ui, sans-serif`;
+        c.textAlign = "center";
+        c.textBaseline = "top";
+        c.fillText(truncate(c, name, w - 40), w / 2, y + size + 10);
+      }
+      return;
+    }
 
-    c.fillStyle = asset?.backgroundColor ?? mix(brand.background, brand.accent, 0.1);
-    c.fillRect(x, y, size, size);
+    withDropShadow(c, () => {
+      c.save();
+      c.beginPath();
+      roundRect(c, x, y, size, size, radius);
+      c.closePath();
+      c.clip();
 
-    if (asset?.image) {
+      c.fillStyle = asset.backgroundColor ?? mix(brand.background, brand.accent, 0.1);
+      c.fillRect(x, y, size, size);
+
       // Shared helper, not a local contain-fit: it honours subjectBounds and
       // colorAdjust, which a hand-rolled drawImage silently ignores.
       drawAssetContain(c, asset, x, y, size, size);
-    } else {
-      // "logo" fallback had nothing to give — a plain accent medallion.
-      c.fillStyle = brand.accent;
-      c.beginPath();
-      c.arc(x + size / 2, y + size / 2, size * 0.28, 0, Math.PI * 2);
-      c.fill();
-    }
-    c.restore();
+      c.restore();
+    });
 
     c.strokeStyle = withAlpha(brand.foreground, 0.16);
     c.lineWidth = 2;
@@ -344,20 +420,24 @@ class SweetSpotGame implements GameModule {
     roundRect(c, x, y, w, h, h / 2);
     c.fill();
 
-    // Target zone.
+    // Target zone — glossy fill so it reads as "the thing to aim for", not
+    // just a flat-coloured segment of the track.
     const zoneW = Math.max(4, this.zoneWidth * w);
     const zoneX = x + this.zoneCenter * w - zoneW / 2;
-    c.fillStyle = brand.accent;
-    c.beginPath();
-    roundRect(c, zoneX, y, zoneW, h, h / 2);
-    c.fill();
+    fillGlossyRoundedRect(c, zoneX, y, zoneW, h, h / 2, brand.accent);
 
     // Marker.
     const mx = x + this.markerPos * w;
-    c.fillStyle = brand.foreground;
-    c.beginPath();
-    roundRect(c, mx - 2.5, y - 9, 5, h + 18, 2.5);
-    c.fill();
+    withDropShadow(
+      c,
+      () => {
+        c.fillStyle = brand.foreground;
+        c.beginPath();
+        roundRect(c, mx - 2.5, y - 9, 5, h + 18, 2.5);
+        c.fill();
+      },
+      { blur: 6, offsetY: 2 },
+    );
   }
 
   private renderHud(
@@ -399,6 +479,7 @@ class SweetSpotGame implements GameModule {
   teardown(): void {
     this.prizePool = [];
     this.celebrations = [];
+    this.particles = [];
     this.feedback = null;
   }
 
