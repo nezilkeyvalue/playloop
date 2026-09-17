@@ -727,7 +727,7 @@ export const runnerGameSpec: GameSpec = {
   },
   copy: {
     headline: "Hit the trail",
-    subhead: "Tap to jump. Clear the rocks, grab the gear.",
+    subhead: "Tap to jump. Clear the hurdles, grab the gear.",
     ctaStart: "Start running",
     ctaReplay: "Run again",
     rewardIntro: "You earned",
