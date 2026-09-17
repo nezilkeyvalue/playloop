@@ -107,6 +107,25 @@ POST /plays/finish ───┘      ↓ one code                 │
  reward screen
 ```
 
+### Step 0 — the reward has to be earned
+
+No tier may sit at `minScore: 0` (`REWARD_MIN_SCORE_FLOOR` in
+`lib/engine/specRules.ts`, enforced by `validateRewardTier` and therefore by
+both `PATCH /api/games/:id` and `brain.ts`). A tier at 0 pays out to a player
+who loaded the embed and let the clock run down — the merchant funds a
+discount for no engagement, and the pool drains to people who never played.
+
+So **finishing below every threshold is an ordinary outcome**, not an edge
+case. `resolveReward()` returns `tierIndex: -1` for it and the reward screen
+renders `renderNearMissBlock()` instead of a coupon block: the gap in points,
+the tier that closes it, a progress bar, and **Play again** promoted to the
+primary button. Lead capture is hidden on that screen — "Email it to me"
+with no code behind it is a promise nothing can keep.
+
+`brain.ts` pitches the entry tier at 15% of the template's
+`scoring.maxRealistic` (`defaultRewardLadder()`), and the Gemini prompt asks
+for the same. A model-proposed tier at 0 is dropped, not repaired.
+
 ### Step 1 — the round ends
 
 `mount.ts` paints the reward screen immediately (without waiting on the

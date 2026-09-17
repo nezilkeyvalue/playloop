@@ -30,7 +30,6 @@ import {
   COPY_RULES,
   HEX_COLOR_RE,
   clampTuningValue,
-  hasBaselineTier,
   normalizeRewardTier,
   validateCopyField,
   validateRewardList,
@@ -40,7 +39,6 @@ import type {
   GameCopy,
   GameSpec,
   ProcessedAsset,
-  RewardTier,
 } from "@/lib/engine/types";
 
 export type SpecPatchOk = { ok: true; patch: Partial<GameSpec> };
@@ -343,17 +341,11 @@ export async function validateSpecPatch(
       }
     }
 
-    const tiers: RewardTier[] = drafts.map(normalizeRewardTier);
-    // brain.ts guarantees this for every generated game; enforcing it here
-    // (rather than silently inserting a tier) keeps the editor honest about
-    // what the merchant actually configured.
-    if (tiers.length > 0 && !hasBaselineTier(tiers)) {
-      return invalid(
-        "Your lowest reward tier must start at a min score of 0, so every player earns something.",
-        "rewards",
-      );
-    }
-    patch.rewards = tiers;
+    // No baseline-at-0 check any more: a tier at 0 is now rejected outright
+    // by validateRewardList above (REWARD_MIN_SCORE_FLOOR), because a reward
+    // nobody has to play for isn't a reward. A merchant is free to set the
+    // entry bar wherever they like above that floor.
+    patch.rewards = drafts.map(normalizeRewardTier);
   }
 
   if (body.assets !== undefined) {

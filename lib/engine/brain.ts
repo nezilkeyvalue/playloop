@@ -20,7 +20,11 @@ import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import type { Schema } from "@google/generative-ai";
 import sharp from "sharp";
 import { safeFetchImage } from "@/lib/engine/safeFetch";
-import { normalizeRewardTier, validateRewardTier } from "@/lib/engine/specRules";
+import {
+  REWARD_MIN_SCORE_FLOOR,
+  normalizeRewardTier,
+  validateRewardTier,
+} from "@/lib/engine/specRules";
 import type {
   AssetBackgroundTreatment,
   AssetInventory,
@@ -184,6 +188,10 @@ async function callGemini(apiKey: string, input: RunBrainInput, eligibleTemplate
     "You are choosing and writing copy for a short branded mini-game (a 'playable ad') for an e-commerce brand.",
     "You may ONLY set `template` to one of the ids listed under `eligible` below — any other value is invalid and will be discarded.",
     "Keep copy short, upbeat, and specific to the brand where possible. Respond ONLY with JSON matching the response schema.",
+    "Every `rewards` tier must be EARNED: give each one a `minScore` above 0 and below the template's maxRealistic, " +
+      "so a player who idles through the timer walks away with nothing and is asked to play again. A tier at " +
+      "minScore 0 is discarded. Pitch the lowest tier where an engaged first-time player lands (roughly 15-25% of " +
+      "maxRealistic), and space the rest out above it.",
     "",
     imageParts.length > 0
       ? [
@@ -504,10 +512,33 @@ function validateRewards(raw: unknown, cap: GameCapability): BrainResponse["rewa
   parsed.sort((a, b) => a.minScore - b.minScore);
   const deduped = parsed.filter((tier, i) => i === 0 || tier.minScore > (parsed[i - 1]?.minScore ?? -1));
 
-  if (deduped.length === 0 || deduped[0]?.minScore !== 0) {
-    deduped.unshift({ minScore: 0, label: "10% off", percentOff: 10 });
+  // A tier at minScore 0 no longer survives the loop above — validateRewardTier
+  // rejects it (REWARD_MIN_SCORE_FLOOR), because a discount handed to a player
+  // who scored nothing costs the merchant margin for no engagement. The model
+  // is prompted for earned thresholds but still proposes a 0 tier sometimes,
+  // and dropping it can empty the list, so seed an entry bar instead of the
+  // old unconditional unshift of {minScore: 0}.
+  if (deduped.length === 0) {
+    deduped.push(...defaultRewardLadder(maxRealistic));
   }
   return deduped;
+}
+
+/** Entry bar, then two stretch tiers. Shared by validateRewards' empty case
+ * and the deterministic fallback so a Gemini-less build and a Gemini build
+ * that returned junk ask the player for the same effort.
+ *
+ * The opening tier sits at 15% of the realistic ceiling: low enough that a
+ * player who engages with the game clears it, high enough that idling
+ * through the timer does not. */
+export function defaultRewardLadder(maxRealistic: number): BrainResponse["rewards"] {
+  const floor = (fraction: number) =>
+    Math.max(REWARD_MIN_SCORE_FLOOR, Math.round(maxRealistic * fraction));
+  return [
+    { minScore: floor(0.15), label: "10% off", percentOff: 10 },
+    { minScore: floor(0.4), label: "15% off", percentOff: 15 },
+    { minScore: floor(0.7), label: "20% off", percentOff: 20 },
+  ];
 }
 
 function clampNumber(n: number, lo: number, hi: number): number {
@@ -576,11 +607,7 @@ function deterministicFallback(input: RunBrainInput, template: TemplateId | unde
   }
 
   const maxRealistic = cap?.scoring.maxRealistic ?? 1000;
-  const rewards: BrainResponse["rewards"] = [
-    { minScore: 0, label: "10% off", percentOff: 10 },
-    { minScore: Math.round(maxRealistic * 0.3), label: "15% off", percentOff: 15 },
-    { minScore: Math.round(maxRealistic * 0.65), label: "20% off", percentOff: 20 },
-  ];
+  const rewards = defaultRewardLadder(maxRealistic);
 
   const passedAssetIds = input.inventory.assets.filter((a) => a.quality.score > 0).map((a) => a.id);
 

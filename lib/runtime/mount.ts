@@ -19,6 +19,7 @@ import type {
   GameCapability,
   GameSpec,
   Placement,
+  RewardTier,
   TemplateId,
 } from "@/lib/engine/types";
 import { getCapability } from "@/lib/capabilities";
@@ -26,7 +27,8 @@ import type { GameModule, LoadedAsset, ResolvedRole, RuntimeContext } from "@/li
 import { isBrandLogoUrl, shadeHex } from "@/lib/runtime/games/spriteRender";
 import { createInput } from "@/lib/runtime/input";
 import { startLoop, type LoopHandle } from "@/lib/runtime/loop";
-import { animateCountUp, resolveReward } from "@/lib/runtime/reward";
+import { entryTier } from "@/lib/engine/specRules";
+import { animateCountUp, nextTierAbove, resolveReward } from "@/lib/runtime/reward";
 import { mountStage, type StageController } from "@/lib/runtime/stage";
 import {
   beginSession,
@@ -322,7 +324,7 @@ function mountGame(
       overlay,
       canvas,
       stageController,
-      renderRewardState(brand, copy, resolved.tier, null, engagedAssets, () => {
+      renderRewardState(brand, copy, resolved.tier, resolved.tierIndex !== -1, finalScore, nextTierAbove(finalScore, spec.rewards), null, engagedAssets, () => {
         void submitLead(sessionToken);
       }, () => {
         startPlay(true);
@@ -550,10 +552,20 @@ function loadImage(url: string, timeoutMs = 6000): Promise<HTMLImageElement | nu
  */
 const STATIC_PREVIEW_EXAMPLE_SCORE = 128;
 
+/** Score to preview the reward screen at when the caller names none: exactly
+ * the entry tier's threshold, so the merchant sees the reward state by
+ * default. A fixed 128 used to do this only because every spec had a tier at
+ * minScore 0; now that the entry bar is wherever the merchant put it, a
+ * constant lands below it as often as not and previews the near-miss screen
+ * to someone who opened the panel to check their coupon terms. */
+function defaultPreviewScore(spec: GameSpec): number {
+  return entryTier(spec.rewards)?.minScore ?? STATIC_PREVIEW_EXAMPLE_SCORE;
+}
+
 export function renderStaticScreen(
   kind: "idle" | "reward",
   spec: GameSpec,
-  exampleScore: number = STATIC_PREVIEW_EXAMPLE_SCORE,
+  exampleScore: number = defaultPreviewScore(spec),
 ): HTMLElement {
   const { brand, copy } = spec;
   ensureGoogleFontLoaded(brand.fontFamily);
@@ -579,7 +591,12 @@ export function renderStaticScreen(
     return shell;
   }
 
-  const { tier } = resolveReward(STATIC_PREVIEW_EXAMPLE_SCORE, spec.rewards);
+  // Resolved from `exampleScore`, not from the constant. They were different
+  // numbers: the editor's per-tier "preview" button sets exampleScore to that
+  // tier's minScore, but the tier shown was always whatever 128 resolved to,
+  // so previewing the 20%-off tier rendered the 10%-off one.
+  const resolvedPreview = resolveReward(exampleScore, spec.rewards);
+  const tier = resolvedPreview.tier;
   // No live session to draw a real engagement list from here — a
   // representative sample of the spec's own assets stands in, same spirit
   // as STATIC_PREVIEW_EXAMPLE_SCORE faking a score for this same preview.
@@ -592,7 +609,21 @@ export function renderStaticScreen(
     .filter((a) => !isBrandLogoUrl(a.spriteUrl, brand.logoUrl))
     .slice(0, 4)
     .map((a) => ({ spriteUrl: a.spriteUrl, name: a.data?.name, productUrl: a.data?.productUrl }));
-  const content = renderRewardState(brand, copy, tier, null, engagedSample, () => {}, () => {});
+  // Same earned/near-miss logic as the live screen rather than a forced "won"
+  // state, so a merchant who previews a score below their entry bar sees
+  // exactly what that player will see.
+  const content = renderRewardState(
+    brand,
+    copy,
+    tier,
+    resolvedPreview.tierIndex !== -1,
+    exampleScore,
+    nextTierAbove(exampleScore, spec.rewards),
+    null,
+    engagedSample,
+    () => {},
+    () => {},
+  );
   const scoreEl = content.querySelector<HTMLElement>("[data-role='score-value']");
   if (scoreEl) scoreEl.textContent = String(exampleScore);
   const emailField = content.querySelector<HTMLInputElement>("[data-role='email-input']");
@@ -1074,10 +1105,98 @@ function formatExpiry(iso: string): string {
   }
 }
 
+/**
+ * Shown instead of a coupon block when the score cleared no tier.
+ *
+ * Reward tiers no longer start at 0 (REWARD_MIN_SCORE_FLOOR in
+ * lib/engine/specRules.ts), so falling short is an ordinary outcome rather
+ * than an edge case, and the screen has to give the player somewhere to go.
+ * It states the gap as a number and names what closes it, because "you didn't
+ * win" is a stop sign and "40 points from 10% off" is a target.
+ *
+ * `nextTier` is null only when the spec declares no tiers at all (a
+ * thanks-for-playing game). There is nothing to aim at then, so the copy
+ * stays warm and generic rather than inventing a threshold.
+ */
+function renderNearMissBlock(
+  brand: GameSpec["brand"],
+  finalScore: number,
+  nextTier: RewardTier | null,
+): HTMLElement {
+  const box = document.createElement("div");
+  box.dataset.role = "near-miss";
+  box.style.width = "100%";
+  box.style.margin = "4px 0 2px";
+  box.style.padding = "12px";
+  box.style.boxSizing = "border-box";
+  box.style.borderRadius = "12px";
+  box.style.border = `1px solid ${brand.foreground}22`;
+  box.style.background = `${brand.foreground}0d`;
+
+  const line = document.createElement("p");
+  line.dataset.role = "near-miss-line";
+  line.style.margin = "0";
+  line.style.fontSize = "14px";
+  line.style.fontWeight = "600";
+  line.style.lineHeight = "1.35";
+
+  if (!nextTier) {
+    line.textContent = "Thanks for playing — go again and beat your score.";
+    box.appendChild(line);
+    return box;
+  }
+
+  // Never below 1: this block only renders when the score missed every tier,
+  // so the gap is real, but Math.max keeps a rounding slip from printing
+  // "0 more points to go".
+  const gap = Math.max(1, nextTier.minScore - finalScore);
+  line.textContent = `${gap} more ${gap === 1 ? "point" : "points"} and ${nextTier.label} is yours.`;
+  box.appendChild(line);
+
+  const sub = document.createElement("p");
+  sub.style.margin = "4px 0 0";
+  sub.style.fontSize = "12px";
+  sub.style.opacity = "0.75";
+  sub.textContent = `You scored ${finalScore}. ${nextTier.minScore} unlocks it — one more run should do it.`;
+  box.appendChild(sub);
+
+  // How close they got, as a bar. A number alone under-sells a near miss;
+  // seeing the bar almost full is what makes the replay feel worth it.
+  const track = document.createElement("div");
+  track.style.marginTop = "10px";
+  track.style.height = "6px";
+  track.style.borderRadius = "999px";
+  track.style.overflow = "hidden";
+  track.style.background = `${brand.foreground}22`;
+
+  const fill = document.createElement("div");
+  fill.dataset.role = "near-miss-progress";
+  fill.style.height = "100%";
+  fill.style.borderRadius = "999px";
+  fill.style.background = brand.accent;
+  // Floor of 6% so a zero or near-zero score still shows a sliver of bar
+  // rather than an empty track that reads as a rendering bug. Guard the
+  // divide: minScore is validated above 0, but this runs against whatever
+  // spec the embed was handed.
+  const ratio = nextTier.minScore > 0 ? finalScore / nextTier.minScore : 0;
+  fill.style.width = `${Math.min(100, Math.max(6, Math.round(ratio * 100)))}%`;
+  track.appendChild(fill);
+  box.appendChild(track);
+
+  return box;
+}
+
 function renderRewardState(
   brand: GameSpec["brand"],
   copy: GameSpec["copy"],
   tier: GameSpec["rewards"][number],
+  /** False when the score cleared no tier's minScore — `tier` is then
+   * reward.ts's NO_REWARD_FALLBACK, not something the player won. */
+  earned: boolean,
+  /** The score just played, for the shortfall line. */
+  finalScore: number,
+  /** Cheapest tier still out of reach, or null when there is none. */
+  nextTier: RewardTier | null,
   serverCode: string | null,
   engaged: EngagedAsset[],
   onSubmitEmail: () => void,
@@ -1118,22 +1237,41 @@ function renderRewardState(
   // The code no longer lives on this line. It is claimed on demand by the
   // coupon block below, because a code shown here would have to be consumed
   // from the pool before the player had asked for it.
-  tierLine.textContent = tier.label;
+  //
+  // When nothing was earned, `tier` is NO_REWARD_FALLBACK and its label
+  // ("Thanks for playing") closes the screen down — it reads like the end of
+  // the interaction at the exact moment the player still has a reason to
+  // continue. The near-miss block below supplies the heading instead.
+  tierLine.textContent = earned ? tier.label : "So close!";
   tierLine.style.margin = "0 0 4px";
   tierLine.style.fontSize = "16px";
   tierLine.style.fontWeight = "600";
   tierLine.style.color = brand.accent;
   wrap.appendChild(tierLine);
 
-  if (tier.percentOff != null) {
+  // Only a tier the player actually cleared gets a coupon block. `earned` is
+  // load-bearing beyond the percentOff check: the fallback tier carries
+  // percentOff: null today, but reading the flag means a future fallback
+  // can't start handing out a claim button by accident.
+  if (earned && tier.percentOff != null) {
     wrap.appendChild(renderCouponBlock(brand, tier, serverCode, onClaimCoupon));
+  }
+
+  if (!earned) {
+    wrap.appendChild(renderNearMissBlock(brand, finalScore, nextTier));
   }
 
   const gallery = renderEngagedGallery(engaged, brand);
   if (gallery) wrap.appendChild(gallery);
 
+  // Lead capture only when there is a code to capture a lead *for*. The
+  // button says "Email it to me"; with no reward, "it" is nothing, and a
+  // player who types their address gets a confirmation for a message that
+  // could never contain anything. The near-miss screen keeps a single
+  // obvious action — play again — and asks for the email on the run that
+  // actually wins something.
   const emailRow = document.createElement("div");
-  emailRow.style.display = "flex";
+  emailRow.style.display = earned ? "flex" : "none";
   emailRow.style.gap = "8px";
   emailRow.style.marginTop = "8px";
   emailRow.style.flexWrap = "wrap";
@@ -1186,10 +1324,21 @@ function renderRewardState(
   emailStatus.style.minHeight = "1.2em";
   wrap.appendChild(emailStatus);
 
-  const replayButton = makeButton(copy.ctaReplay, "transparent", brand.foreground);
-  replayButton.style.marginTop = "10px";
-  replayButton.style.border = `1px solid ${brand.foreground}55`;
-  replayButton.style.color = brand.foreground;
+  // Solid accent when nothing was earned, outline when something was.
+  //
+  // The hierarchy follows what the player still has to do. With a coupon on
+  // screen, claiming it is the primary action and replaying is the quiet
+  // alternative. With no coupon, replaying IS the only way to get one, and
+  // leaving it as the same faint outline button it has always been buried
+  // the one thing this screen is asking for.
+  const replayButton = earned
+    ? makeButton(copy.ctaReplay, "transparent", brand.foreground)
+    : makeButton(copy.ctaReplay, brand.accent, brand.background);
+  replayButton.style.marginTop = earned ? "10px" : "4px";
+  if (earned) {
+    replayButton.style.border = `1px solid ${brand.foreground}55`;
+    replayButton.style.color = brand.foreground;
+  }
   replayButton.addEventListener("click", onReplay);
   wrap.appendChild(replayButton);
 
