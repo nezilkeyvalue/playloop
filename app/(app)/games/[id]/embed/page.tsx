@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { AuthGate } from "@/components/AuthGate";
+import { GameSubNav } from "@/components/GameSubNav";
 import {
   findIncompleteRoles,
   getCapability,
@@ -152,6 +153,7 @@ function EmbedPanel() {
 
   return (
     <div className="mx-auto max-w-xl space-y-8">
+      <GameSubNav gameId={id} />
       <h1 className="font-display text-2xl font-semibold tracking-tight">Publish &amp; embed</h1>
 
       <section className="rounded-2xl border border-border bg-card p-5 shadow-card">
