@@ -50,17 +50,28 @@ lib/runtime/            Client-side game player
   fixtures/sampleGameSpec.ts   hand-written GameSpecs for offline dev/demo (no pipeline needed)
 
 lib/db/                 Dev-mode JSON-file store, or Supabase when SUPABASE_URL is set
-lib/storage.ts          Blob storage (local disk in dev, Vercel Blob in prod)
+lib/auth/               Google SSO via Supabase Auth
+  config.ts               isAuthEnabled() — the one switch; safe to import from client code
+  server.ts               getSessionUser/requireAccount/ownsRecord — the ONLY request -> accountId path
+  browser.ts              cookie-backed browser client (auth only, never data)
+lib/storage.ts          Blob storage (Supabase Storage, or local disk when unconfigured)
 lib/rateLimit.ts, lib/slug.ts
+
+supabase/               CLI project: config.toml (incl. [auth.external.google]) + migrations/
+scripts/migrate-dev-data.ts   one-shot ./dev-data -> Supabase (rows + blobs + URL rewrite)
 
 app/(marketing)/        Public landing page, gallery
 app/(app)/               Builder UI: /build, /games, /games/[id] (the editor), /games/[id]/stats, /games/[id]/embed
+app/auth/                callback (OAuth code -> session cookies) and signout
 app/api/                 generate, games, plays, leads, upload — the HTTP surface over lib/engine + lib/db
 app/play/[slug]/         Hosted standalone game page
 app/embed.js/            The embed script third-party sites load
 app/demo-storefront/     Mock storefront showing the embed in context
 
 components/              Shared UI (Logomark, Reveal, AnimatedNumber, EditorIcons, GamePreviewModal, HeroDoodle, ShowcaseSlideshow)
+  AuthProvider.tsx         session context + the shared login modal + requireLogin()
+  AuthButton.tsx           header control: "Log in" / avatar menu
+  AuthGate.tsx             per-page gate: sign-in card instead of a doomed fetch
 ```
 
 ## Commands
@@ -71,12 +82,54 @@ npm run typecheck    # tsc --noEmit — run this after every change, it's fast a
 npm run lint
 npm run build
 npm run test:extract # runs the extraction ladder against scripts/sample-sites.json
+npm run migrate:dev-data -- --owner you@example.com   # ./dev-data -> Supabase (add --dry-run first)
 ```
 
-No external accounts needed. Leave `SUPABASE_URL` unset → JSON-file DB under
-`./dev-data/`. Leave `GEMINI_API_KEY` unset → deterministic fallback in
-`brain.ts` (same code path as a real Gemini timeout, so "no key" and
-"degraded" are never two different behaviors to maintain).
+Supabase, when you're changing it:
+
+```bash
+supabase link --project-ref <ref>   # once, per checkout
+supabase db push                    # apply supabase/migrations/*
+supabase config push                # apply supabase/config.toml (auth URLs + Google provider)
+```
+
+Still no external accounts needed to run it. Leave `SUPABASE_URL` unset →
+JSON-file DB under `./dev-data/` and local-disk blobs. Leave the two
+`NEXT_PUBLIC_SUPABASE_*` vars unset → no login wall, no login button, one
+implicit account (see the auth section below). Leave `GEMINI_API_KEY` unset →
+deterministic fallback in `brain.ts` (same code path as a real Gemini timeout,
+so "no key" and "degraded" are never two different behaviors to maintain).
+
+## Auth and persistence
+
+Sign-in is Google SSO through Supabase Auth. `accounts.id` **is**
+`auth.users.id` — the same uuid — which is what makes every
+`auth.uid() = account_id` RLS policy in the schema correct rather than
+aspirational.
+
+Three rules:
+
+1. **`lib/auth/server.ts#requireAccount()` is the only way a route learns who
+   is calling.** It returns either `{ accountId }` or a ready-made 401. Don't
+   read cookies or call `getUser()` anywhere else, and never authorize off
+   `getSession()` — that returns whatever the cookie claims without verifying
+   it.
+2. **Reading a row by id is not authorization.** Every per-game route pairs
+   `getGameById()` with `ownsRecord()`, and a row owned by someone else
+   returns **404, not 403** — a 403 confirms the id exists, which leaks which
+   game uuids are real.
+3. **Auth is optional and must stay optional.** With the two
+   `NEXT_PUBLIC_SUPABASE_*` vars unset, `isAuthEnabled()` is false,
+   `requireAccount()` hands back `accountId: null` (the single implicit dev
+   account this codebase used everywhere before SSO existed), `AuthButton`
+   renders nothing and `AuthGate` renders its children. That path is what
+   keeps the zero-external-accounts local run above true — don't add a check
+   that assumes a user exists.
+
+`AuthProvider` is mounted in `app/(marketing)/layout.tsx` and
+`app/(app)/layout.tsx`, **not** in the root layout, so `app/play/[slug]` and
+the embed don't pull the Supabase auth client into the bundle a third-party
+storefront loads. Keep it that way.
 
 ## Conventions and hazards learned the hard way
 
@@ -211,6 +264,25 @@ touching the related area.
   brought uniqlo.com's total extraction time down to ~11s (one honest
   timeout — the real floor, since confirming a truly silent origin
   necessarily costs one full wait).
+- **Supabase Storage builds the `Cache-Control` header for you.** The
+  `cacheControl` upload option is *not* a full header value — Storage emits
+  `public, max-age=<your string>`. Passing
+  `"public, max-age=31536000, immutable"` yields the malformed
+  `public, max-age=public, max-age=31536000, immutable`, which was shipped
+  once and caught only by reading the response headers off a live object.
+  `lib/storage.ts` passes `"31536000, immutable"`. Note also that the public
+  URL is CDN-fronted with that same long max-age, so re-uploading over an
+  object will *not* show you the new headers — test with a fresh object name.
+- **Migrating a game row without rewriting its sprite URLs looks like it
+  worked.** Sprite URLs live at arbitrary depths inside the `spec` jsonb
+  blob, as `/dev-blob/<hash>.<ext>` paths that only ever resolved on one
+  laptop. `scripts/migrate-dev-data.ts` uploads the blobs first and rewrites
+  every occurrence in `spec`/`inventory`/`match` before inserting a single
+  row, because a row-only copy passes every check you'd think to run and then
+  renders a game with no images. The dev store also wrote `.bin` for any
+  content type it had no extension for, so that script sniffs magic bytes
+  rather than trusting the file name — the `sprites` bucket has a MIME
+  allowlist and rejects `application/octet-stream`.
 - **macOS `sed` needs `-E`** for extended regex (e.g. `\+`) if you're
   scripting edits — BSD sed, not GNU.
 - **Verification workflow for UI changes:** temporarily

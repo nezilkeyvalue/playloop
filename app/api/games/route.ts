@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createGame, listGames } from "@/lib/db/queries";
+import { requireAccount } from "@/lib/auth/server";
 import type { GameSpec } from "@/lib/engine/types";
 
 const placementSchema = z.enum(["section", "fullpage", "modal", "ad"]);
@@ -55,6 +56,12 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  // Manual mode creates a real, owned game, so it needs a real owner. With
+  // auth unconfigured this still returns { accountId: null } — the single
+  // implicit dev account — so the local build is unaffected.
+  const auth = await requireAccount();
+  if (!auth.ok) return auth.response;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -71,7 +78,7 @@ export async function POST(req: NextRequest) {
   }
 
   const game = await createGame({
-    accountId: null, // MVP stub: single implicit dev account, see queries.ts
+    accountId: auth.accountId,
     name: parsed.data.name,
     spec: parsed.data.spec as unknown as GameSpec,
     placement: parsed.data.placement,
@@ -81,6 +88,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
-  const games = await listGames(null);
+  const auth = await requireAccount();
+  if (!auth.ok) return auth.response;
+
+  const games = await listGames(auth.accountId);
   return NextResponse.json(games);
 }

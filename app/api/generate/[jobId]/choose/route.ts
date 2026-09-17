@@ -15,6 +15,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 
 import { createGame, getJob, updateJob } from "@/lib/db/queries";
+import { notFound, ownsRecord, requireAccount } from "@/lib/auth/server";
 import type { GameSpec, JobStage, TemplateId } from "@/lib/engine/types";
 import type { GenerationCallbacks } from "@/lib/engine";
 import { runComposition } from "@/lib/engine";
@@ -81,7 +82,10 @@ async function runCompositionPhase(jobId: string, template: TemplateId): Promise
       message: "Your game is ready.",
     });
     const game = await createGame({
-      accountId: null,
+      // The game inherits the job's owner. Read from the job rather than
+      // re-resolving the session: this runs in an `after()` background task,
+      // where the request's cookies are no longer the thing to trust.
+      accountId: job.accountId,
       name: deriveGameName(result.spec, job.sourceUrl),
       spec: result.spec,
       placement: result.spec.placements[0] ?? "section",
@@ -98,6 +102,9 @@ async function runCompositionPhase(jobId: string, template: TemplateId): Promise
 export async function POST(req: NextRequest, { params }: { params: Promise<{ jobId: string }> }) {
   const { jobId } = await params;
 
+  const auth = await requireAccount();
+  if (!auth.ok) return auth.response;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -110,9 +117,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ job
   }
 
   const job = await getJob(jobId);
-  if (!job) {
-    return NextResponse.json({ error: "not_found" }, { status: 404 });
-  }
+  if (!job || !ownsRecord(job, auth.accountId)) return notFound();
   if (job.stage !== "choosing") {
     // Already resumed (double-click), or not far enough along yet — either
     // way, resuming again would double-create a game.

@@ -11,6 +11,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { AuthGate } from "@/components/AuthGate";
 import type { Job, TemplateId } from "@/lib/engine/types";
 import { getTemplatePickerMeta } from "@/lib/capabilities";
 
@@ -30,6 +31,17 @@ const STAGE_LABELS: Partial<Record<Job["stage"], string>> = {
 };
 
 export default function AutoBuildProgressPage() {
+  return (
+    <AuthGate
+      title="Sign in to see this build"
+      description="A build belongs to the account that started it. Sign in to watch its progress."
+    >
+      <AutoBuildProgress />
+    </AuthGate>
+  );
+}
+
+function AutoBuildProgress() {
   const { jobId } = useParams<{ jobId: string }>();
   const router = useRouter();
   const [job, setJob] = useState<Job | null>(null);

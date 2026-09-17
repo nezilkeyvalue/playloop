@@ -25,6 +25,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 
 import { createJob, updateJob } from "@/lib/db/queries";
+import { requireAccount } from "@/lib/auth/server";
 import { checkRateLimit } from "@/lib/rateLimit";
 import type { JobStage } from "@/lib/engine/types";
 // @/lib/engine is another track's module (pipeline). It is not visible to
@@ -149,7 +150,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const job = await createJob({ accountId: null, mode: input.mode, sourceUrl });
+  // A generation job fetches a third-party site server-side and produces a
+  // game that belongs to someone. Both of those want a real owner, so this is
+  // where the landing page's "Make it playable" login gate is actually
+  // enforced — the client-side modal is a courtesy, this is the check.
+  const auth = await requireAccount();
+  if (!auth.ok) return auth.response;
+
+  const job = await createJob({ accountId: auth.accountId, mode: input.mode, sourceUrl });
 
   after(() => runExtractionPhase(job.id, input));
 

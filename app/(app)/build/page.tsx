@@ -3,9 +3,23 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { AuthGate } from "@/components/AuthGate";
+import { useAuth } from "@/components/AuthProvider";
 
 export default function BuildPage() {
+  return (
+    <AuthGate
+      title="Sign in to build a game"
+      description="We save every game to your account so you can edit, publish and embed it later."
+    >
+      <BuildForm />
+    </AuthGate>
+  );
+}
+
+function BuildForm() {
   const router = useRouter();
+  const { requireLogin } = useAuth();
   const [url, setUrl] = useState("");
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -14,6 +28,7 @@ export default function BuildPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!rightsConfirmed) return;
+    if (!requireLogin()) return;
     setError(null);
     setLoading(true);
     try {
@@ -22,6 +37,11 @@ export default function BuildPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, rightsConfirmed }),
       });
+      if (res.status === 401) {
+        setLoading(false);
+        requireLogin("Your session expired. Sign in again to build your game.");
+        return;
+      }
       if (!res.ok) throw new Error("Could not start generation. Try again.");
       const { jobId } = (await res.json()) as { jobId: string };
       router.push(`/build/auto/${jobId}`);

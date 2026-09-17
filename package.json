@@ -9,11 +9,13 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test:extract": "tsx scripts/test-extract.ts",
-    "test:matcher": "tsx scripts/test-matcher.ts"
+    "test:matcher": "tsx scripts/test-matcher.ts",
+    "migrate:dev-data": "tsx scripts/migrate-dev-data.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
     "@sparticuz/chromium": "^153.0.0",
+    "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.45.4",
     "cheerio": "^1.0.0",
     "clsx": "^2.1.1",
@@ -32,6 +34,7 @@
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
     "autoprefixer": "^10.4.20",
+    "dotenv": "^17.4.2",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
     "tsx": "^4.19.1",

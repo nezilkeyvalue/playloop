@@ -10,6 +10,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AuthGate } from "@/components/AuthGate";
 import { listCapabilities } from "@/lib/capabilities";
 import { GamePreviewModal } from "@/components/GamePreviewModal";
 import type {
@@ -66,6 +67,17 @@ function defaultTuning(capability: GameCapability): Record<string, number> {
 }
 
 export default function ManualBuildPage() {
+  return (
+    <AuthGate
+      title="Sign in to upload images"
+      description="Uploads are saved to your account's library so your game keeps working after you publish it."
+    >
+      <ManualBuildWizard />
+    </AuthGate>
+  );
+}
+
+function ManualBuildWizard() {
   const router = useRouter();
   const allCapabilities = useMemo(() => listCapabilities(), []);
 

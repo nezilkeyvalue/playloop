@@ -19,6 +19,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { AuthGate } from "@/components/AuthGate";
 import {
   findIncompleteRoles,
   getCapability,
@@ -234,6 +235,14 @@ const PEER_FOCUS_RING_CLASS =
   "peer-focus-visible:ring-offset-background";
 
 export default function GamePreviewEditorPage() {
+  return (
+    <AuthGate title="Sign in to edit this game" description="These pages show one game's spec, stats and embed code. Sign in to the account that owns it.">
+      <GameEditor />
+    </AuthGate>
+  );
+}
+
+function GameEditor() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [game, setGame] = useState<GameRecord | null>(null);

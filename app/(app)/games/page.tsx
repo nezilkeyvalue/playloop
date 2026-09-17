@@ -6,21 +6,46 @@ import Link from "next/link";
 import type { GameRecord } from "@/lib/engine/types";
 import { GamePreviewModal } from "@/components/GamePreviewModal";
 import { AnimatedNumber } from "@/components/AnimatedNumber";
+import { AuthGate } from "@/components/AuthGate";
+import { useAuth } from "@/components/AuthProvider";
 
+/**
+ * "My games" is now literally my games: GET /api/games returns only the rows
+ * owned by the signed-in account (app/api/games/route.ts). The AuthGate
+ * wrapper is what keeps a signed-out visitor from seeing an empty list and
+ * concluding their games were deleted.
+ */
 export default function GamesListPage() {
+  return (
+    <AuthGate>
+      <GamesList />
+    </AuthGate>
+  );
+}
+
+function GamesList() {
   const [games, setGames] = useState<GameRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [previewGame, setPreviewGame] = useState<GameRecord | null>(null);
+  const { user, openLogin } = useAuth();
 
   useEffect(() => {
     fetch("/api/games", { cache: "no-store" })
       .then((res) => {
+        // The session can expire between AuthGate letting us through and this
+        // fetch landing; reopen the modal rather than showing a bare error.
+        if (res.status === 401) {
+          openLogin("Your session expired. Sign in again to see your games.");
+          return [];
+        }
         if (!res.ok) throw new Error("Could not load games.");
         return res.json();
       })
       .then(setGames)
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load."));
-  }, []);
+    // Refetch when the signed-in account changes — otherwise logging in as a
+    // different user leaves the previous account's list on screen.
+  }, [user?.id, openLogin]);
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this game? This cannot be undone.")) return;
