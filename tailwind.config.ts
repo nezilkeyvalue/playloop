@@ -40,8 +40,6 @@ const config: Config = {
           "sans-serif",
         ],
       },
-      // Quiet, barely-there elevation — no color, no glow. A hairline
-      // border does most of the separation work; shadow is just enough
       boxShadow: {
         card: "0 1px 2px rgb(0 0 0 / 0.04), 0 1px 1px rgb(0 0 0 / 0.03)",
         elevated:
