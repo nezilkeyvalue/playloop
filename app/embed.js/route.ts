@@ -6,7 +6,8 @@
 //
 //   <div data-playloop="slug" data-placement="modal" data-min-width="320"
 //        data-width="480" data-height="640" data-trigger="load"
-//        data-trigger-label="Play & win"></div>
+//        data-trigger-label="Play & win" data-trigger-style="floating"
+//        data-trigger-position="bottom-right"></div>
 //   <script src="https://playloop.app/embed.js" async></script>
 //
 // This route serves that script as `application/javascript`, cacheable at
@@ -31,6 +32,17 @@
 //     click; "load" also opens it once automatically shortly after the page
 //     loads (the button still renders, so a visitor who closes it can
 //     reopen it). Reopens reuse the same iframe rather than rebuilding it.
+//     data-trigger-style="floating" pins the generated button to a screen
+//     corner (data-trigger-position, default bottom-right) as a chat-
+//     widget-style bubble, appended to <body> instead of the host element
+//     so position:fixed keeps it in place regardless of the host div's own
+//     scroll position — ignored when data-trigger-selector is set, since
+//     then the merchant's own element is the trigger, not one this script
+//     builds. data-btn-text-size ("sm"/"md"/"lg"), data-btn-text-color,
+//     data-btn-bg, data-btn-shadow ("none"/"soft"/"medium"/"strong"),
+//     data-btn-glow="1" and data-btn-animation ("pulse"/"bounce"/"shake"/
+//     "spin-football"/"spin-star") style the generated trigger button
+//     itself — all ignored under data-trigger-selector for the same reason.
 //   - data-width/data-height (present for section/modal, not fullpage) are
 //     forwarded to /play/:slug as ?width=/?height=, which lib/runtime/
 //     stage.ts treats as a cap/target layered on top of — never smaller
@@ -62,6 +74,29 @@ function buildLoaderScript(fallbackOrigin: string): string {
     var FALLBACK_ORIGIN = ${JSON.stringify(fallbackOrigin)};
     var MAX_IFRAME_HEIGHT = 4000;
     var DEFAULT_TRIGGER_LABEL = 'Play & win';
+    var TRIGGER_SHADOW_VALUES = {
+      none: 'none',
+      soft: '0 2px 8px rgba(0,0,0,.12)',
+      medium: '0 4px 14px rgba(0,0,0,.18)',
+      strong: '0 10px 30px rgba(0,0,0,.35)'
+    };
+
+    // Used for the glow's colored spread, so it reads as "this button glowing"
+    // rather than a generic accent — falls back to the default indigo glow if
+    // a merchant's bg color string is ever malformed.
+    function hexToRgba(hex, alpha) {
+      try {
+        var h = String(hex).replace('#', '');
+        if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+        var r = parseInt(h.substring(0, 2), 16);
+        var g = parseInt(h.substring(2, 4), 16);
+        var b = parseInt(h.substring(4, 6), 16);
+        if (isNaN(r) || isNaN(g) || isNaN(b)) return 'rgba(79,70,229,' + alpha + ')';
+        return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+      } catch (e) {
+        return 'rgba(79,70,229,' + alpha + ')';
+      }
+    }
 
     function resolveOrigin() {
       try {
@@ -180,12 +215,36 @@ function buildLoaderScript(fallbackOrigin: string): string {
       var style = document.createElement('style');
       style.textContent =
         '.playloop-trigger{display:inline-flex;align-items:center;justify-content:center;' +
-        'padding:12px 26px;border-radius:999px;border:0;font:600 15px/1.2 -apple-system,' +
-        'BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;cursor:pointer;background:#4F46E5;' +
-        'color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.18);transition:filter .15s ease,' +
-        'transform .1s ease}' +
+        'border-radius:999px;border:0;font:600 15px/1.2 -apple-system,BlinkMacSystemFont,' +
+        '"Segoe UI",Roboto,sans-serif;cursor:pointer;transition:filter .15s ease,' +
+        'transform .1s ease;box-shadow:var(--playloop-shadow,0 4px 14px rgba(0,0,0,.18))}' +
         '.playloop-trigger:hover{filter:brightness(1.08)}' +
         '.playloop-trigger:active{transform:scale(.97)}' +
+        '.playloop-trigger-text-sm{font-size:13px;padding:9px 20px}' +
+        '.playloop-trigger-text-md{font-size:15px;padding:12px 26px}' +
+        '.playloop-trigger-text-lg{font-size:18px;padding:15px 32px}' +
+        '.playloop-trigger-icon{display:inline-block;margin-right:8px;font-size:1.15em;' +
+        'line-height:1;transform-origin:50% 50%}' +
+        '.playloop-anim-spin-football .playloop-trigger-icon,' +
+        '.playloop-anim-spin-star .playloop-trigger-icon{' +
+        'animation:playloop-anim-spin 1.6s linear infinite}' +
+        '@keyframes playloop-anim-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}' +
+        '@keyframes playloop-anim-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}' +
+        '@keyframes playloop-anim-bounce{0%,100%{transform:translateY(0)}' +
+        '50%{transform:translateY(-7px)}}' +
+        '@keyframes playloop-anim-shake{0%,92%,100%{transform:rotate(0)}' +
+        '94%{transform:rotate(-6deg)}96%{transform:rotate(6deg)}98%{transform:rotate(-4deg)}}' +
+        '@keyframes playloop-anim-glow{' +
+        '0%,100%{box-shadow:var(--playloop-shadow,0 4px 14px rgba(0,0,0,.18))}' +
+        '50%{box-shadow:var(--playloop-shadow,0 4px 14px rgba(0,0,0,.18)),' +
+        '0 0 24px 6px var(--playloop-glow-color,rgba(79,70,229,.55))}}' +
+        '.playloop-trigger-floating{position:fixed;z-index:2147482999}' +
+        '.playloop-trigger-floating.playloop-pos-bottom-right{right:20px;bottom:20px}' +
+        '.playloop-trigger-floating.playloop-pos-bottom-left{left:20px;bottom:20px}' +
+        '.playloop-trigger-floating.playloop-pos-top-right{right:20px;top:20px}' +
+        '.playloop-trigger-floating.playloop-pos-top-left{left:20px;top:20px}' +
+        '@keyframes playloop-float-in{from{opacity:0;transform:translateY(14px) scale(.92)}' +
+        'to{opacity:1;transform:translateY(0) scale(1)}}' +
         '.playloop-overlay{position:fixed;inset:0;z-index:2147483000;display:none;' +
         'align-items:center;justify-content:center;padding:20px;background:rgba(15,15,20,.62);' +
         'opacity:0;transition:opacity .18s ease}' +
@@ -208,6 +267,22 @@ function buildLoaderScript(fallbackOrigin: string): string {
       var width = numAttr(host, 'data-width');
       var triggerSelector = host.getAttribute('data-trigger-selector');
       var openOnLoad = host.getAttribute('data-trigger') === 'load';
+      var floating = host.getAttribute('data-trigger-style') === 'floating';
+      var position = host.getAttribute('data-trigger-position') || 'bottom-right';
+      if (['bottom-right', 'bottom-left', 'top-right', 'top-left'].indexOf(position) === -1) {
+        position = 'bottom-right';
+      }
+      var textSize = host.getAttribute('data-btn-text-size') || 'md';
+      if (['sm', 'md', 'lg'].indexOf(textSize) === -1) textSize = 'md';
+      var textColor = host.getAttribute('data-btn-text-color') || '#ffffff';
+      var bgColor = host.getAttribute('data-btn-bg') || '#4F46E5';
+      var shadowLevel = host.getAttribute('data-btn-shadow') || 'medium';
+      if (['none', 'soft', 'medium', 'strong'].indexOf(shadowLevel) === -1) shadowLevel = 'medium';
+      var glow = host.getAttribute('data-btn-glow') === '1';
+      var animation = host.getAttribute('data-btn-animation') || 'none';
+      if (['none', 'pulse', 'bounce', 'shake', 'spin-football', 'spin-star'].indexOf(animation) === -1) {
+        animation = 'none';
+      }
 
       var overlay = null; // built on first open only — never while hidden
       var onKeydown = function (e) {
@@ -285,10 +360,56 @@ function buildLoaderScript(fallbackOrigin: string): string {
       } else {
         var button = document.createElement('button');
         button.type = 'button';
-        button.className = 'playloop-trigger';
-        button.textContent = label;
+        var classes = ['playloop-trigger', 'playloop-trigger-text-' + textSize];
+        if (floating) classes.push('playloop-trigger-floating', 'playloop-pos-' + position);
+        // The spin lives on the icon glyph via a descendant selector (CSS
+        // above), not on the button's own "animation" property below — that
+        // lets it run at the same time as an entrance pop-in or a glow pulse
+        // instead of one clobbering the other (an element only gets ONE
+        // "animation" declaration; listing several rules that each set it
+        // doesn't merge them, the last one wins).
+        if (animation === 'spin-football' || animation === 'spin-star') {
+          classes.push('playloop-anim-' + animation);
+        }
+        button.className = classes.join(' ');
+        button.style.color = textColor;
+        button.style.background = bgColor;
+        button.style.setProperty('--playloop-shadow', TRIGGER_SHADOW_VALUES[shadowLevel]);
+        if (glow) {
+          button.style.setProperty('--playloop-glow-color', hexToRgba(bgColor, 0.55));
+        }
+
+        var runningAnims = [];
+        if (floating) runningAnims.push('playloop-float-in .35s ease both');
+        if (animation === 'pulse') runningAnims.push('playloop-anim-pulse 1.6s ease-in-out infinite');
+        if (animation === 'bounce') runningAnims.push('playloop-anim-bounce 1.2s ease-in-out infinite');
+        if (animation === 'shake') runningAnims.push('playloop-anim-shake 2.4s ease-in-out infinite');
+        if (glow) runningAnims.push('playloop-anim-glow 1.8s ease-in-out infinite');
+        if (runningAnims.length) button.style.animation = runningAnims.join(', ');
+
+        if (animation === 'spin-football' || animation === 'spin-star') {
+          var icon = document.createElement('span');
+          icon.className = 'playloop-trigger-icon';
+          icon.setAttribute('aria-hidden', 'true');
+          icon.textContent = animation === 'spin-football' ? '⚽' : '⭐';
+          button.appendChild(icon);
+        }
+        var labelSpan = document.createElement('span');
+        labelSpan.textContent = label;
+        button.appendChild(labelSpan);
+
         button.addEventListener('click', open);
-        host.appendChild(button);
+        // A floating trigger is a chat-widget-style bubble — pinned to the
+        // viewport, not wherever the host div happens to sit in the page's
+        // scroll flow (it may be far below the fold). Appending it to
+        // document.body instead of the host div is what lets position:fixed
+        // keep it in place regardless of scroll position; the host div
+        // itself stays empty, same as the custom-selector path above.
+        if (floating) {
+          document.body.appendChild(button);
+        } else {
+          host.appendChild(button);
+        }
       }
 
       if (openOnLoad) {

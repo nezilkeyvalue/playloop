@@ -15,6 +15,7 @@ import {
   CursorClickIcon,
   ExpandIcon,
   LayersIcon,
+  PaletteIcon,
   ResizeIcon,
 } from "@/components/EditorIcons";
 import {
@@ -25,9 +26,17 @@ import {
 import type { RoleGap } from "@/lib/capabilities";
 import {
   DEFAULT_MODAL_TRIGGER_LABEL,
+  DEFAULT_TRIGGER_BG_COLOR,
+  DEFAULT_TRIGGER_TEXT_COLOR,
   buildEmbedSnippet,
   buildIframeFallback,
   type ModalTrigger,
+  type TriggerAnimation,
+  type TriggerButtonStyle,
+  type TriggerPosition,
+  type TriggerShadow,
+  type TriggerStyle,
+  type TriggerTextSize,
 } from "@/lib/engine/embedSnippet";
 import type { GameCapability, GameRecord, Placement } from "@/lib/engine/types";
 
@@ -51,6 +60,32 @@ const PLACEMENT_ICONS: Record<Placement, ReactNode> = {
   modal: <CursorClickIcon className="h-4 w-4" />,
   ad: <ResizeIcon className="h-4 w-4" />,
 };
+
+const BUTTON_TEXT_SIZES: [TriggerTextSize, string][] = [
+  ["sm", "Small"],
+  ["md", "Medium"],
+  ["lg", "Large"],
+];
+
+const BUTTON_SHADOWS: [TriggerShadow, string][] = [
+  ["none", "None"],
+  ["soft", "Soft"],
+  ["medium", "Medium"],
+  ["strong", "Strong"],
+];
+
+/** Emoji preview lives here purely as a swatch in the picker UI — the actual
+ * glyph rendered on a merchant's page is embed.js's own choice
+ * (mountModal's icon.textContent), kept in sync by hand since this list
+ * only ever grows one predefined animation at a time. */
+const BUTTON_ANIMATIONS: [TriggerAnimation, string, string | null][] = [
+  ["none", "None", null],
+  ["pulse", "Pulse", null],
+  ["bounce", "Bounce", null],
+  ["shake", "Shake", null],
+  ["spin-football", "Spinning football", "⚽"],
+  ["spin-star", "Spinning star", "⭐"],
+];
 
 const MIN_CUSTOM_WIDTH = 240;
 const MAX_CUSTOM_WIDTH = 1200;
@@ -120,6 +155,14 @@ function EmbedPanel() {
   const [placement, setPlacement] = useState<Placement>("section");
   const [triggerLabel, setTriggerLabel] = useState(DEFAULT_MODAL_TRIGGER_LABEL);
   const [triggerMode, setTriggerMode] = useState<ModalTrigger>("click");
+  const [triggerStyle, setTriggerStyle] = useState<TriggerStyle>("inline");
+  const [triggerPosition, setTriggerPosition] = useState<TriggerPosition>("bottom-right");
+  const [btnTextSize, setBtnTextSize] = useState<TriggerTextSize>("md");
+  const [btnTextColor, setBtnTextColor] = useState(DEFAULT_TRIGGER_TEXT_COLOR);
+  const [btnBgColor, setBtnBgColor] = useState(DEFAULT_TRIGGER_BG_COLOR);
+  const [btnShadow, setBtnShadow] = useState<TriggerShadow>("medium");
+  const [btnGlow, setBtnGlow] = useState(false);
+  const [btnAnimation, setBtnAnimation] = useState<TriggerAnimation>("none");
   const [sizeMode, setSizeMode] = useState<"auto" | "custom">("auto");
   const [customWidth, setCustomWidth] = useState(480);
   const [customHeight, setCustomHeight] = useState(600);
@@ -168,6 +211,20 @@ function EmbedPanel() {
   const width = sizeMode === "custom" ? customWidth : undefined;
   const height = sizeMode === "custom" && heightApplies ? customHeight : undefined;
 
+  // Memoized so EmbedPreview's rebuild effect (keyed on this object) only
+  // fires when a button-style value actually changes, not on every render.
+  const buttonStyle = useMemo<TriggerButtonStyle>(
+    () => ({
+      textSize: btnTextSize,
+      textColor: btnTextColor,
+      bgColor: btnBgColor,
+      shadow: btnShadow,
+      glow: btnGlow,
+      animation: btnAnimation,
+    }),
+    [btnTextSize, btnTextColor, btnBgColor, btnShadow, btnGlow, btnAnimation],
+  );
+
   // Recomputed from local state rather than pinned to whatever the last
   // publish response said: the snippet is self-describing (it carries its
   // own data-*), so a merchant previewing a different placement/size/trigger
@@ -186,6 +243,9 @@ function EmbedPanel() {
           appUrl,
           triggerLabel,
           trigger: triggerMode,
+          triggerStyle,
+          triggerPosition,
+          buttonStyle,
           width,
           height,
         })
@@ -378,6 +438,132 @@ function EmbedPanel() {
                   closes it can open it again.
                 </p>
               )}
+
+              <div className="mt-4 border-t border-border pt-4">
+                <span className="mb-1.5 block text-xs text-muted">Trigger style</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <TriggerModeButton active={triggerStyle === "inline"} onClick={() => setTriggerStyle("inline")}>
+                    <span className="font-medium">Inline button</span>
+                    <span className="block text-xs font-normal opacity-80">
+                      Sits where you place the embed
+                    </span>
+                  </TriggerModeButton>
+                  <TriggerModeButton
+                    active={triggerStyle === "floating"}
+                    onClick={() => setTriggerStyle("floating")}
+                  >
+                    <span className="font-medium">Floating button</span>
+                    <span className="block text-xs font-normal opacity-80">
+                      Pinned to a screen corner
+                    </span>
+                  </TriggerModeButton>
+                </div>
+                {triggerStyle === "floating" && (
+                  <div className="mt-3">
+                    <span className="mb-1.5 block text-xs text-muted">Corner</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(
+                        [
+                          ["bottom-right", "Bottom right"],
+                          ["bottom-left", "Bottom left"],
+                          ["top-right", "Top right"],
+                          ["top-left", "Top left"],
+                        ] as [TriggerPosition, string][]
+                      ).map(([value, label]) => (
+                        <TriggerModeButton
+                          key={value}
+                          active={triggerPosition === value}
+                          onClick={() => setTriggerPosition(value)}
+                        >
+                          <span className="font-medium">{label}</span>
+                        </TriggerModeButton>
+                      ))}
+                    </div>
+                    <p className="mt-3 text-xs text-muted">
+                      Stays visible in that corner no matter where on the page a visitor has
+                      scrolled to — like a chat widget bubble.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </EditorSection>
+          )}
+
+          {placement === "modal" && (
+            <EditorSection
+              icon={<PaletteIcon className="h-4 w-4" />}
+              title="Button style"
+              description="Text size, colors, shadow, glow and animation"
+            >
+              <div className="space-y-4">
+                <div>
+                  <span className="mb-1.5 block text-xs text-muted">Text size</span>
+                  <div className="grid grid-cols-3 gap-2">
+                    {BUTTON_TEXT_SIZES.map(([value, label]) => (
+                      <TriggerModeButton
+                        key={value}
+                        active={btnTextSize === value}
+                        onClick={() => setBtnTextSize(value)}
+                      >
+                        <span className="font-medium">{label}</span>
+                      </TriggerModeButton>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <ColorField label="Text color" value={btnTextColor} onChange={setBtnTextColor} />
+                  <ColorField label="Button color" value={btnBgColor} onChange={setBtnBgColor} />
+                </div>
+
+                <div>
+                  <span className="mb-1.5 block text-xs text-muted">Shadow</span>
+                  <div className="grid grid-cols-4 gap-2">
+                    {BUTTON_SHADOWS.map(([value, label]) => (
+                      <TriggerModeButton
+                        key={value}
+                        active={btnShadow === value}
+                        onClick={() => setBtnShadow(value)}
+                      >
+                        <span className="text-xs font-medium">{label}</span>
+                      </TriggerModeButton>
+                    ))}
+                  </div>
+                </div>
+
+                <label className="flex items-center justify-between rounded-xl border border-border px-3.5 py-2.5 text-sm">
+                  <span>
+                    <span className="font-medium">Glow</span>
+                    <span className="block text-xs font-normal text-muted">
+                      A soft pulsing halo in the button&apos;s own color
+                    </span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={btnGlow}
+                    onChange={(e) => setBtnGlow(e.target.checked)}
+                    className="h-4 w-4 accent-primary"
+                  />
+                </label>
+
+                <div>
+                  <span className="mb-1.5 block text-xs text-muted">Animation</span>
+                  <div className="grid grid-cols-3 gap-2">
+                    {BUTTON_ANIMATIONS.map(([value, label, glyph]) => (
+                      <TriggerModeButton
+                        key={value}
+                        active={btnAnimation === value}
+                        onClick={() => setBtnAnimation(value)}
+                      >
+                        <span className="font-medium">
+                          {glyph ? `${glyph} ` : ""}
+                          {label}
+                        </span>
+                      </TriggerModeButton>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </EditorSection>
           )}
 
@@ -415,6 +601,9 @@ function EmbedPanel() {
                   placement={placement}
                   triggerLabel={triggerLabel}
                   trigger={triggerMode}
+                  triggerStyle={triggerStyle}
+                  triggerPosition={triggerPosition}
+                  buttonStyle={buttonStyle}
                   width={width}
                   height={height}
                 />
@@ -424,6 +613,13 @@ function EmbedPanel() {
                 </p>
               )}
             </div>
+            {placement === "modal" && triggerStyle === "floating" && slug && (
+              <p className="border-t border-border px-4 py-2 text-xs text-muted">
+                Pinned to this page&apos;s own {triggerPosition.replace("-", " ")} corner, not
+                inside this card — that&apos;s how it&apos;ll behave on your site too. Scroll to
+                see it stay in place.
+              </p>
+            )}
           </section>
 
           {embedSnippet && slug && (
@@ -480,6 +676,9 @@ function EmbedPreview({
   placement,
   triggerLabel,
   trigger,
+  triggerStyle,
+  triggerPosition,
+  buttonStyle,
   width,
   height,
 }: {
@@ -487,6 +686,9 @@ function EmbedPreview({
   placement: Placement;
   triggerLabel: string;
   trigger: ModalTrigger;
+  triggerStyle: TriggerStyle;
+  triggerPosition: TriggerPosition;
+  buttonStyle: TriggerButtonStyle;
   width?: number;
   height?: number;
 }) {
@@ -515,6 +717,14 @@ function EmbedPreview({
       const container = containerRef.current;
       if (!container) return;
       container.innerHTML = "";
+      // A "floating" trigger is appended to document.body, not inside
+      // `container` — clearing container.innerHTML above never touches it.
+      // embed.js has no unmount API (by design: it's meant to sit on a real
+      // page forever), so this preview is the one place that has to clean
+      // up after itself between settings changes, or a floating button
+      // from every previous combination of settings would keep piling up
+      // in the corner of this very editor page.
+      document.querySelectorAll(".playloop-trigger-floating").forEach((el) => el.remove());
 
       // "fullpage" is defined by filling the VISITOR's real screen — forcing
       // that inside this settings panel would just break the panel's own
@@ -534,11 +744,40 @@ function EmbedPreview({
       if (previewPlacement === "modal") {
         host.setAttribute("data-trigger-label", triggerLabel.trim() || DEFAULT_MODAL_TRIGGER_LABEL);
         if (trigger === "load") host.setAttribute("data-trigger", "load");
+        if (triggerStyle === "floating") {
+          host.setAttribute("data-trigger-style", "floating");
+          host.setAttribute("data-trigger-position", triggerPosition);
+        }
+        if (buttonStyle.textSize && buttonStyle.textSize !== "md") {
+          host.setAttribute("data-btn-text-size", buttonStyle.textSize);
+        }
+        if (buttonStyle.textColor && buttonStyle.textColor.toLowerCase() !== DEFAULT_TRIGGER_TEXT_COLOR) {
+          host.setAttribute("data-btn-text-color", buttonStyle.textColor);
+        }
+        if (buttonStyle.bgColor && buttonStyle.bgColor.toLowerCase() !== DEFAULT_TRIGGER_BG_COLOR.toLowerCase()) {
+          host.setAttribute("data-btn-bg", buttonStyle.bgColor);
+        }
+        if (buttonStyle.shadow && buttonStyle.shadow !== "medium") {
+          host.setAttribute("data-btn-shadow", buttonStyle.shadow);
+        }
+        if (buttonStyle.glow) host.setAttribute("data-btn-glow", "1");
+        if (buttonStyle.animation && buttonStyle.animation !== "none") {
+          host.setAttribute("data-btn-animation", buttonStyle.animation);
+        }
       }
       container.appendChild(host);
     }, 400);
     return () => clearTimeout(timer);
-  }, [slug, placement, triggerLabel, trigger, width, height]);
+  }, [slug, placement, triggerLabel, trigger, triggerStyle, triggerPosition, buttonStyle, width, height]);
+
+  // Same cleanup as above, but for when this preview unmounts entirely
+  // (navigating away from the page) rather than just re-settling on a new
+  // combination of settings.
+  useEffect(() => {
+    return () => {
+      document.querySelectorAll(".playloop-trigger-floating").forEach((el) => el.remove());
+    };
+  }, []);
 
   // The wrapper React actually renders is permanently empty in its own vdom
   // — the host div above is created imperatively, entirely outside React's
@@ -666,6 +905,42 @@ function NumberField({
           {suffix}
         </span>
       )}
+    </div>
+  );
+}
+
+/** A native color swatch plus a synced hex text field — the swatch is the
+ * easy path, the text field is there for a merchant pasting an exact brand
+ * hex. Both write through the same onChange, so either one is a source of
+ * truth for the other. */
+function ColorField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="text-xs">
+      <span className="mb-1.5 block text-muted">{label}</span>
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          aria-label={label}
+          className="h-8 w-8 shrink-0 cursor-pointer rounded-md border border-border bg-transparent p-0"
+        />
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          spellCheck={false}
+          className={`${FIELD_CONTROL_CLASS} mt-0 uppercase`}
+        />
+      </div>
     </div>
   );
 }
