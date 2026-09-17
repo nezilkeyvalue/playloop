@@ -51,6 +51,8 @@ interface Harness {
   band(): { centre: number; width: number };
   droplets(): number;
   slosh(): number;
+  ripples(): number;
+  foam(): number;
   tap(): void;
   step(): void;
 }
@@ -101,6 +103,8 @@ function harness(tuning: Record<string, number>, prizes: LoadedAsset[]): Harness
     livesLeft: number;
     droplets: unknown[];
     sloshAmp: number;
+    ripples: unknown[];
+    foam: number;
   };
   return {
     game,
@@ -112,6 +116,8 @@ function harness(tuning: Record<string, number>, prizes: LoadedAsset[]): Harness
     band: () => ({ centre: inner.bandCentre, width: inner.bandWidth }),
     droplets: () => inner.droplets.length,
     slosh: () => inner.sloshAmp,
+    ripples: () => inner.ripples.length,
+    foam: () => inner.foam,
     tap: () => {
       ctx.input.justPressed = true;
       game.update(DT);
@@ -212,6 +218,23 @@ let centreScore = 0;
   assert(peak <= 36, `droplet count stays at or under the cap of 36 (peak ${peak})`);
 }
 
+// Ripples are the other unbounded array, and the foam is the other value
+// that only ever grows under the stream.
+{
+  const h = harness(defaultTuning(), [prize("p1", "https://example.test/p1.png")]);
+  let peakRipples = 0;
+  let peakFoam = 0;
+  for (let i = 0; i < 60 * 25; i++) {
+    h.step();
+    peakRipples = Math.max(peakRipples, h.ripples());
+    peakFoam = Math.max(peakFoam, h.foam());
+  }
+  assert(peakRipples > 0, `the impact throws surface rings (peak ${peakRipples})`);
+  assert(peakRipples <= 4, `ripple count stays at or under the cap of 4 (peak ${peakRipples})`);
+  assert(peakFoam > 0.2, `a head builds under the pour (peak ${peakFoam.toFixed(2)})`);
+  assert(peakFoam <= 1, `the head never exceeds full (peak ${peakFoam.toFixed(3)})`);
+}
+
 // While a cup is held (served or overflowing) the stream has stopped, so
 // nothing new may be thrown and the surface must be visibly settling. The
 // hold is short by design — the next cup starts right after it — so this
@@ -221,6 +244,7 @@ let centreScore = 0;
   fillTo(h, h.band().centre);
   h.tap(); // serve -> phase leaves "pouring"
   const sloshAtTap = h.slosh();
+  const foamAtTap = h.foam();
   const dropletsAtTap = h.droplets();
   assert(sloshAtTap > 0, `the pour feeds the surface slosh (${sloshAtTap.toFixed(3)})`);
 
@@ -236,6 +260,10 @@ let centreScore = 0;
   assert(
     h.slosh() < sloshAtTap * 0.45,
     `the slosh damps while the cup is held (${sloshAtTap.toFixed(3)} -> ${h.slosh().toFixed(3)})`,
+  );
+  assert(
+    h.foam() < foamAtTap,
+    `the head starts collapsing once the pour stops (${foamAtTap.toFixed(3)} -> ${h.foam().toFixed(3)})`,
   );
 }
 

@@ -149,12 +149,45 @@ const BOTTLE_MOUTH = { x: 0, y: -1 };
  * colour still wins over this. */
 const LIQUID_DEFAULT = "#4A2C17";
 
+// Stream breakup. A falling column is unstable: surface tension amplifies
+// any perturbation whose wavelength exceeds its circumference, and the
+// fastest-growing one is about 4.51 diameters (Rayleigh). So a stream stays
+// intact for a length proportional to its own diameter and then separates
+// into drops spaced by that wavelength — which, because the drops keep
+// accelerating, spreads further apart the lower you look. That behaviour is
+// the single clearest "this is a real pour" cue, and it is the reason a
+// continuous ribbon all the way down reads as computer graphics.
+// Low end of the real range on purpose: a hand-tipped bottle is a heavily
+// perturbed jet, which breaks up sooner than a laboratory one. At 9 the
+// breakup happened below the cup's rim, where the front wall hides it,
+// so the whole effect was invisible on this layout.
+const BREAKUP_INTACT_DIAMETERS = 5; // intact length, in stream diameters
+const BREAKUP_WAVELENGTH_RATIO = 4.51; // Rayleigh's fastest-growing mode
+const BREAKUP_MAX_BLOBS = 10;
+const SATELLITE_SCALE = 0.45; // the small drop that forms between two main ones
+
+// Foam/crema head. Builds while the stream is landing and collapses after.
+const FOAM_BUILD_PER_SEC = 1.1;
+const FOAM_DECAY_PER_SEC = 0.85;
+const FOAM_MAX_FRACTION = 0.06; // of the cup's inner height, at full head
+
+// Surface rings thrown out from the impact point.
+const RIPPLE_INTERVAL_SEC = 0.17;
+const RIPPLE_SPEED = 95; // px/sec outward
+const RIPPLE_LIFE_SEC = 0.65;
+const MAX_RIPPLES = 4;
+
 const FEEDBACK_SEC = 0.5;
 const OVERFLOW_HOLD_SEC = 0.45; // how long a spilling cup stays up before it resets
 const HUD_HEIGHT = 34;
 const TRAY_MAX_CUPS = 8; // how many served cups the tray shows before it stops growing
 
 type Phase = "pouring" | "served" | "overflowing";
+
+interface Ripple {
+  radius: number;
+  life: number;
+}
 
 interface Droplet {
   x: number;
@@ -246,6 +279,13 @@ class PourGame implements GameModule {
    * decays once the pour stops. */
   private sloshAmp = 0;
   private sloshPhase = 0;
+  /** Expanding rings on the surface where the stream lands. */
+  private ripples: Ripple[] = [];
+  private rippleTimer = 0;
+  /** Foam head, 0..1 of FOAM_MAX_FRACTION. Builds under the pour, collapses
+   * after it — which is what makes the liquid read as a specific drink
+   * rather than tinted water. */
+  private foam = 0;
 
   init(ctx: RuntimeContext): void {
     this.ctx = ctx;
@@ -267,6 +307,9 @@ class PourGame implements GameModule {
     this.dropletCarry = 0;
     this.sloshAmp = 0;
     this.sloshPhase = 0;
+    this.ripples = [];
+    this.rippleTimer = 0;
+    this.foam = 0;
     this.bandCentre = this.pickBandCentre();
   }
 
@@ -374,9 +417,32 @@ class PourGame implements GameModule {
         this.dropletCarry -= 1;
         this.spawnDroplet(impactX, impactY, energy);
       }
+
+      this.rippleTimer += dt;
+      if (this.rippleTimer >= RIPPLE_INTERVAL_SEC) {
+        this.rippleTimer -= RIPPLE_INTERVAL_SEC;
+        if (this.ripples.length < MAX_RIPPLES) {
+          this.ripples.push({ radius: 0, life: RIPPLE_LIFE_SEC });
+        }
+      }
+
+      this.foam = Math.min(1, this.foam + FOAM_BUILD_PER_SEC * energy * dt);
     } else {
       this.dropletCarry = 0;
+      this.rippleTimer = 0;
     }
+
+    // Foam collapses on its own clock whether or not the pour is running —
+    // under the stream the build term simply wins.
+    this.foam *= Math.exp(-FOAM_DECAY_PER_SEC * dt);
+
+    const liveRipples: Ripple[] = [];
+    for (const r of this.ripples) {
+      r.radius += RIPPLE_SPEED * dt;
+      r.life -= dt;
+      if (r.life > 0) liveRipples.push(r);
+    }
+    this.ripples = liveRipples;
 
     this.sloshPhase += SLOSH_HZ * dt;
     this.sloshAmp *= Math.exp(-SLOSH_DECAY_PER_SEC * dt);
@@ -633,17 +699,33 @@ class PourGame implements GameModule {
     // isn't a dead straight line.
     const driftX = -l.cupW * 0.04;
 
+    // Where the intact column ends. Rayleigh: a jet survives for a length
+    // proportional to its own diameter, so a short drop never breaks up at
+    // all (correct — top up a nearly-full cup and the stream stays solid).
+    const intactLength = BREAKUP_INTACT_DIAMETERS * w0;
+    const intactT =
+      intactLength >= drop
+        ? flight
+        : (Math.sqrt(v0 * v0 + 2 * STREAM_GRAVITY * intactLength) - v0) / STREAM_GRAVITY;
+
+    /** Stream centre, width and speed at time `t` into the flight. */
+    const at = (t: number) => {
+      const vy = v0 + STREAM_GRAVITY * t;
+      const y = l.spoutY + v0 * t + 0.5 * STREAM_GRAVITY * t * t;
+      const progress = t / Math.max(flight, 1e-4);
+      const wobble = Math.sin(this.elapsed * Math.PI * 2 * STREAM_WOBBLE_HZ - t * 9) * w0 * 0.35 * progress;
+      // Mass continuity: area * speed is constant along the stream, so the
+      // width has to go as 1/v. Fat at the spout, thin where it lands.
+      return { x: l.spoutX + driftX * progress + wobble, y, vy, width: (w0 * v0) / vy };
+    };
+
     const left: [number, number][] = [];
     const right: [number, number][] = [];
     for (let i = 0; i <= STREAM_SAMPLES; i++) {
-      const t = (i / STREAM_SAMPLES) * flight;
-      const vy = v0 + STREAM_GRAVITY * t;
-      const y = l.spoutY + v0 * t + 0.5 * STREAM_GRAVITY * t * t;
-      const wobble = Math.sin(this.elapsed * Math.PI * 2 * STREAM_WOBBLE_HZ - t * 9) * w0 * 0.35 * (t / Math.max(flight, 1e-4));
-      const x = l.spoutX + driftX * (t / Math.max(flight, 1e-4)) + wobble;
-      const halfW = (w0 * v0) / vy / 2;
-      left.push([x - halfW, y]);
-      right.push([x + halfW, y]);
+      const t = (i / STREAM_SAMPLES) * intactT;
+      const p = at(t);
+      left.push([p.x - p.width / 2, p.y]);
+      right.push([p.x + p.width / 2, p.y]);
     }
 
     c.save();
@@ -672,6 +754,24 @@ class PourGame implements GameModule {
     c.moveTo(left[0]![0], left[0]![1]);
     for (const [x, y] of left.slice(1)) c.lineTo(x, y);
     c.stroke();
+
+    // Past the intact length the column has separated into drops. Spacing
+    // is the Rayleigh wavelength advected at the local speed, recomputed
+    // each step — so the gaps widen on the way down for free, because the
+    // drops are still accelerating. Every other one is a satellite: the
+    // small drop real breakup leaves between two main ones.
+    let t = intactT;
+    for (let n = 0; n < BREAKUP_MAX_BLOBS && t < flight; n++) {
+      const p = at(t);
+      const main = n % 2 === 0;
+      const rx = (p.width / 2) * (main ? 1 : SATELLITE_SCALE);
+      // Drops stretch along their fall as inertia outruns surface tension.
+      const ry = rx * Math.min(2.2, 1 + (p.vy / v0 - 1) * 0.45);
+      c.beginPath();
+      c.ellipse(p.x, p.y, rx, ry, 0, 0, Math.PI * 2);
+      c.fill();
+      t += (BREAKUP_WAVELENGTH_RATIO * p.width) / p.vy;
+    }
     c.restore();
   }
 
@@ -753,13 +853,71 @@ class PourGame implements GameModule {
       c.fillRect(cx - l.topRx, surfaceCy, l.topRx * 2, l.baseCy + l.baseRy - surfaceCy);
       // The visible top face of the liquid — an ellipse, not a straight
       // line, which is what actually makes the cup read as having a volume.
+      const surfCy = surfaceCy + slosh;
+      const surfRy = Math.max(1, surfaceRy + slosh * 0.5);
       c.beginPath();
-      c.ellipse(cx, surfaceCy + slosh, surfaceRx, Math.max(1, surfaceRy + slosh * 0.5), 0, 0, Math.PI * 2);
+      c.ellipse(cx, surfCy, surfaceRx, surfRy, 0, 0, Math.PI * 2);
       c.fillStyle = shadeHex(this.liquidColor(), 0.12);
       c.fill();
       c.strokeStyle = "rgba(255,255,255,0.35)";
       c.lineWidth = 1.5;
       c.stroke();
+
+      // Foam/crema head sitting ON the surface. Built by the pour and
+      // collapsing after it, which is what makes this read as a specific
+      // drink instead of tinted water. Drawn BEFORE the impact effects
+      // because it floats: the stream lands on the foam, so the crater and
+      // the rings belong on the foam's top face, not buried under it.
+      const foamH = this.foam * FOAM_MAX_FRACTION * (l.baseCy - l.topCy);
+      const hasFoam = foamH > 1;
+      if (hasFoam) {
+        const foamColor = shadeHex(this.liquidColor(), 0.5);
+        const foamTop = surfCy - foamH;
+        c.fillStyle = foamColor;
+        c.fillRect(cx - l.topRx, foamTop, l.topRx * 2, foamH);
+        c.beginPath();
+        c.ellipse(cx, foamTop, surfaceRx, surfRy, 0, 0, Math.PI * 2);
+        c.fillStyle = shadeHex(foamColor, 0.12);
+        c.fill();
+        // A few bubbles, placed off the slosh phase so they drift rather
+        // than sitting in fixed spots.
+        c.fillStyle = shadeHex(foamColor, -0.12);
+        for (let i = 0; i < 5; i++) {
+          const a = this.sloshPhase * 0.3 + i * 1.7;
+          const bx = cx + Math.cos(a) * surfaceRx * 0.55;
+          const by = foamTop + Math.sin(a) * surfRy * 0.5;
+          c.beginPath();
+          c.arc(bx, by, Math.max(1, foamH * 0.16), 0, Math.PI * 2);
+          c.fill();
+        }
+      }
+
+      // Rings thrown out from where the stream lands. Drawn on the surface
+      // ellipse's own axes so they read as travelling across a disc seen at
+      // an angle, not as circles pasted on top of it.
+      const impactCy = hasFoam ? surfCy - foamH : surfCy;
+      const squash = surfRy / Math.max(surfaceRx, 1e-4);
+      for (const ring of this.ripples) {
+        const fade = Math.max(0, ring.life / RIPPLE_LIFE_SEC);
+        const rx = Math.min(ring.radius, surfaceRx * 0.94);
+        if (rx <= 1) continue;
+        c.beginPath();
+        c.ellipse(l.impactX, impactCy, rx, rx * squash, 0, 0, Math.PI * 2);
+        c.strokeStyle = `rgba(255,255,255,${(0.35 * fade).toFixed(3)})`;
+        c.lineWidth = 1.2;
+        c.stroke();
+      }
+
+      // The crater the column punches while it is still landing. On a
+      // headed drink this is the dark hole the stream cuts through the
+      // foam, which is why it takes the liquid's colour, not the foam's.
+      if (this.phase === "pouring") {
+        const craterRx = Math.max(3, l.cupW * 0.05);
+        c.beginPath();
+        c.ellipse(l.impactX, impactCy, craterRx, craterRx * squash, 0, 0, Math.PI * 2);
+        c.fillStyle = shadeHex(this.liquidColor(), -0.18);
+        c.fill();
+      }
     }
 
     // Sleeve — the cup's permanent brand surface, carrying the logo. It is
