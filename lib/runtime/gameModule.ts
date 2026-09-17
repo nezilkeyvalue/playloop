@@ -28,7 +28,7 @@ export interface LoadedAsset {
   image: HTMLImageElement | null; // null if the sprite never loaded — degrade, don't crash
   width: number;
   height: number;
-  data?: { name?: string; priceMinor?: number; currency?: string };
+  data?: { name?: string; priceMinor?: number; currency?: string; productUrl?: string };
   /** See ProcessedAsset/AssetPresentation in lib/engine/types.ts — how this
    * sprite's background should be treated by a renderer that frames it. */
   presentation?: AssetPresentation;

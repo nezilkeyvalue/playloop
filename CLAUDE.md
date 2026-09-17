@@ -255,6 +255,21 @@ touching the related area.
   `spriteRender.ts` (above) is the natural pairing: a `Celebration` pushed
   at the same call site gives the player a brief grow-and-fade look at what
   they just engaged with, instead of it just vanishing.
+- **A role's `fallback: "logo"` can hand your template the brand's own
+  logo asset — that still counts as "a real loaded image," so the
+  `recordEngagement`/`Celebration` guard above must exclude it explicitly,
+  not just check `asset?.image`.** Confirmed live: `sweet_spot.json`'s
+  `prize` role declares `"fallback": "logo"` and no `subjectTypeIn`
+  restriction at all (unlike `catch`'s `collectible` or `guess_price`'s
+  `hero`), so when too few real prize assets exist the matcher can hand
+  `prize` the logo directly — `sweetSpot.ts` then "won" and celebrated the
+  logo as if it were a product, and it showed up in the reward screen's
+  recap gallery next to real products. Fixed two ways: `spriteRender.ts`'s
+  `isBrandLogoUrl(imageSrc, logoUrl)` guards `sweetSpot.ts`'s own
+  celebration call site, and `mount.ts`'s `recordEngagement()` checks the
+  same thing centrally (the one function every template already calls
+  through) so any future template with a similar `fallback: "logo"` role
+  can't reintroduce this by forgetting the per-template guard.
 - **A game module calling `ctx.complete()` synchronously from `update()`
   used to crash `chainPop.ts`'s next `render()` call in the same frame.**
   `mount.ts`'s `onGameComplete()` runs synchronously up to its first

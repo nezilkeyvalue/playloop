@@ -23,6 +23,7 @@ import type {
 } from "@/lib/engine/types";
 import { getCapability } from "@/lib/capabilities";
 import type { GameModule, LoadedAsset, ResolvedRole, RuntimeContext } from "@/lib/runtime/gameModule";
+import { isBrandLogoUrl } from "@/lib/runtime/games/spriteRender";
 import { createInput } from "@/lib/runtime/input";
 import { startLoop, type LoopHandle } from "@/lib/runtime/loop";
 import { animateCountUp, resolveReward } from "@/lib/runtime/reward";
@@ -209,6 +210,13 @@ function mountGame(
     return score;
   }
   function recordEngagement(assetId: string) {
+    // A role's declared fallback can be the brand's own logo (e.g.
+    // sweet_spot.json's `prize` role) — the logo is brand identity, not a
+    // product, so it must never show up as something the player "engaged
+    // with." This is the single point every template funnels through, so
+    // checking here covers all of them regardless of which role let the
+    // logo in.
+    if (isBrandLogoUrl(loaded.get(assetId)?.image?.src, brand.logoUrl)) return;
     engagedAssetIds.add(assetId);
   }
   function complete() {
@@ -295,7 +303,7 @@ function mountGame(
     const engagedAssets = Array.from(engagedAssetIds)
       .map((id) => loaded.get(id))
       .filter((a): a is LoadedAsset => Boolean(a?.image))
-      .map((a) => ({ spriteUrl: a.image!.src, name: a.data?.name }));
+      .map((a) => ({ spriteUrl: a.image!.src, name: a.data?.name, productUrl: a.data?.productUrl }));
     const resolved = resolveReward(finalScore, spec.rewards);
     let sessionToken: string | null = null;
 
@@ -575,9 +583,15 @@ export function renderStaticScreen(
   // No live session to draw a real engagement list from here — a
   // representative sample of the spec's own assets stands in, same spirit
   // as STATIC_PREVIEW_EXAMPLE_SCORE faking a score for this same preview.
+  // `spec.assets` is every processed asset the pipeline kept, which
+  // includes the brand's own logo whenever one was found (compose.ts sets
+  // `brand.logoUrl` from an asset that's still just a regular entry in this
+  // array) — excluded here the same way mount.ts's real recordEngagement()
+  // excludes it live, so this preview never shows the logo as a "product."
   const engagedSample = spec.assets
+    .filter((a) => !isBrandLogoUrl(a.spriteUrl, brand.logoUrl))
     .slice(0, 4)
-    .map((a) => ({ spriteUrl: a.spriteUrl, name: a.data?.name }));
+    .map((a) => ({ spriteUrl: a.spriteUrl, name: a.data?.name, productUrl: a.data?.productUrl }));
   const content = renderRewardState(brand, copy, tier, null, engagedSample, () => {}, () => {});
   const scoreEl = content.querySelector<HTMLElement>("[data-role='score-value']");
   if (scoreEl) scoreEl.textContent = String(exampleScore);
@@ -628,33 +642,43 @@ function renderLoadingState(): HTMLElement {
   return wrap;
 }
 
+/** The brand's own logomark, centred — shared between the idle screen
+ * (which already showed it) and the reward screen (which didn't show any
+ * branding at all before). Returns null when there's no logo to show,
+ * matching the "skip silently" convention used elsewhere for missing
+ * per-asset data. */
+function renderBrandLogo(logoUrl: string | undefined): HTMLImageElement | null {
+  if (!logoUrl) return null;
+
+  const logo = document.createElement("img");
+  logo.src = logoUrl;
+  logo.alt = "";
+  // Explicit, not inherited: `overlay`'s textAlign:center only centers
+  // inline-level boxes. That silently centered the logo by luck as long
+  // as <img> defaulted to display:inline — until a host page's own CSS
+  // reset (Tailwind's preflight among them, which is what this app's own
+  // editor preview loads — see renderStaticScreen()) sets `img { display:
+  // block }`, at which point text-align stops applying and the logo
+  // sticks flush-left. A block-level box needs its own centering, so set
+  // it directly rather than depending on an ancestor's text-align — this
+  // must hold on arbitrary third-party host pages the embed script runs
+  // on, not just this app's own CSS.
+  logo.style.display = "block";
+  logo.style.height = "32px";
+  logo.style.width = "auto";
+  logo.style.marginTop = "0";
+  logo.style.marginBottom = "8px";
+  logo.style.marginLeft = "auto";
+  logo.style.marginRight = "auto";
+  logo.style.objectFit = "contain";
+  return logo;
+}
+
 function renderIdleState(brand: GameSpec["brand"], copy: GameSpec["copy"], onStart: () => void): HTMLElement {
   const wrap = document.createElement("div");
 
-  if (brand.logoUrl) {
-    const logo = document.createElement("img");
-    logo.src = brand.logoUrl;
-    logo.alt = "";
-    // Explicit, not inherited: `overlay`'s textAlign:center only centers
-    // inline-level boxes. That silently centered the logo by luck as long
-    // as <img> defaulted to display:inline — until a host page's own CSS
-    // reset (Tailwind's preflight among them, which is what this app's own
-    // editor preview loads — see renderStaticScreen()) sets `img { display:
-    // block }`, at which point text-align stops applying and the logo
-    // sticks flush-left. A block-level box needs its own centering, so set
-    // it directly rather than depending on an ancestor's text-align — this
-    // must hold on arbitrary third-party host pages the embed script runs
-    // on, not just this app's own CSS.
-    logo.style.display = "block";
-    logo.style.height = "32px";
-    logo.style.width = "auto";
-    logo.style.marginTop = "0";
-    logo.style.marginBottom = "8px";
-    logo.style.marginLeft = "auto";
-    logo.style.marginRight = "auto";
-    logo.style.objectFit = "contain";
-    wrap.appendChild(logo);
-  }
+  const logo = renderBrandLogo(brand.logoUrl);
+  if (logo) wrap.appendChild(logo);
 
   const headline = document.createElement("h2");
   headline.textContent = copy.headline;
@@ -686,18 +710,25 @@ function renderIdleState(brand: GameSpec["brand"], copy: GameSpec["copy"], onSta
 interface EngagedAsset {
   spriteUrl: string;
   name?: string;
+  /** The product's own storefront page — see RawAsset.data's doc comment
+   * in lib/engine/types.ts. Absent whenever extraction found none (manual
+   * mode included); the card renders identically either way, just without
+   * a link. */
+  productUrl?: string;
 }
 
 const ENGAGED_GALLERY_MAX = 6;
+const ENGAGED_THUMB_SIZE = 64; // px — the card itself is a bit wider (padding + border)
 
-/** A row of small thumbnails of the products the player actually engaged
- * with this round — the highest-attention moment of the whole session
- * (the reward screen) previously showed zero product imagery. Returns null
- * (render nothing) when `engaged` is empty, matching the "skip silently"
- * convention already used elsewhere for missing per-asset data — an empty
- * gallery block would read as a bug, not a deliberate absence. */
-const ENGAGED_THUMB_SIZE = 52; // px — the caption column below is the same width
-
+/** A horizontally-scrollable row of cards for the products the player
+ * actually engaged with this round — the highest-attention moment of the
+ * whole session (the reward screen) previously showed zero product
+ * imagery, and briefly showed it as bare thumbnails with a hover-only
+ * name. Each card links to the product's real page when one was captured
+ * during extraction. Returns null (render nothing) when `engaged` is
+ * empty, matching the "skip silently" convention already used elsewhere
+ * for missing per-asset data — an empty gallery block would read as a bug,
+ * not a deliberate absence. */
 function renderEngagedGallery(engaged: EngagedAsset[], brand: GameSpec["brand"]): HTMLElement | null {
   if (engaged.length === 0) return null;
 
@@ -705,22 +736,47 @@ function renderEngagedGallery(engaged: EngagedAsset[], brand: GameSpec["brand"])
   row.style.display = "flex";
   row.style.gap = "10px";
   row.style.margin = "4px 0";
+  row.style.padding = "2px"; // room for each card's own box-shadow, so it isn't clipped
   row.style.overflowX = "auto";
   row.style.maxWidth = "100%";
-  row.style.justifyContent = "center";
-  // Captions can wrap to two lines and thumbnails don't, so items are
-  // naturally uneven heights — align to the top rather than stretching or
-  // centering, which would otherwise misalign every image vertically.
-  row.style.alignItems = "flex-start";
+  row.style.justifyContent = engaged.length > 3 ? "flex-start" : "center";
+  row.style.alignItems = "stretch";
+  // Snap-scrolling reads as a deliberate swipeable card rail rather than an
+  // overflow accident — this widget is typically mounted at mobile width,
+  // where that gesture is the natural one.
+  row.style.scrollSnapType = "x mandatory";
 
   for (const asset of engaged.slice(0, ENGAGED_GALLERY_MAX)) {
-    const item = document.createElement("div");
+    // The whole card is the link target (image + name together) when a
+    // product page was captured — plain <div> otherwise, same visual
+    // either way, just not clickable. See RawAsset.data.productUrl's doc
+    // comment for why this can legitimately be absent (manual mode, a
+    // DOM-ladder-only site that found no wrapping <a>, etc.).
+    const item = document.createElement(asset.productUrl ? "a" : "div") as HTMLAnchorElement | HTMLDivElement;
+    if (asset.productUrl && item instanceof HTMLAnchorElement) {
+      item.href = asset.productUrl;
+      // _blank, not the current frame: this renders inside app/embed.js's
+      // third-party-page iframe — navigating the current frame away would
+      // break out of the host page the widget is embedded in.
+      item.target = "_blank";
+      item.rel = "noopener noreferrer";
+      item.style.textDecoration = "none";
+      item.style.cursor = "pointer";
+    }
     item.style.display = "flex";
     item.style.flexDirection = "column";
     item.style.alignItems = "center";
-    item.style.gap = "3px";
+    item.style.gap = "4px";
     item.style.flex = "0 0 auto";
-    item.style.width = `${ENGAGED_THUMB_SIZE}px`;
+    item.style.width = `${ENGAGED_THUMB_SIZE + 16}px`;
+    item.style.boxSizing = "border-box";
+    item.style.padding = "8px";
+    item.style.borderRadius = "12px";
+    item.style.border = `1px solid ${brand.foreground}1a`;
+    item.style.background = `${brand.foreground}0a`;
+    item.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)";
+    item.style.color = "inherit";
+    item.style.scrollSnapAlign = "start";
 
     const thumb = document.createElement("img");
     thumb.src = asset.spriteUrl;
@@ -728,20 +784,19 @@ function renderEngagedGallery(engaged: EngagedAsset[], brand: GameSpec["brand"])
     thumb.style.width = `${ENGAGED_THUMB_SIZE}px`;
     thumb.style.height = `${ENGAGED_THUMB_SIZE}px`;
     thumb.style.objectFit = "contain";
-    thumb.style.borderRadius = "10px";
+    thumb.style.borderRadius = "8px";
     thumb.style.background = `${brand.foreground}11`;
     item.appendChild(thumb);
 
-    // The name is the point (per the request: it needs to actually be
-    // readable, not hidden behind a hover-only `title`) — skipped
-    // entirely, not shown as a blank line, when there's no real name to
-    // show, matching the "skip silently" convention used elsewhere for
-    // missing per-asset data.
+    // The name is the point (it needs to actually be readable, not hidden
+    // behind a hover-only `title`) — skipped entirely, not shown as a
+    // blank line, when there's no real name to show, matching the "skip
+    // silently" convention used elsewhere for missing per-asset data.
     if (asset.name) {
       const caption = document.createElement("span");
       caption.textContent = asset.name;
       caption.title = asset.name;
-      caption.style.fontSize = "10px";
+      caption.style.fontSize = "11px";
       caption.style.lineHeight = "1.25";
       caption.style.textAlign = "center";
       caption.style.color = brand.foreground;
@@ -995,6 +1050,9 @@ function renderRewardState(
   const wrap = document.createElement("div");
   wrap.style.width = "100%";
   wrap.style.maxWidth = "360px";
+
+  const logo = renderBrandLogo(brand.logoUrl);
+  if (logo) wrap.appendChild(logo);
 
   const intro = document.createElement("p");
   intro.textContent = copy.rewardIntro;

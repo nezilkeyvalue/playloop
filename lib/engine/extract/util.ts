@@ -17,6 +17,9 @@ export interface CandidateAssetInput {
   priceMinor?: number;
   category?: string;
   sku?: string;
+  /** The product's own page on the storefront — see RawAsset.data's doc
+   * comment in types.ts. */
+  productUrl?: string;
   /** Set when the ladder step structurally knows the subject type (e.g. the
    * logo ladder always knows it found a logo) — better than leaving it
    * "unknown" for something downstream heuristics can't reliably guess either. */
@@ -34,7 +37,8 @@ export function makeRawAsset(input: CandidateAssetInput): RawAsset {
     input.name !== undefined ||
     input.priceMinor !== undefined ||
     input.category !== undefined ||
-    input.sku !== undefined;
+    input.sku !== undefined ||
+    input.productUrl !== undefined;
 
   return {
     id: `a_${nanoid(8)}`,
@@ -56,6 +60,7 @@ export function makeRawAsset(input: CandidateAssetInput): RawAsset {
           priceMinor: input.priceMinor,
           category: input.category,
           sku: input.sku,
+          productUrl: input.productUrl,
         }
       : undefined,
     quality: { score: 0, flags: ["unprocessed"] },

@@ -23,7 +23,7 @@ const MIN_MARKUP_DIMENSION = 150;
 
 export function extractDom(html: string, pageUrl: string): RawAsset[] {
   const $ = cheerio.load(html);
-  const candidates: { url: string; score: number; alt?: string }[] = [];
+  const candidates: { url: string; score: number; alt?: string; productUrl?: string }[] = [];
 
   $("img").each((_, el) => {
     const $el = $(el);
@@ -56,7 +56,15 @@ export function extractDom(html: string, pageUrl: string): RawAsset[] {
     if (score <= 0) return;
 
     const resolved = resolveUrl(src, pageUrl) ?? src;
-    candidates.push({ url: resolved, score, alt: alt || undefined });
+    // Best-effort, lower-confidence than jsonld.ts/shopify.ts's structural
+    // sources: the nearest wrapping <a> isn't guaranteed to be the image's
+    // own canonical product page (could be a "quick view" trigger, a filter
+    // link, etc.) — but for typical catalogue-grid markup it usually is,
+    // and it's essentially free to capture alongside a candidate we were
+    // already going to keep.
+    const anchorHref = $el.closest("a[href]").attr("href");
+    const productUrl = anchorHref ? (resolveUrl(anchorHref, pageUrl) ?? undefined) : undefined;
+    candidates.push({ url: resolved, score, alt: alt || undefined, productUrl });
   });
 
   candidates.sort((a, b) => b.score - a.score);
@@ -71,6 +79,7 @@ export function extractDom(html: string, pageUrl: string): RawAsset[] {
         url: c.url,
         origin: "dom",
         name: c.alt,
+        productUrl: c.productUrl,
         subjectTypeHint: "product",
       }),
     );

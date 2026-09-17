@@ -138,7 +138,11 @@ export interface ProcessedAsset {
   phash: string;
   score: number; // 0..1 quality gate confidence
   flags: string[];
-  data?: { name?: string; priceMinor?: number; currency?: string };
+  /** `productUrl` is the storefront's own page for this product (not the
+   * sprite image URL) — absent when extraction couldn't find one (manual
+   * mode, a DOM-ladder-only site, etc.); a renderer should degrade to a
+   * non-clickable presentation rather than guessing a URL. */
+  data?: { name?: string; priceMinor?: number; currency?: string; productUrl?: string };
   /** Optional — absent on older/fixture specs, which a renderer should
    * treat exactly like "isolated" (today's default, unchanged look). */
   presentation?: AssetPresentation;
@@ -297,6 +301,11 @@ export interface RawAsset {
     priceMinor?: number;
     category?: string;
     sku?: string;
+    /** The storefront's own page for this product — captured from JSON-LD's
+     * `Product.url`, Shopify's `handle`-derived URL, or (best-effort, lower
+     * confidence) the DOM ladder's nearest wrapping `<a href>`. Absent when
+     * extraction found none (manual mode included). */
+    productUrl?: string;
   };
 
   quality: { score: number; flags: string[] };

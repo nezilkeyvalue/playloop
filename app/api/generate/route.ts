@@ -99,10 +99,30 @@ async function runExtractionPhase(
           : "No template fit well — you can still continue in manual mode",
     });
   } catch (err) {
+    await reportJobFailure(jobId, err);
+  }
+}
+
+/**
+ * Best-effort — this runs inside `after()`, detached from the request that
+ * started it, so nothing downstream awaits or `.catch()`es this function's
+ * own promise. Node's default (since v15, still true in the v22 this repo
+ * runs on) is to crash the entire process on an unhandled rejection — and
+ * `updateJob()` can itself throw (a real Supabase write, `if (error) throw
+ * error`). Before this existed, a transient DB error while reporting a
+ * *different* failure took the whole dev server down with it — confirmed
+ * live: the exact `try { throw X } catch { await updateJobThatAlsoThrows()
+ * }` shape reproduces a hard process exit, not just a failed request. This
+ * is that reporting call, isolated so its own failure can only ever be
+ * logged, never fatal. */
+async function reportJobFailure(jobId: string, err: unknown): Promise<void> {
+  try {
     await updateJob(jobId, {
       stage: "error",
       error: err instanceof Error ? err.message : "Generation failed.",
     });
+  } catch (reportErr) {
+    console.error(`[generate] failed to record error state for job ${jobId}:`, reportErr);
   }
 }
 

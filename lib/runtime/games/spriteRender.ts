@@ -47,6 +47,19 @@ export function colorAdjustFilterString(adjust: LoadedAsset["colorAdjust"]): str
   return `brightness(${brightness}) contrast(${contrast}) saturate(${saturation})`;
 }
 
+/** True when `imageSrc` is exactly the brand's own logo. A role can end up
+ * filling with the brand logo as its declared `fallback` (e.g.
+ * sweet_spot.json's `prize` role, which — unlike catch's `collectible` or
+ * guess_price's `hero` — declares no `subjectTypeIn` restriction at all) —
+ * the logo is brand identity, not a product, so it must never be treated as
+ * one a player "engaged with" (celebrated, recorded for the reward
+ * screen's recap gallery). Same category as the existing "never for
+ * hazards/decoys/generated-shape fallbacks" rule, just for this one
+ * specific fallback kind. */
+export function isBrandLogoUrl(imageSrc: string | null | undefined, logoUrl: string | undefined): boolean {
+  return Boolean(logoUrl && imageSrc && imageSrc === logoUrl);
+}
+
 /** Source sub-rect (in the sprite's own natural pixel space) for `asset`'s
  * SubjectBounds — the whole image when bounds are absent, per the field's
  * documented "absent means whole frame is subject" default. */

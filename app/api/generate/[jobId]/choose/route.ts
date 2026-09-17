@@ -46,7 +46,7 @@ async function runCompositionPhase(jobId: string, template: TemplateId): Promise
   // below) since a job can theoretically be re-chosen while this is
   // already queued — belt and suspenders, cheap given jobs are tiny rows.
   if (!job || !job.inventory || !job.match) {
-    await updateJob(jobId, { stage: "error", error: "Job is missing its extraction results." });
+    await reportJobFailure(jobId, "Job is missing its extraction results.");
     return;
   }
 
@@ -92,10 +92,29 @@ async function runCompositionPhase(jobId: string, template: TemplateId): Promise
     });
     await updateJob(jobId, { gameId: game.id });
   } catch (err) {
+    await reportJobFailure(jobId, err);
+  }
+}
+
+/**
+ * Best-effort — this runs inside `after()`, detached from the request that
+ * started it, so nothing downstream awaits or `.catch()`es this function's
+ * own promise. Node's default (since v15, still true in the v22 this repo
+ * runs on) is to crash the entire process on an unhandled rejection — and
+ * `updateJob()` can itself throw (a real Supabase write, `if (error) throw
+ * error`). Before this existed, a transient DB error while reporting a
+ * *different* failure took the whole dev server down with it, mid-build —
+ * see app/api/generate/route.ts's identical helper for the confirmed repro.
+ * This is that reporting call, isolated so its own failure can only ever be
+ * logged, never fatal. */
+async function reportJobFailure(jobId: string, err: unknown): Promise<void> {
+  try {
     await updateJob(jobId, {
       stage: "error",
-      error: err instanceof Error ? err.message : "Generation failed.",
+      error: err instanceof Error ? err.message : String(err),
     });
+  } catch (reportErr) {
+    console.error(`[generate/choose] failed to record error state for job ${jobId}:`, reportErr);
   }
 }
 
