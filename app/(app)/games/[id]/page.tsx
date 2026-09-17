@@ -22,8 +22,10 @@ import { useParams, useRouter } from "next/navigation";
 import { AuthGate } from "@/components/AuthGate";
 import { CouponManager } from "@/components/CouponManager";
 import {
+  RUNTIME_TEMPLATES,
   findIncompleteRoles,
   getCapability,
+  getTemplatePickerMeta,
   playableAssetsForRole,
   roleAssetIds,
   roleIsSatisfied,
@@ -68,6 +70,7 @@ import type {
   GameSpec,
   ProcessedAsset,
   RewardTier,
+  TemplateId,
 } from "@/lib/engine/types";
 
 type Device = "desktop" | "mobile";
@@ -864,6 +867,17 @@ function GameEditor() {
                   </Field>
                 </div>
               </EditorSection>
+            )}
+
+            {screen === "whole" && (
+              <TemplateSection
+                spec={spec}
+                gameId={id}
+                onSwitched={(nextSpec) => {
+                  specRef.current = nextSpec;
+                  setGame((prev) => (prev ? { ...prev, spec: nextSpec } : prev));
+                }}
+              />
             )}
 
             {screen === "start" && (
@@ -1814,6 +1828,128 @@ function RewardRow({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Lets a merchant move an already-generated game onto a different template
+ * without starting over. Not a PATCH field (specPatch.ts refuses `template`
+ * on purpose) — POST /api/games/[id]/template re-runs the matcher against
+ * the game's original AssetInventory server-side and returns a whole new
+ * spec, which replaces `game.spec` here the same way the initial GET does.
+ *
+ * Only offers RUNTIME_TEMPLATES — the ids with a real player, not every
+ * template listCapabilities() knows about — and only for games that still
+ * have their originating job (manual-mode games never had one; the route
+ * reports that honestly rather than guessing at a re-match).
+ */
+function TemplateSection({
+  spec,
+  gameId,
+  onSwitched,
+}: {
+  spec: GameSpec;
+  gameId: string;
+  onSwitched: (spec: GameSpec) => void;
+}) {
+  const [selected, setSelected] = useState<TemplateId>(spec.template);
+  const [switching, setSwitching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const selectId = useId();
+
+  // The spec's own template can change from elsewhere (a successful switch
+  // updates it via onSwitched, which flows back down as a new `spec` prop) —
+  // keep the dropdown in sync rather than stuck on a stale selection.
+  useEffect(() => {
+    setSelected(spec.template);
+  }, [spec.template]);
+
+  async function handleSwitch() {
+    if (selected === spec.template || switching) return;
+    setSwitching(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/games/${gameId}/template`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template: selected }),
+      });
+      const body = (await res.json().catch(() => null)) as
+        | (GameSpec & { message?: undefined })
+        | { message?: string }
+        | null;
+      if (!res.ok) {
+        const message =
+          body && typeof (body as { message?: string }).message === "string"
+            ? (body as { message: string }).message
+            : "That template switch failed.";
+        setError(message);
+        setSelected(spec.template);
+        return;
+      }
+      onSwitched(body as GameSpec);
+    } catch {
+      setError("You appear to be offline — the template wasn't changed.");
+      setSelected(spec.template);
+    } finally {
+      setSwitching(false);
+    }
+  }
+
+  const currentMeta = getTemplatePickerMeta(spec.template);
+  const selectedMeta = getTemplatePickerMeta(selected);
+
+  return (
+    <EditorSection
+      icon={<ControllerIcon className="h-4 w-4" />}
+      title="Template"
+      description={`Currently ${currentMeta.name}`}
+      defaultOpen={false}
+    >
+      <div className="space-y-3">
+        <p className="text-xs text-muted">
+          Switching re-matches this game&apos;s own images against the new template&apos;s
+          roles. Branding, copy and rewards are kept; images may be reassigned or a role
+          may fall back to a generated look if this game doesn&apos;t have the right images
+          for it.
+        </p>
+        <Field label="Game template" htmlFor={selectId}>
+          <select
+            id={selectId}
+            value={selected}
+            disabled={switching}
+            onChange={(e) => {
+              setSelected(e.target.value as TemplateId);
+              setError(null);
+            }}
+            className={FIELD_CONTROL_CLASS}
+          >
+            {RUNTIME_TEMPLATES.map((id) => (
+              <option key={id} value={id}>
+                {getTemplatePickerMeta(id).name}
+                {id === spec.template ? " (current)" : ""}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {selected !== spec.template && (
+          <p className="text-xs text-muted">{selectedMeta.summary}</p>
+        )}
+        {error && (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={() => void handleSwitch()}
+          disabled={switching || selected === spec.template}
+          className="rounded-md px-1 text-xs font-medium text-primary underline underline-offset-4 disabled:cursor-not-allowed disabled:no-underline disabled:text-muted"
+        >
+          {switching ? "Switching…" : "Switch template"}
+        </button>
+      </div>
+    </EditorSection>
   );
 }
 

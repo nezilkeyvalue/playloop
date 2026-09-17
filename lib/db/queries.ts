@@ -584,6 +584,35 @@ export async function getJob(id: string): Promise<Job | null> {
   return data ? jobRowToRecord(data as JobRow) : null;
 }
 
+/**
+ * The job that originally generated a game — the only place `AssetInventory`
+ * survives (games.spec never stores it). Used by the template-switch route
+ * to re-run the matcher against the site's real assets. Manual-mode games
+ * never had a job at all (app/api/games/route.ts creates them directly), so
+ * `null` here is an expected, honest answer, not an error condition.
+ * Most-recent by `created_at` in case a game somehow has more than one
+ * associated job row — there's no code path that produces that today, but
+ * "newest" is the safer tie-break if it ever does.
+ */
+export async function getJobByGameId(gameId: string): Promise<Job | null> {
+  if (isDevMode()) {
+    const rows = await readDevTable<Job>(JOBS_FILE);
+    const matches = rows.filter((j) => j.gameId === gameId);
+    matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    return matches[0] ?? null;
+  }
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("*")
+    .eq("game_id", gameId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? jobRowToRecord(data as JobRow) : null;
+}
+
 // ---------------------------------------------------------------------------
 // Plays
 // ---------------------------------------------------------------------------

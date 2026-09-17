@@ -22,8 +22,11 @@ import { forceContrast, luminanceOfHex, saturationOfHex } from "./palette";
 
 /** MVP scope (build spec §19 "Out"): no ad-platform export yet, even
  * though the capability schema already declares "ad" placement
- * constraints for Horizon 3. Never surface it as a buildable placement. */
-const MVP_PLACEMENTS: Placement[] = ["section", "fullpage", "modal"];
+ * constraints for Horizon 3. Never surface it as a buildable placement.
+ * Exported so retemplate.ts derives a switched template's placements the
+ * same way a freshly generated one does, instead of a second copy of this
+ * list drifting out of sync. */
+export const MVP_PLACEMENTS: Placement[] = ["section", "fullpage", "modal"];
 
 const STAGE_BACKGROUND = "#FFFFFF"; // matches quality.ts's assumedStageBackground default
 const DEFAULT_ACCENT = "#4F46E5"; // used only when no usable colour survived extraction
@@ -90,7 +93,11 @@ export function compose(
   };
 }
 
-function buildRoles(
+/** Exported for retemplate.ts: switching an existing game to a different
+ * template re-derives `roles` from a fresh MatchReport the same way a brand
+ * new generation does, rather than a second implementation of "assignments
+ * -> roles" drifting from this one. */
+export function buildRoles(
   assignments: Record<string, string[] | { fallback: string } | string> | undefined,
   usableIds: Set<string>,
   warnings: string[],
@@ -115,7 +122,11 @@ function buildRoles(
   return roles;
 }
 
-function buildProcessedAssets(
+/** Exported for retemplate.ts, same reasoning as buildRoles above — a
+ * template switch that needs to pull a new asset in from the original
+ * inventory (one the previous template never assigned) should process it
+ * exactly as a fresh generation would, not through a parallel code path. */
+export function buildProcessedAssets(
   assets: RawAsset[],
   usableIds: Set<string>,
   imagePresentation: BrainResponse["imagePresentation"],
