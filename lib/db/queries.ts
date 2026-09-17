@@ -17,12 +17,15 @@
 import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
-import { nanoid, customAlphabet } from "nanoid";
+import { nanoid } from "nanoid";
 
 import { getSupabaseServerClient, isDevMode } from "./client";
+import { isCouponExpired, originalTierIndexFromSortedIndex } from "@/lib/engine/specRules";
 import { generateSlug } from "@/lib/slug";
 import { resolveMaxRealisticScoreForSpec } from "@/lib/engine/scoreCeiling";
 import type {
+  CouponRecord,
+  CouponTierStats,
   GameRecord,
   GameSpec,
   GameStatus,
@@ -83,6 +86,7 @@ function createMutex() {
   return { run };
 }
 
+const couponsMutex = createMutex();
 const gamesMutex = createMutex();
 const jobsMutex = createMutex();
 const playsMutex = createMutex();
@@ -92,6 +96,7 @@ const GAMES_FILE = "games.json";
 const JOBS_FILE = "jobs.json";
 const PLAYS_FILE = "plays.json";
 const LEADS_FILE = "leads.json";
+const COUPONS_FILE = "coupons.json";
 
 // ---------------------------------------------------------------------------
 // Supabase row <-> camelCase mapping (schema.sql columns are snake_case).
@@ -690,7 +695,6 @@ const MIN_PLAY_SECONDS_FLOOR = 2;
 // displays whatever code this route returns as the thing to email — so we
 // still mint a short, human-typeable placeholder here rather than showing
 // "pending" on every single reward. No ambiguous characters (0/O, 1/I/L).
-const generateRewardCode = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 8);
 
 /**
  * Server-side anti-forgery gate (build spec §12, §17). `sessionToken` is
@@ -757,7 +761,21 @@ export async function finishPlay(
     tierIndex: tierIndex >= 0 ? tierIndex : null,
   });
 
-  const code = tier ? (tier.code ?? generateRewardCode()) : undefined;
+  // Only the legacy STATIC code from the spec, never a freshly invented one.
+  //
+  // This used to be `tier.code ?? generateRewardCode()`, which minted a
+  // random 8-character string per play. That was a placeholder from before
+  // coupon pools existed and it is actively harmful now: the code exists
+  // nowhere in the merchant's store, so the player carries it to checkout and
+  // it is rejected. Worse, the reward screen seeds its coupon block from this
+  // value, so a game WITH a real pool would display the fake code instead of
+  // claiming a real one.
+  //
+  // A tier with a pool now returns undefined here and the reward screen
+  // claims on demand via POST /api/plays/claim-coupon. A tier with neither a
+  // pool nor a static code shows the tier and no code, which is the decided
+  // behaviour for an empty pool.
+  const code = tier?.code ?? undefined;
   return { tier, tierIndex: tierIndex >= 0 ? tierIndex : -1, code };
 }
 
@@ -922,4 +940,368 @@ export async function getGameStats(gameId: string): Promise<{
     deviceSplit,
     topReferrers,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Coupons
+//
+// Per-reward-tier pools of single-use codes. Two invariants carry this whole
+// feature, and both are enforced by the DATABASE rather than by care here:
+//
+//   1. A code is unique within a game (coupons_game_code_idx) — re-uploading
+//      the same CSV cannot double-issue.
+//   2. A play holds at most one code per tier (coupons_one_per_play_idx) — a
+//      double-clicked "Copy code" cannot burn two coupons.
+//
+// See supabase/migrations/20260917000003_coupons.sql, especially the
+// claim_coupon() function: the claim CANNOT be a read-then-write from here,
+// because two concurrent players would read the same unclaimed row and both
+// walk away with it.
+// ---------------------------------------------------------------------------
+
+interface CouponRow {
+  id: string;
+  game_id: string;
+  tier_index: number;
+  code: string;
+  claimed_at: string | null;
+  claimed_by_play_id: string | null;
+  created_at: string;
+}
+
+function couponRowToRecord(row: CouponRow): CouponRecord {
+  return {
+    id: row.id,
+    gameId: row.game_id,
+    tierIndex: row.tier_index,
+    code: row.code,
+    claimedAt: row.claimed_at,
+    claimedByPlayId: row.claimed_by_play_id,
+    createdAt: row.created_at,
+  };
+}
+
+export interface AddCouponsResult {
+  /** How many rows actually landed. */
+  inserted: number;
+  /** Codes rejected because that code already exists in this game. */
+  duplicates: string[];
+}
+
+/**
+ * Appends codes to one tier's pool. Idempotent per code: a code already in
+ * this game is reported as a duplicate rather than inserted again or thrown
+ * over, so re-uploading a superset of a previous file tops the pool up
+ * instead of failing wholesale.
+ */
+export async function addCoupons(input: {
+  gameId: string;
+  tierIndex: number;
+  codes: string[];
+}): Promise<AddCouponsResult> {
+  const { gameId, tierIndex, codes } = input;
+  if (codes.length === 0) return { inserted: 0, duplicates: [] };
+
+  if (isDevMode()) {
+    return couponsMutex.run(async () => {
+      const rows = await readDevTable<CouponRecord>(COUPONS_FILE);
+      const existing = new Set(rows.filter((c) => c.gameId === gameId).map((c) => c.code));
+      const duplicates: string[] = [];
+      const now = new Date().toISOString();
+      let inserted = 0;
+      for (const code of codes) {
+        if (existing.has(code)) {
+          duplicates.push(code);
+          continue;
+        }
+        existing.add(code);
+        rows.push({
+          id: randomUUID(),
+          gameId,
+          tierIndex,
+          code,
+          claimedAt: null,
+          claimedByPlayId: null,
+          createdAt: now,
+        });
+        inserted++;
+      }
+      await writeDevTable(COUPONS_FILE, rows);
+      return { inserted, duplicates };
+    });
+  }
+
+  const supabase = getSupabaseServerClient();
+
+  // Read the existing codes for this game first so duplicates can be
+  // REPORTED, not just silently skipped. `upsert(..., ignoreDuplicates)`
+  // would insert the new ones and tell us nothing about which were dropped,
+  // and a merchant uploading 500 codes needs to know that 480 of them were
+  // already there.
+  const { data: existingRows, error: existingError } = await supabase
+    .from("coupons")
+    .select("code")
+    .eq("game_id", gameId)
+    .in("code", codes);
+  if (existingError) throw existingError;
+
+  const existing = new Set((existingRows ?? []).map((r) => (r as { code: string }).code));
+  const duplicates = codes.filter((c) => existing.has(c));
+  const fresh = codes.filter((c) => !existing.has(c));
+  if (fresh.length === 0) return { inserted: 0, duplicates };
+
+  const { data, error } = await supabase
+    .from("coupons")
+    .insert(
+      fresh.map((code) => ({ game_id: gameId, tier_index: tierIndex, code })),
+    )
+    .select("id");
+  if (error) throw error;
+
+  return { inserted: (data ?? []).length, duplicates };
+}
+
+/**
+ * Per-tier inventory for every tier that has a pool. Tiers with no codes at
+ * all are simply absent — the editor fills those in as "no pool yet" from
+ * the spec's own reward list.
+ */
+export async function getCouponStats(gameId: string): Promise<CouponTierStats[]> {
+  const byTier = new Map<number, { total: number; claimed: number }>();
+
+  if (isDevMode()) {
+    const rows = await readDevTable<CouponRecord>(COUPONS_FILE);
+    for (const c of rows) {
+      if (c.gameId !== gameId) continue;
+      const entry = byTier.get(c.tierIndex) ?? { total: 0, claimed: 0 };
+      entry.total++;
+      if (c.claimedAt) entry.claimed++;
+      byTier.set(c.tierIndex, entry);
+    }
+  } else {
+    const supabase = getSupabaseServerClient();
+    // Selecting only the two columns needed keeps this cheap on a pool of
+    // tens of thousands; the aggregate is done here rather than in SQL to
+    // keep one code path for both stores.
+    const { data, error } = await supabase
+      .from("coupons")
+      .select("tier_index, claimed_at")
+      .eq("game_id", gameId);
+    if (error) throw error;
+    for (const row of (data ?? []) as { tier_index: number; claimed_at: string | null }[]) {
+      const entry = byTier.get(row.tier_index) ?? { total: 0, claimed: 0 };
+      entry.total++;
+      if (row.claimed_at) entry.claimed++;
+      byTier.set(row.tier_index, entry);
+    }
+  }
+
+  return [...byTier.entries()]
+    .map(([tierIndex, v]) => ({
+      tierIndex,
+      total: v.total,
+      claimed: v.claimed,
+      remaining: v.total - v.claimed,
+    }))
+    .sort((a, b) => a.tierIndex - b.tierIndex);
+}
+
+/** Unclaimed codes for one tier, for the admin's own export/preview. */
+export async function listCoupons(input: {
+  gameId: string;
+  tierIndex?: number;
+  limit?: number;
+}): Promise<CouponRecord[]> {
+  const limit = Math.min(Math.max(1, input.limit ?? 100), 5000);
+
+  if (isDevMode()) {
+    const rows = await readDevTable<CouponRecord>(COUPONS_FILE);
+    return rows
+      .filter(
+        (c) =>
+          c.gameId === input.gameId &&
+          (input.tierIndex === undefined || c.tierIndex === input.tierIndex),
+      )
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
+      .slice(0, limit);
+  }
+
+  const supabase = getSupabaseServerClient();
+  let query = supabase
+    .from("coupons")
+    .select("*")
+    .eq("game_id", input.gameId)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (input.tierIndex !== undefined) query = query.eq("tier_index", input.tierIndex);
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data as CouponRow[]).map(couponRowToRecord);
+}
+
+/**
+ * Removes UNCLAIMED codes from a tier's pool (or the whole game when
+ * tierIndex is omitted), returning how many went.
+ *
+ * Claimed rows are deliberately never deleted: they are the record of what
+ * was handed to which play, which is what a merchant needs when a customer
+ * disputes a code at checkout.
+ */
+export async function deleteUnclaimedCoupons(input: {
+  gameId: string;
+  tierIndex?: number;
+}): Promise<number> {
+  if (isDevMode()) {
+    return couponsMutex.run(async () => {
+      const rows = await readDevTable<CouponRecord>(COUPONS_FILE);
+      const keep = rows.filter(
+        (c) =>
+          !(
+            c.gameId === input.gameId &&
+            c.claimedAt === null &&
+            (input.tierIndex === undefined || c.tierIndex === input.tierIndex)
+          ),
+      );
+      const removed = rows.length - keep.length;
+      if (removed > 0) await writeDevTable(COUPONS_FILE, keep);
+      return removed;
+    });
+  }
+
+  const supabase = getSupabaseServerClient();
+  let query = supabase
+    .from("coupons")
+    .delete()
+    .eq("game_id", input.gameId)
+    .is("claimed_at", null);
+  if (input.tierIndex !== undefined) query = query.eq("tier_index", input.tierIndex);
+
+  const { data, error } = await query.select("id");
+  if (error) throw error;
+  return (data ?? []).length;
+}
+
+export interface ClaimedCoupon {
+  code: string;
+  /** True when this play already held the code and nothing was consumed. */
+  reused: boolean;
+}
+
+export type CouponClaimOutcome =
+  | { status: "ok"; coupon: ClaimedCoupon }
+  | { status: "no_reward" }
+  | { status: "expired" }
+  | { status: "exhausted" };
+
+/**
+ * Hands the player of `sessionToken` exactly one code for the tier their
+ * score earned.
+ *
+ * Safe to call repeatedly: the same play always gets back the same code and
+ * only the first call consumes anything. That is what makes the reward
+ * screen's Copy button safe to double-click, and it is enforced in the
+ * database (see the module header), not just here.
+ */
+export async function claimCouponForPlay(sessionToken: string): Promise<CouponClaimOutcome> {
+  const play = await getPlayBySession(sessionToken);
+  if (!play) throw new Error("invalid_session");
+  // Claiming before the game is over would let someone skip playing; the
+  // score is only trustworthy once finishPlay has vetted it.
+  if (!play.finishedAt) throw new Error("session_not_finished");
+
+  const game = await getGameById(play.gameId);
+  if (!game) throw new Error("game_not_found");
+
+  // finishPlay's verdict is authoritative, and it is read from
+  // play.tierIndex — NOT recomputed from play.score.
+  //
+  // This is load-bearing for anti-forgery. finishPlay vets the reported score
+  // against the template's realistic ceiling and an elapsed-time floor; when
+  // it judges a score forged it writes tier_index = null but KEEPS the raw
+  // reported score in `score` for audit. Re-deriving the tier from that raw
+  // score therefore pays out exactly the plays finishPlay just rejected —
+  // caught by a test where finishPlay returned tier null and the claim still
+  // handed over a code.
+  if (play.tierIndex === null || play.tierIndex < 0) return { status: "no_reward" };
+
+  // play.tierIndex is an index into the SORTED rewards; pools are keyed by the
+  // spec's own array order. These are different numbers whenever the merchant
+  // has reordered tiers.
+  const tierIndex = originalTierIndexFromSortedIndex(game.spec.rewards, play.tierIndex);
+  const tier = tierIndex >= 0 ? game.spec.rewards[tierIndex] : undefined;
+  if (!tier) return { status: "no_reward" };
+
+  // An expired offer must stop paying out even if codes remain, otherwise the
+  // pool keeps handing out codes the merchant's checkout will reject.
+  if (isCouponExpired(tier.coupon)) return { status: "expired" };
+
+  if (isDevMode()) {
+    return couponsMutex.run<CouponClaimOutcome>(async () => {
+      const rows = await readDevTable<CouponRecord>(COUPONS_FILE);
+
+      const already = rows.find(
+        (c) =>
+          c.gameId === play.gameId &&
+          c.tierIndex === tierIndex &&
+          c.claimedByPlayId === play.id,
+      );
+      if (already) return { status: "ok", coupon: { code: already.code, reused: true } };
+
+      const next = rows
+        .filter(
+          (c) => c.gameId === play.gameId && c.tierIndex === tierIndex && c.claimedAt === null,
+        )
+        .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))[0];
+
+      if (!next) {
+        // Last resort: the legacy single static code from the spec. Not a
+        // generated one — a made-up code fails at the merchant's checkout,
+        // which is worse for the player than being told to check back.
+        if (tier.code) return { status: "ok", coupon: { code: tier.code, reused: true } };
+        // "Never had a pool" is not the same as "ran out", and the reward
+        // screen words them differently: a thank-you tier with no coupon
+        // should not tell the player codes have run out.
+        const everHadCodes = rows.some(
+          (c) => c.gameId === play.gameId && c.tierIndex === tierIndex,
+        );
+        return { status: everHadCodes ? "exhausted" : "no_reward" };
+      }
+
+      next.claimedAt = new Date().toISOString();
+      next.claimedByPlayId = play.id;
+      await writeDevTable(COUPONS_FILE, rows);
+      return { status: "ok", coupon: { code: next.code, reused: false } };
+    });
+  }
+
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase.rpc("claim_coupon", {
+    p_game_id: play.gameId,
+    p_tier_index: tierIndex,
+    p_play_id: play.id,
+  });
+  if (error) throw error;
+
+  const code = typeof data === "string" && data.length > 0 ? data : null;
+  if (!code) {
+    if (tier.code) return { status: "ok", coupon: { code: tier.code, reused: true } };
+    // One extra query, only on the miss path: tell "ran out" apart from
+    // "never had a pool" so the player is not told codes ran out for a tier
+    // that never offered one.
+    const { count, error: countError } = await supabase
+      .from("coupons")
+      .select("id", { count: "exact", head: true })
+      .eq("game_id", play.gameId)
+      .eq("tier_index", tierIndex);
+    if (countError) throw countError;
+    return { status: (count ?? 0) > 0 ? "exhausted" : "no_reward" };
+  }
+
+  // `reused` is not distinguishable from the SQL function's return value on
+  // purpose — it returns the code whether it just claimed it or found an
+  // existing claim, which is exactly the idempotency the caller wants. The
+  // flag only drives a cosmetic "already claimed" hint, so reporting false
+  // here is harmless; the dev path, which can tell, reports it accurately.
+  return { status: "ok", coupon: { code, reused: false } };
 }

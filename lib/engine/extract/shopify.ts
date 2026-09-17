@@ -24,6 +24,8 @@ interface ShopifyProduct {
   images?: ShopifyImage[];
   image?: ShopifyImage | null;
   variants?: ShopifyVariant[];
+  /** Every products.json entry has this — the URL slug at /products/<handle>. */
+  handle?: string;
 }
 interface ShopifyProductsResponse {
   products?: ShopifyProduct[];
@@ -70,6 +72,7 @@ export async function extractShopify(origin: string): Promise<ShopifyExtractResu
 
     const resolved = resolveUrl(primary.src, origin) ?? primary.src;
     const firstVariant = product.variants?.[0];
+    const productUrl = product.handle ? `${origin.replace(/\/$/, "")}/products/${product.handle}` : undefined;
 
     assets.push(
       makeRawAsset({
@@ -79,6 +82,8 @@ export async function extractShopify(origin: string): Promise<ShopifyExtractResu
         priceMinor: parsePriceMinor(firstVariant?.price),
         category: product.product_type || undefined,
         sku: firstVariant?.sku,
+        productUrl,
+        subjectTypeHint: "product",
       }),
     );
   }

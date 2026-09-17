@@ -17,7 +17,7 @@
 // Every message in this file is rendered verbatim to a merchant — they are
 // product copy, not developer diagnostics.
 
-import type { GameCopy, RewardTier } from "@/lib/engine/types";
+import type { CouponTerms, GameCopy, RewardTier } from "@/lib/engine/types";
 
 // ---------------------------------------------------------------------------
 // Colours
@@ -104,9 +104,19 @@ export interface RewardTierDraft {
   label: string;
   percentOff: number | null;
   code?: string;
+  coupon?: CouponTerms;
 }
 
-export type RewardTierField = "minScore" | "label" | "percentOff" | "code";
+export type RewardTierField =
+  | "minScore"
+  | "label"
+  | "percentOff"
+  | "code"
+  // Dotted so the editor can key an error to the exact coupon input; the
+  // PATCH route turns these into paths like "rewards.1.coupon.offerUrl".
+  | "coupon.terms"
+  | "coupon.expiresAt"
+  | "coupon.offerUrl";
 
 export interface RewardTierIssue {
   field: RewardTierField;
@@ -138,6 +148,11 @@ export function normalizeRewardTier(draft: RewardTierDraft): RewardTier {
 
   const tier: RewardTier = { minScore, label: draft.label.trim(), percentOff };
   if (code !== undefined) tier.code = code;
+  // Dropped entirely when every field is blank, rather than stored as an
+  // empty object: the runtime treats `coupon` being present as "there are
+  // terms to render", and {} would reserve space for nothing.
+  const coupon = normalizeCouponTerms(draft.coupon);
+  if (coupon !== undefined) tier.coupon = coupon;
   return tier;
 }
 
@@ -171,6 +186,10 @@ export function validateRewardTier(
       field: "minScore",
       message: "Another tier already unlocks at this score.",
     });
+  }
+
+  for (const issue of validateCouponTerms(draft.coupon)) {
+    issues.push({ field: `coupon.${issue.field}` as RewardTierField, message: issue.message });
   }
 
   if (tier.label.length === 0) {
@@ -265,4 +284,127 @@ export function suggestNextMinScore(
 export function clampTuningValue(value: number, range: { min: number; max: number }): number {
   if (Number.isNaN(value)) return range.min;
   return Math.min(range.max, Math.max(range.min, value));
+}
+
+// ---------------------------------------------------------------------------
+// Reward tier lookup
+// ---------------------------------------------------------------------------
+
+/**
+ * Maps the SORTED tier index that lib/db/queries.ts#finishPlay writes into
+ * `plays.tier_index` back to that tier's position in the spec's own
+ * `rewards` array.
+ *
+ * This exists because the two indices are genuinely different numbers and
+ * conflating them silently pays out the wrong tier. finishPlay sorts the
+ * rewards by minScore and records the winner's index in the SORTED list;
+ * coupon pools are keyed by the tier's position in the array the merchant
+ * edits. For `[{min:0},{min:50}]` the two agree; for `[{min:50},{min:0}]`
+ * they are swapped, and a merchant reordering tiers in the editor is enough
+ * to trigger it.
+ *
+ * Returns -1 for a null/out-of-range input, which callers must read as "this
+ * play earned nothing".
+ *
+ * The stored sorted-index semantics are deliberately left as they are:
+ * changing them would silently rewrite the meaning of historical rows that
+ * the stats dashboard already aggregates.
+ */
+export function originalTierIndexFromSortedIndex(
+  rewards: RewardTier[],
+  sortedIndex: number | null,
+): number {
+  if (sortedIndex === null || !Number.isInteger(sortedIndex) || sortedIndex < 0) return -1;
+
+  const withIndex = rewards.map((tier, index) => ({ tier, index }));
+  // Same comparator as finishPlay's, and Array.prototype.sort is specified
+  // as stable, so equal minScores keep their original relative order in both
+  // places — which is what makes this mapping exact rather than approximate.
+  withIndex.sort((a, b) => a.tier.minScore - b.tier.minScore);
+
+  const entry = withIndex[sortedIndex];
+  return entry ? entry.index : -1;
+}
+
+// ---------------------------------------------------------------------------
+// Coupon terms
+// ---------------------------------------------------------------------------
+
+export const COUPON_TERMS_MAX = 600;
+
+export interface CouponTermsIssue {
+  field: "terms" | "expiresAt" | "offerUrl";
+  message: string;
+}
+
+/** Canonical, JSON-safe CouponTerms, or undefined when nothing was supplied. */
+export function normalizeCouponTerms(draft: CouponTerms | undefined): CouponTerms | undefined {
+  if (!draft) return undefined;
+  const terms = draft.terms?.trim() || undefined;
+  const expiresAt = draft.expiresAt?.trim() || undefined;
+  const offerUrl = draft.offerUrl?.trim() || undefined;
+  if (!terms && !expiresAt && !offerUrl) return undefined;
+
+  const out: CouponTerms = {};
+  if (terms) out.terms = terms;
+  if (expiresAt) out.expiresAt = expiresAt;
+  if (offerUrl) out.offerUrl = offerUrl;
+  return out;
+}
+
+/** [] means valid. Messages are shown to the merchant verbatim. */
+export function validateCouponTerms(draft: CouponTerms | undefined): CouponTermsIssue[] {
+  const terms = normalizeCouponTerms(draft);
+  if (!terms) return [];
+  const issues: CouponTermsIssue[] = [];
+
+  if (terms.terms && terms.terms.length > COUPON_TERMS_MAX) {
+    issues.push({
+      field: "terms",
+      message: `Keep the terms under ${COUPON_TERMS_MAX} characters — players read this on a phone.`,
+    });
+  }
+
+  if (terms.expiresAt !== undefined) {
+    // Date-only (YYYY-MM-DD), not a full timestamp: an expiry is a calendar
+    // date to a merchant, and accepting a timezone-bearing datetime here
+    // invites "expired a day early" bugs for players in other zones.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(terms.expiresAt)) {
+      issues.push({ field: "expiresAt", message: "Use a date in YYYY-MM-DD form." });
+    } else if (Number.isNaN(Date.parse(`${terms.expiresAt}T00:00:00Z`))) {
+      issues.push({ field: "expiresAt", message: "That isn't a real date." });
+    }
+  }
+
+  if (terms.offerUrl !== undefined) {
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(terms.offerUrl);
+    } catch {
+      parsed = null;
+    }
+    if (!parsed) {
+      issues.push({ field: "offerUrl", message: "Enter a full link, starting with https://" });
+    } else if (parsed.protocol !== "https:") {
+      // The embed runs on https storefronts; an http link is a mixed-content
+      // warning at best and blocked at worst.
+      issues.push({ field: "offerUrl", message: "The offer link must start with https://" });
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * True when this tier's coupon offer has passed its expiry date.
+ *
+ * Compared at END of the expiry day in UTC, so a coupon marked 2026-09-30 is
+ * still valid throughout the 30th rather than dying at midnight UTC.
+ */
+export function isCouponExpired(terms: CouponTerms | undefined, now: Date = new Date()): boolean {
+  const expiresAt = terms?.expiresAt;
+  if (!expiresAt) return false;
+  const endOfDay = Date.parse(`${expiresAt}T23:59:59.999Z`);
+  if (Number.isNaN(endOfDay)) return false; // unparseable: don't block payouts
+  return now.getTime() > endOfDay;
 }

@@ -13,14 +13,17 @@ import * as cheerio from "cheerio";
 import type { RawAsset } from "@/lib/engine/types";
 import { makeRawAsset, resolveUrl } from "./util";
 
-const SKIP_PATTERN = /(sprite|icon|favicon|logo|pixel|tracking|badge|payment|visa|mastercard|paypal|swatch|thumb-?nav)/i;
-const PRODUCT_HINT_PATTERN = /(product|item-card|grid-item|catalog|collection|shop-item)/i;
+const SKIP_PATTERN =
+  /(sprite|icon|favicon|logo|pixel|tracking|badge|payment|visa|mastercard|paypal|swatch|thumb-?nav|banner|mobile-cms|cms-content|\/storage\/mobile)/i;
+import { CATALOGUE_PRODUCT_URL_PATTERN } from "@/lib/engine/catalogue";
+
+const PRODUCT_HINT_PATTERN = CATALOGUE_PRODUCT_URL_PATTERN;
 const MAX_DOM_CANDIDATES = 30;
 const MIN_MARKUP_DIMENSION = 150;
 
 export function extractDom(html: string, pageUrl: string): RawAsset[] {
   const $ = cheerio.load(html);
-  const candidates: { url: string; score: number; alt?: string }[] = [];
+  const candidates: { url: string; score: number; alt?: string; productUrl?: string }[] = [];
 
   $("img").each((_, el) => {
     const $el = $(el);
@@ -53,7 +56,15 @@ export function extractDom(html: string, pageUrl: string): RawAsset[] {
     if (score <= 0) return;
 
     const resolved = resolveUrl(src, pageUrl) ?? src;
-    candidates.push({ url: resolved, score, alt: alt || undefined });
+    // Best-effort, lower-confidence than jsonld.ts/shopify.ts's structural
+    // sources: the nearest wrapping <a> isn't guaranteed to be the image's
+    // own canonical product page (could be a "quick view" trigger, a filter
+    // link, etc.) — but for typical catalogue-grid markup it usually is,
+    // and it's essentially free to capture alongside a candidate we were
+    // already going to keep.
+    const anchorHref = $el.closest("a[href]").attr("href");
+    const productUrl = anchorHref ? (resolveUrl(anchorHref, pageUrl) ?? undefined) : undefined;
+    candidates.push({ url: resolved, score, alt: alt || undefined, productUrl });
   });
 
   candidates.sort((a, b) => b.score - a.score);
@@ -63,7 +74,15 @@ export function extractDom(html: string, pageUrl: string): RawAsset[] {
   for (const c of candidates) {
     if (seen.has(c.url)) continue;
     seen.add(c.url);
-    assets.push(makeRawAsset({ url: c.url, origin: "dom", name: c.alt }));
+    assets.push(
+      makeRawAsset({
+        url: c.url,
+        origin: "dom",
+        name: c.alt,
+        productUrl: c.productUrl,
+        subjectTypeHint: "product",
+      }),
+    );
     if (assets.length >= MAX_DOM_CANDIDATES) break;
   }
   return assets;

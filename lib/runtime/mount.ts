@@ -23,11 +23,18 @@ import type {
 } from "@/lib/engine/types";
 import { getCapability } from "@/lib/capabilities";
 import type { GameModule, LoadedAsset, ResolvedRole, RuntimeContext } from "@/lib/runtime/gameModule";
+import { isBrandLogoUrl } from "@/lib/runtime/games/spriteRender";
 import { createInput } from "@/lib/runtime/input";
 import { startLoop, type LoopHandle } from "@/lib/runtime/loop";
 import { animateCountUp, resolveReward } from "@/lib/runtime/reward";
 import { mountStage, type StageController } from "@/lib/runtime/stage";
-import { beginSession, captureLead, endSession, trackEvent } from "@/lib/runtime/telemetry";
+import {
+  beginSession,
+  captureLead,
+  claimCoupon,
+  endSession,
+  trackEvent,
+} from "@/lib/runtime/telemetry";
 import { createCatchGame } from "@/lib/runtime/games/catch";
 import { createGuessPriceGame } from "@/lib/runtime/games/guessPrice";
 import { createChainPopGame } from "@/lib/runtime/games/chainPop";
@@ -203,6 +210,13 @@ function mountGame(
     return score;
   }
   function recordEngagement(assetId: string) {
+    // A role's declared fallback can be the brand's own logo (e.g.
+    // sweet_spot.json's `prize` role) — the logo is brand identity, not a
+    // product, so it must never show up as something the player "engaged
+    // with." This is the single point every template funnels through, so
+    // checking here covers all of them regardless of which role let the
+    // logo in.
+    if (isBrandLogoUrl(loaded.get(assetId)?.image?.src, brand.logoUrl)) return;
     engagedAssetIds.add(assetId);
   }
   function complete() {
@@ -289,9 +303,17 @@ function mountGame(
     const engagedAssets = Array.from(engagedAssetIds)
       .map((id) => loaded.get(id))
       .filter((a): a is LoadedAsset => Boolean(a?.image))
-      .map((a) => ({ spriteUrl: a.image!.src, name: a.data?.name }));
+      .map((a) => ({ spriteUrl: a.image!.src, name: a.data?.name, productUrl: a.data?.productUrl }));
     const resolved = resolveReward(finalScore, spec.rewards);
     let sessionToken: string | null = null;
+
+    // Resolves once endSession() has returned, i.e. once the server has
+    // finished the play and vetted the score. The coupon claim awaits this
+    // because claiming a coupon for an unfinished play is refused (409).
+    let resolveFinished = () => {};
+    const finishedSignal = new Promise<void>((r) => {
+      resolveFinished = r;
+    });
 
     // Paint the reward overlay immediately — don't wait on network. The last
     // game frame (sweet-spot bar, falling products, etc.) otherwise sits on
@@ -304,18 +326,35 @@ function mountGame(
         void submitLead(sessionToken);
       }, () => {
         startPlay(true);
+      }, async () => {
+        // Runs when the player presses "Copy my code", which can be before
+        // endSession() below has resolved — so wait for the session rather
+        // than claiming against a null token. Claiming requires the play to
+        // be FINISHED server-side (see the claim route), and endSession is
+        // what finishes it.
+        await finishedSignal;
+        const claim = await claimCoupon(sessionToken);
+        if (claim.status === "ok") {
+          trackEvent("reward_revealed", { slug, coupon: "claimed" });
+        }
+        return claim.code;
       }),
       overlayBackdrop,
     );
 
     sessionToken = activeSessionToken ? await activeSessionToken : null;
     const server = await endSession(sessionToken, finalScore);
+    resolveFinished();
 
+    // A legacy static RewardTier.code still arrives here from finishPlay for
+    // specs with no coupon pool. Seed the block with it so those games keep
+    // showing a code with no extra round trip; a pooled game gets null and
+    // the block claims on demand.
     if (server.code) {
-      const tierLine = overlay.querySelector<HTMLElement>("[data-role='tier-line']");
-      const tier = resolved.tier;
-      if (tierLine && tier.percentOff != null) {
-        tierLine.textContent = `${tier.label} — code ${server.code}`;
+      const codeLine = overlay.querySelector<HTMLElement>("[data-role='coupon-code']");
+      if (codeLine) {
+        codeLine.textContent = server.code;
+        codeLine.style.display = "block";
       }
     }
 
@@ -332,8 +371,32 @@ function mountGame(
     const status = overlay.querySelector<HTMLElement>("[data-role='email-status']");
     const email = emailField?.value?.trim() ?? "";
     if (!email) return false;
-    const ok = await captureLead(sessionToken, email);
-    if (status) status.textContent = ok ? "Sent — check your inbox." : "Saved for later — we'll email it once this game goes live.";
+    const lead = await captureLead(sessionToken, email);
+    const ok = lead.ok;
+    // NOT "Sent — check your inbox."
+    //
+    // Nothing is sent. POST /api/leads only writes a row to the `leads`
+    // table; there is no mail transport in this codebase at all (no
+    // dependency, no SMTP config) — confirmed by grepping package.json.
+    // Telling a player to check an inbox that will never receive anything is
+    // worse than saying nothing, and with real coupon pools it costs them
+    // their reward: they wait for an email instead of copying the code that
+    // is on screen right now.
+    //
+    // TODO(email): once the Resend marketplace integration is installed
+    // (`vercel integration add resend/resend-email` — blocked on accepting
+    // its terms in the dashboard) and a sending domain is verified, send the
+    // claimed coupon code here and restore a delivery-confirming message.
+    if (status) {
+      // Three distinct outcomes, three distinct messages. "Sent — check your
+      // inbox" used to be shown for all of them, including the case where no
+      // mail transport existed at all.
+      status.textContent = !ok
+        ? "Couldn't save that email — copy your code above instead."
+        : lead.emailed
+          ? "Sent — check your inbox."
+          : "Got it — we've saved your email. Copy your code above to use it now.";
+    }
     if (ok) trackEvent("lead_captured", { slug });
     return ok;
   }
@@ -520,14 +583,30 @@ export function renderStaticScreen(
   // No live session to draw a real engagement list from here — a
   // representative sample of the spec's own assets stands in, same spirit
   // as STATIC_PREVIEW_EXAMPLE_SCORE faking a score for this same preview.
+  // `spec.assets` is every processed asset the pipeline kept, which
+  // includes the brand's own logo whenever one was found (compose.ts sets
+  // `brand.logoUrl` from an asset that's still just a regular entry in this
+  // array) — excluded here the same way mount.ts's real recordEngagement()
+  // excludes it live, so this preview never shows the logo as a "product."
   const engagedSample = spec.assets
+    .filter((a) => !isBrandLogoUrl(a.spriteUrl, brand.logoUrl))
     .slice(0, 4)
-    .map((a) => ({ spriteUrl: a.spriteUrl, name: a.data?.name }));
+    .map((a) => ({ spriteUrl: a.spriteUrl, name: a.data?.name, productUrl: a.data?.productUrl }));
   const content = renderRewardState(brand, copy, tier, null, engagedSample, () => {}, () => {});
   const scoreEl = content.querySelector<HTMLElement>("[data-role='score-value']");
   if (scoreEl) scoreEl.textContent = String(exampleScore);
   const emailField = content.querySelector<HTMLInputElement>("[data-role='email-input']");
   if (emailField) emailField.disabled = true;
+  // The "Get my code"/"Play again" buttons are wired to no-ops here (there's
+  // no live session for either to act on) — `disabled` takes them out of the
+  // tab order and marks them correctly for assistive tech, same job the
+  // container's `inert` used to do wholesale. Doing it per-element instead
+  // means the gallery's product links (real, meaningful, not no-ops) can be
+  // left alone: app/(app)/games/[id]/page.tsx no longer applies `inert` to
+  // this specific preview, precisely so those links stay clickable.
+  for (const button of content.querySelectorAll<HTMLButtonElement>("button")) {
+    button.disabled = true;
+  }
   shell.appendChild(content);
   return shell;
 }
@@ -573,33 +652,43 @@ function renderLoadingState(): HTMLElement {
   return wrap;
 }
 
+/** The brand's own logomark, centred — shared between the idle screen
+ * (which already showed it) and the reward screen (which didn't show any
+ * branding at all before). Returns null when there's no logo to show,
+ * matching the "skip silently" convention used elsewhere for missing
+ * per-asset data. */
+function renderBrandLogo(logoUrl: string | undefined): HTMLImageElement | null {
+  if (!logoUrl) return null;
+
+  const logo = document.createElement("img");
+  logo.src = logoUrl;
+  logo.alt = "";
+  // Explicit, not inherited: `overlay`'s textAlign:center only centers
+  // inline-level boxes. That silently centered the logo by luck as long
+  // as <img> defaulted to display:inline — until a host page's own CSS
+  // reset (Tailwind's preflight among them, which is what this app's own
+  // editor preview loads — see renderStaticScreen()) sets `img { display:
+  // block }`, at which point text-align stops applying and the logo
+  // sticks flush-left. A block-level box needs its own centering, so set
+  // it directly rather than depending on an ancestor's text-align — this
+  // must hold on arbitrary third-party host pages the embed script runs
+  // on, not just this app's own CSS.
+  logo.style.display = "block";
+  logo.style.height = "32px";
+  logo.style.width = "auto";
+  logo.style.marginTop = "0";
+  logo.style.marginBottom = "8px";
+  logo.style.marginLeft = "auto";
+  logo.style.marginRight = "auto";
+  logo.style.objectFit = "contain";
+  return logo;
+}
+
 function renderIdleState(brand: GameSpec["brand"], copy: GameSpec["copy"], onStart: () => void): HTMLElement {
   const wrap = document.createElement("div");
 
-  if (brand.logoUrl) {
-    const logo = document.createElement("img");
-    logo.src = brand.logoUrl;
-    logo.alt = "";
-    // Explicit, not inherited: `overlay`'s textAlign:center only centers
-    // inline-level boxes. That silently centered the logo by luck as long
-    // as <img> defaulted to display:inline — until a host page's own CSS
-    // reset (Tailwind's preflight among them, which is what this app's own
-    // editor preview loads — see renderStaticScreen()) sets `img { display:
-    // block }`, at which point text-align stops applying and the logo
-    // sticks flush-left. A block-level box needs its own centering, so set
-    // it directly rather than depending on an ancestor's text-align — this
-    // must hold on arbitrary third-party host pages the embed script runs
-    // on, not just this app's own CSS.
-    logo.style.display = "block";
-    logo.style.height = "32px";
-    logo.style.width = "auto";
-    logo.style.marginTop = "0";
-    logo.style.marginBottom = "8px";
-    logo.style.marginLeft = "auto";
-    logo.style.marginRight = "auto";
-    logo.style.objectFit = "contain";
-    wrap.appendChild(logo);
-  }
+  const logo = renderBrandLogo(brand.logoUrl);
+  if (logo) wrap.appendChild(logo);
 
   const headline = document.createElement("h2");
   headline.textContent = copy.headline;
@@ -631,18 +720,25 @@ function renderIdleState(brand: GameSpec["brand"], copy: GameSpec["copy"], onSta
 interface EngagedAsset {
   spriteUrl: string;
   name?: string;
+  /** The product's own storefront page — see RawAsset.data's doc comment
+   * in lib/engine/types.ts. Absent whenever extraction found none (manual
+   * mode included); the card renders identically either way, just without
+   * a link. */
+  productUrl?: string;
 }
 
 const ENGAGED_GALLERY_MAX = 6;
+const ENGAGED_THUMB_SIZE = 64; // px — the card itself is a bit wider (padding + border)
 
-/** A row of small thumbnails of the products the player actually engaged
- * with this round — the highest-attention moment of the whole session
- * (the reward screen) previously showed zero product imagery. Returns null
- * (render nothing) when `engaged` is empty, matching the "skip silently"
- * convention already used elsewhere for missing per-asset data — an empty
- * gallery block would read as a bug, not a deliberate absence. */
-const ENGAGED_THUMB_SIZE = 52; // px — the caption column below is the same width
-
+/** A horizontally-scrollable row of cards for the products the player
+ * actually engaged with this round — the highest-attention moment of the
+ * whole session (the reward screen) previously showed zero product
+ * imagery, and briefly showed it as bare thumbnails with a hover-only
+ * name. Each card links to the product's real page when one was captured
+ * during extraction. Returns null (render nothing) when `engaged` is
+ * empty, matching the "skip silently" convention already used elsewhere
+ * for missing per-asset data — an empty gallery block would read as a bug,
+ * not a deliberate absence. */
 function renderEngagedGallery(engaged: EngagedAsset[], brand: GameSpec["brand"]): HTMLElement | null {
   if (engaged.length === 0) return null;
 
@@ -650,22 +746,47 @@ function renderEngagedGallery(engaged: EngagedAsset[], brand: GameSpec["brand"])
   row.style.display = "flex";
   row.style.gap = "10px";
   row.style.margin = "4px 0";
+  row.style.padding = "2px"; // room for each card's own box-shadow, so it isn't clipped
   row.style.overflowX = "auto";
   row.style.maxWidth = "100%";
-  row.style.justifyContent = "center";
-  // Captions can wrap to two lines and thumbnails don't, so items are
-  // naturally uneven heights — align to the top rather than stretching or
-  // centering, which would otherwise misalign every image vertically.
-  row.style.alignItems = "flex-start";
+  row.style.justifyContent = engaged.length > 3 ? "flex-start" : "center";
+  row.style.alignItems = "stretch";
+  // Snap-scrolling reads as a deliberate swipeable card rail rather than an
+  // overflow accident — this widget is typically mounted at mobile width,
+  // where that gesture is the natural one.
+  row.style.scrollSnapType = "x mandatory";
 
   for (const asset of engaged.slice(0, ENGAGED_GALLERY_MAX)) {
-    const item = document.createElement("div");
+    // The whole card is the link target (image + name together) when a
+    // product page was captured — plain <div> otherwise, same visual
+    // either way, just not clickable. See RawAsset.data.productUrl's doc
+    // comment for why this can legitimately be absent (manual mode, a
+    // DOM-ladder-only site that found no wrapping <a>, etc.).
+    const item = document.createElement(asset.productUrl ? "a" : "div") as HTMLAnchorElement | HTMLDivElement;
+    if (asset.productUrl && item instanceof HTMLAnchorElement) {
+      item.href = asset.productUrl;
+      // _blank, not the current frame: this renders inside app/embed.js's
+      // third-party-page iframe — navigating the current frame away would
+      // break out of the host page the widget is embedded in.
+      item.target = "_blank";
+      item.rel = "noopener noreferrer";
+      item.style.textDecoration = "none";
+      item.style.cursor = "pointer";
+    }
     item.style.display = "flex";
     item.style.flexDirection = "column";
     item.style.alignItems = "center";
-    item.style.gap = "3px";
+    item.style.gap = "4px";
     item.style.flex = "0 0 auto";
-    item.style.width = `${ENGAGED_THUMB_SIZE}px`;
+    item.style.width = `${ENGAGED_THUMB_SIZE + 16}px`;
+    item.style.boxSizing = "border-box";
+    item.style.padding = "8px";
+    item.style.borderRadius = "12px";
+    item.style.border = `1px solid ${brand.foreground}1a`;
+    item.style.background = `${brand.foreground}0a`;
+    item.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)";
+    item.style.color = "inherit";
+    item.style.scrollSnapAlign = "start";
 
     const thumb = document.createElement("img");
     thumb.src = asset.spriteUrl;
@@ -673,20 +794,19 @@ function renderEngagedGallery(engaged: EngagedAsset[], brand: GameSpec["brand"])
     thumb.style.width = `${ENGAGED_THUMB_SIZE}px`;
     thumb.style.height = `${ENGAGED_THUMB_SIZE}px`;
     thumb.style.objectFit = "contain";
-    thumb.style.borderRadius = "10px";
+    thumb.style.borderRadius = "8px";
     thumb.style.background = `${brand.foreground}11`;
     item.appendChild(thumb);
 
-    // The name is the point (per the request: it needs to actually be
-    // readable, not hidden behind a hover-only `title`) — skipped
-    // entirely, not shown as a blank line, when there's no real name to
-    // show, matching the "skip silently" convention used elsewhere for
-    // missing per-asset data.
+    // The name is the point (it needs to actually be readable, not hidden
+    // behind a hover-only `title`) — skipped entirely, not shown as a
+    // blank line, when there's no real name to show, matching the "skip
+    // silently" convention used elsewhere for missing per-asset data.
     if (asset.name) {
       const caption = document.createElement("span");
       caption.textContent = asset.name;
       caption.title = asset.name;
-      caption.style.fontSize = "10px";
+      caption.style.fontSize = "11px";
       caption.style.lineHeight = "1.25";
       caption.style.textAlign = "center";
       caption.style.color = brand.foreground;
@@ -706,6 +826,222 @@ function renderEngagedGallery(engaged: EngagedAsset[], brand: GameSpec["brand"])
   return row;
 }
 
+/**
+ * The coupon panel on the reward screen: a Copy button that claims a code,
+ * plus the terms the merchant attached to this tier.
+ *
+ * The code is NOT fetched when this renders. It is claimed on the first
+ * press, because claiming consumes one from a finite pool — rendering it
+ * eagerly would spend a coupon on every player who reached the end screen
+ * and then closed the tab.
+ *
+ * Raw hex/px styling rather than the app's design tokens is correct here:
+ * this subtree is injected into a third-party storefront's DOM, where none
+ * of our CSS exists and the only palette available is the brand's own (see
+ * the note on mount.ts in CLAUDE.md's design-system section).
+ */
+function renderCouponBlock(
+  brand: GameSpec["brand"],
+  tier: GameSpec["rewards"][number],
+  serverCode: string | null,
+  onClaimCoupon: () => Promise<string | null>,
+): HTMLElement {
+  const box = document.createElement("div");
+  box.dataset.role = "coupon-block";
+  box.style.marginTop = "8px";
+  box.style.padding = "10px";
+  box.style.borderRadius = "10px";
+  box.style.border = `1px solid ${brand.foreground}22`;
+  box.style.background = `${brand.accent}0F`;
+  box.style.textAlign = "center";
+
+  const codeLine = document.createElement("div");
+  codeLine.dataset.role = "coupon-code";
+  codeLine.style.fontFamily =
+    "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+  codeLine.style.fontSize = "18px";
+  codeLine.style.fontWeight = "700";
+  codeLine.style.letterSpacing = "0.08em";
+  codeLine.style.wordBreak = "break-all";
+  codeLine.style.color = brand.foreground;
+  // Hidden until claimed — an empty monospace line would reserve space and
+  // look like a rendering bug.
+  codeLine.style.display = serverCode ? "block" : "none";
+  codeLine.textContent = serverCode ?? "";
+  box.appendChild(codeLine);
+
+  // Without this the block is a lone button over an empty space, giving the
+  // player no reason to believe it is where their reward lives.
+  const prompt = document.createElement("p");
+  prompt.dataset.role = "coupon-prompt";
+  prompt.textContent = tier.percentOff != null
+    ? `Your ${tier.percentOff}% off code`
+    : "Your code";
+  prompt.style.margin = "0 0 6px";
+  prompt.style.fontSize = "12px";
+  prompt.style.fontWeight = "600";
+  prompt.style.letterSpacing = "0.04em";
+  prompt.style.textTransform = "uppercase";
+  prompt.style.opacity = "0.7";
+  prompt.style.color = brand.foreground;
+  prompt.style.display = serverCode ? "none" : "block";
+  box.insertBefore(prompt, codeLine);
+
+  const status = document.createElement("p");
+  status.dataset.role = "coupon-status";
+  status.style.margin = "4px 0 0";
+  status.style.fontSize = "12px";
+  status.style.opacity = "0.75";
+  status.style.minHeight = "1.2em";
+  status.style.color = brand.foreground;
+
+  const button = makeButton("Copy my code", brand.accent, brand.background);
+  button.dataset.role = "coupon-copy";
+  button.style.padding = "8px 14px";
+  button.style.marginTop = codeLine.style.display === "block" ? "8px" : "0";
+
+  let claimed: string | null = serverCode;
+  let busy = false;
+
+  async function writeToClipboard(text: string): Promise<boolean> {
+    try {
+      // Only available on a secure origin, and rejects outright if the
+      // document isn't focused — both realistic inside an iframe on someone
+      // else's site.
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // fall through to the legacy path
+    }
+    try {
+      // execCommand("copy") is deprecated but still the only fallback that
+      // works in an iframe without clipboard permission. The textarea must
+      // be in the document and selectable, hence the off-screen placement
+      // rather than display:none (which cannot be selected).
+      const scratch = document.createElement("textarea");
+      scratch.value = text;
+      scratch.setAttribute("readonly", "");
+      scratch.style.position = "fixed";
+      scratch.style.top = "-1000px";
+      scratch.style.opacity = "0";
+      document.body.appendChild(scratch);
+      scratch.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(scratch);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+
+  button.addEventListener("click", async () => {
+    if (busy) return;
+    busy = true;
+    button.disabled = true;
+
+    try {
+      if (!claimed) {
+        status.textContent = "Getting your code…";
+        claimed = await onClaimCoupon();
+      }
+
+      if (!claimed) {
+        // Deliberately not "error": from the player's side an empty pool and
+        // an expired offer are the same experience, and the honest framing is
+        // that there is nothing to hand over right now.
+        status.textContent = "No codes left right now — check back soon.";
+        prompt.style.display = "none";
+        button.style.display = "none";
+        return;
+      }
+
+      codeLine.textContent = claimed;
+      codeLine.style.display = "block";
+      prompt.style.display = "none";
+      button.style.marginTop = "8px";
+
+      const copied = await writeToClipboard(claimed);
+      status.textContent = copied
+        ? "Copied to your clipboard."
+        : "Select the code above to copy it.";
+      button.textContent = "Copy again";
+    } finally {
+      busy = false;
+      button.disabled = false;
+    }
+  });
+
+  box.appendChild(button);
+  box.appendChild(status);
+
+  const coupon = tier.coupon;
+  if (coupon?.offerUrl) {
+    const link = document.createElement("a");
+    link.href = coupon.offerUrl;
+    link.textContent = "View offer";
+    link.target = "_blank";
+    // noopener/noreferrer on a link we render into someone else's page: the
+    // destination must not get a handle on the opener window.
+    link.rel = "noopener noreferrer";
+    link.style.display = "inline-block";
+    link.style.marginTop = "6px";
+    link.style.fontSize = "12px";
+    link.style.fontWeight = "600";
+    link.style.color = brand.accent;
+    box.appendChild(link);
+  }
+
+  if (coupon?.expiresAt) {
+    const expiry = document.createElement("p");
+    expiry.style.margin = "6px 0 0";
+    expiry.style.fontSize = "11px";
+    expiry.style.opacity = "0.7";
+    expiry.style.color = brand.foreground;
+    expiry.textContent = `Valid until ${formatExpiry(coupon.expiresAt)}`;
+    box.appendChild(expiry);
+  }
+
+  if (coupon?.terms) {
+    const terms = document.createElement("p");
+    terms.dataset.role = "coupon-terms";
+    terms.style.margin = "6px 0 0";
+    terms.style.fontSize = "11px";
+    terms.style.lineHeight = "1.4";
+    terms.style.opacity = "0.65";
+    terms.style.color = brand.foreground;
+    // textContent, never innerHTML: this string is merchant-supplied and is
+    // rendered inside a third-party page.
+    terms.textContent = coupon.terms;
+    box.appendChild(terms);
+  }
+
+  return box;
+}
+
+/**
+ * "2026-09-30" -> "30 Sep 2026", falling back to the raw string.
+ *
+ * Parsed as UTC (the trailing Z) so the displayed date matches the date the
+ * merchant typed regardless of the player's timezone — without it, a player
+ * west of UTC sees the day before.
+ */
+function formatExpiry(iso: string): string {
+  const ms = Date.parse(`${iso}T00:00:00Z`);
+  if (Number.isNaN(ms)) return iso;
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(new Date(ms));
+  } catch {
+    return iso;
+  }
+}
+
 function renderRewardState(
   brand: GameSpec["brand"],
   copy: GameSpec["copy"],
@@ -714,10 +1050,19 @@ function renderRewardState(
   engaged: EngagedAsset[],
   onSubmitEmail: () => void,
   onReplay: () => void,
+  /**
+   * Claims one coupon and resolves with the code, or null when there is none
+   * to give (pool exhausted, offer expired, network failure). Called only
+   * when the player actually presses the button.
+   */
+  onClaimCoupon: () => Promise<string | null> = async () => null,
 ): HTMLElement {
   const wrap = document.createElement("div");
   wrap.style.width = "100%";
   wrap.style.maxWidth = "360px";
+
+  const logo = renderBrandLogo(brand.logoUrl);
+  if (logo) wrap.appendChild(logo);
 
   const intro = document.createElement("p");
   intro.textContent = copy.rewardIntro;
@@ -738,13 +1083,19 @@ function renderRewardState(
 
   const tierLine = document.createElement("p");
   tierLine.dataset.role = "tier-line";
-  tierLine.textContent =
-    tier.percentOff != null ? `${tier.label} — code ${serverCode ?? tier.code ?? "pending"}` : tier.label;
+  // The code no longer lives on this line. It is claimed on demand by the
+  // coupon block below, because a code shown here would have to be consumed
+  // from the pool before the player had asked for it.
+  tierLine.textContent = tier.label;
   tierLine.style.margin = "0 0 4px";
   tierLine.style.fontSize = "16px";
   tierLine.style.fontWeight = "600";
   tierLine.style.color = brand.accent;
   wrap.appendChild(tierLine);
+
+  if (tier.percentOff != null) {
+    wrap.appendChild(renderCouponBlock(brand, tier, serverCode, onClaimCoupon));
+  }
 
   const gallery = renderEngagedGallery(engaged, brand);
   if (gallery) wrap.appendChild(gallery);
@@ -768,13 +1119,26 @@ function renderRewardState(
   emailInput.style.flex = "1 1 160px";
   emailRow.appendChild(emailInput);
 
-  // Fixed string, not copy.emailPrompt: that field is the input's
-  // placeholder, and a natural placeholder ("Enter your email for your
-  // code") makes a button wider than the card. A dedicated button label
-  // would mean adding a GameCopy field in lib/engine/types.ts — a shared
-  // contract change for pure cosmetics — so the verb is hardcoded here.
-  const emailButton = makeButton("Get my code", brand.accent, brand.background);
+  // "Email it to me", NOT "Get my code".
+  //
+  // This button only captures a lead. Once the coupon block above it existed,
+  // "Get my code" sat directly beneath a "Copy my code" button and read as
+  // the way to obtain the code — so players pressed it, got an email capture,
+  // and reported that finishing the game granted no reward. Two buttons on
+  // one screen must not both look like the way to get the thing.
+  //
+  // Still a fixed string rather than a GameCopy field: copy.emailPrompt is
+  // the input's placeholder, and a natural placeholder makes a button wider
+  // than the card. Adding a field to the shared contract for a button label
+  // is not worth it.
+  const emailButton = makeButton("Email it to me", brand.accent, brand.background);
   emailButton.style.padding = "8px 14px";
+  // Secondary: the coupon block is the primary action, and two solid accent
+  // buttons stacked read as equal choices.
+  emailButton.style.background = "transparent";
+  emailButton.style.color = brand.foreground;
+  emailButton.style.border = `1px solid ${brand.foreground}55`;
+  emailButton.style.fontWeight = "600";
   emailButton.addEventListener("click", onSubmitEmail);
   emailRow.appendChild(emailButton);
   wrap.appendChild(emailRow);

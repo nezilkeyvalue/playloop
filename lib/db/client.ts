@@ -3,9 +3,11 @@
 // Supabase client (server + browser), plus the dev-mode switch that the rest
 // of the db layer (lib/db/queries.ts) reads. Build spec §2, §4, §19.
 //
-// MVP stub: real auth is out of scope (spec §19 — "magic link or a stub is
-// fine"). There is exactly one implicit dev account (accountId: null)
-// throughout this codebase; see the comment on that in queries.ts.
+// Auth is real now and lives in lib/auth/* (Google SSO via Supabase Auth);
+// accounts.id is the same uuid as auth.users.id. The `accountId: null` row
+// owner this codebase used to pass everywhere survives as exactly one thing:
+// the single implicit account used when NO Supabase project is configured.
+// See the comment on that in queries.ts, and lib/auth/server.ts#requireAccount.
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
@@ -55,31 +57,11 @@ export function getSupabaseServerClient(): SupabaseClient {
   return serverClient;
 }
 
-let browserClient: SupabaseClient | null = null;
-
-/**
- * Browser client using the anon key, for future client-side reads once real
- * auth exists (out of MVP scope — see spec §19). Nothing in this build
- * calls it: every mutation and read in the builder UI goes through this
- * track's API routes, which use getSupabaseServerClient() above instead.
- * Kept only so the "server + browser" client shape the spec describes
- * exists and is easy to wire up later.
- *
- * Note: SUPABASE_URL is a server-only env var in .env.example (not
- * NEXT_PUBLIC_-prefixed), so calling this from an actual browser bundle
- * will not see a URL and will throw — that's expected until a public URL
- * var is added alongside real auth.
- */
-export function getSupabaseBrowserClient(): SupabaseClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) {
-    throw new Error(
-      "Supabase browser client requires a public URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.",
-    );
-  }
-  if (!browserClient) {
-    browserClient = createClient(url, key);
-  }
-  return browserClient;
-}
+// The browser client that used to live here has moved to lib/auth/browser.ts.
+// It was a never-called placeholder using createClient() with localStorage
+// session persistence; the replacement uses @supabase/ssr's
+// createBrowserClient(), whose cookie-backed session is the thing that makes
+// a login visible to server components and route handlers too. localStorage
+// is not. Nothing in this file needs a browser client any more — every read
+// and mutation still goes through the API routes and the service-role client
+// above, which remains the trust boundary.

@@ -19,6 +19,8 @@ import {
 } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { AuthGate } from "@/components/AuthGate";
+import { CouponManager } from "@/components/CouponManager";
 import {
   findIncompleteRoles,
   getCapability,
@@ -234,6 +236,14 @@ const PEER_FOCUS_RING_CLASS =
   "peer-focus-visible:ring-offset-background";
 
 export default function GamePreviewEditorPage() {
+  return (
+    <AuthGate title="Sign in to edit this game" description="These pages show one game's spec, stats and embed code. Sign in to the account that owns it.">
+      <GameEditor />
+    </AuthGate>
+  );
+}
+
+function GameEditor() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [game, setGame] = useState<GameRecord | null>(null);
@@ -1005,6 +1015,7 @@ export default function GamePreviewEditorPage() {
                     {orderedRewards.map(({ reward, index }) => (
                       <RewardRow
                         key={index}
+                        gameId={id}
                         reward={reward}
                         index={index}
                         maxScore={maxScore}
@@ -1179,7 +1190,7 @@ function StaticScreenPreview({
 
   return (
     <div
-      role="img"
+      role="group"
       aria-label={`Preview of the ${
         kind === "idle" ? "start screen" : "end summary"
       } as players will see it`}
@@ -1187,13 +1198,28 @@ function StaticScreenPreview({
       className="h-full w-full"
       style={{ minHeight: 480 }}
     >
-      {/* inert: this is a picture of the game, not the game. renderStaticScreen
-          builds real <button>s via makeButton and wires them to no-ops, and its
-          <h2> would otherwise duplicate the panel's own heading in the outline
-          — inert takes all of that out of the tab order and the a11y tree at
-          once. The role/aria-label live on the OUTER node deliberately: inert
-          on the same element would prune the label with everything else. */}
-      <div ref={ref} inert className="h-full w-full" style={{ minHeight: 480 }} />
+      {/* The idle screen is still fully `inert`: this is a picture of the
+          game, not the game — renderStaticScreen builds a real <button> via
+          makeButton wired to a no-op, and a real <h2> that would otherwise
+          duplicate the panel's own heading in the outline, so `inert` takes
+          both out of the tab order and the a11y tree at once.
+
+          The reward screen is NOT inert: its gallery of engaged products can
+          carry real, meaningful links to each product's actual page (see
+          RawAsset.data.productUrl in lib/engine/types.ts) — those need to
+          stay genuinely clickable/focusable even in this "preview" tab, so
+          `inert` (which has no per-descendant opt-out) can't wrap this one.
+          renderStaticScreen instead disables its own no-op buttons/inputs
+          directly (`button.disabled = true`, same for the email field) so
+          only the real links remain interactive. role="group" (not "img")
+          on this wrapper reflects that: the reward preview genuinely has
+          live content inside it now, not just a flat picture. */}
+      <div
+        ref={ref}
+        inert={kind === "idle" ? true : undefined}
+        className="h-full w-full"
+        style={{ minHeight: 480 }}
+      />
     </div>
   );
 }
@@ -1547,6 +1573,7 @@ function EditableField({
 }
 
 function RewardRow({
+  gameId,
   reward,
   index,
   maxScore,
@@ -1557,6 +1584,8 @@ function RewardRow({
   onRemove,
   onPreview,
 }: {
+  /** Needed for the coupon endpoints, which are scoped per game. */
+  gameId: string;
   reward: RewardTier;
   /** Position in spec.rewards — rows render in threshold order, so this is
    * NOT the row's position on screen. */
@@ -1770,6 +1799,20 @@ function RewardRow({
       >
         {previewing ? "Previewing this tier" : "Preview this tier"}
       </button>
+
+      {/* Only a tier that actually discounts something gets a coupon pool.
+          A percentOff of null is the "thanks for playing" tier — the runtime
+          renders no code block for it (see renderCouponBlock's call site in
+          lib/runtime/mount.ts), so offering the merchant an inventory to
+          stock would promise a handover that never happens. */}
+      {reward.percentOff != null && (
+        <CouponManager
+          gameId={gameId}
+          tierIndex={index}
+          tier={reward}
+          onCommitTerms={(coupon) => onCommit({ coupon: coupon ?? undefined })}
+        />
+      )}
     </div>
   );
 }

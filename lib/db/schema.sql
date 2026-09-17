@@ -1,6 +1,18 @@
 -- lib/db/schema.sql
 -- PlayLoop data model. Build spec §4.
 --
+-- NOT the source of truth any more. This file is the initial schema, copied
+-- verbatim into supabase/migrations/20260917000001_init.sql; a second
+-- migration beside it (20260917000002_auth_and_storage.sql) wires `accounts`
+-- to auth.users, adds the sign-in trigger, and provisions the `sprites`
+-- Storage bucket. Apply the whole thing with:
+--
+--   supabase link --project-ref <ref>
+--   supabase db push
+--
+-- Change the schema by ADDING a migration, never by editing this file — the
+-- migration history is what every environment replays.
+--
 -- Row Level Security on every table: tenant isolation is a GDPR obligation
 -- here, not a nicety — PlayLoop is a data processor for every client whose
 -- rows live in these tables.

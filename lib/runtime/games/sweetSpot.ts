@@ -32,6 +32,7 @@ import {
   drawAssetContain,
   updateCelebrations,
   drawCelebration,
+  isBrandLogoUrl,
   type Celebration,
 } from "@/lib/runtime/games/spriteRender";
 
@@ -169,10 +170,12 @@ class SweetSpotGame implements GameModule {
 
       // The moment of success: the prize on screen is what the player just
       // won, so that is the asset worth recording and celebrating. Guard on
-      // a real loaded image — never record the logo/accent-medallion
-      // fallback, which is not a product (see CLAUDE.md's hazards list).
+      // a real loaded image that isn't the brand's own logo — the `prize`
+      // role's `fallback: "logo"` (and no subjectTypeIn restriction) means
+      // this pool can genuinely contain the logo asset itself, which is not
+      // a product (see CLAUDE.md's hazards list).
       const won = this.prizePool[this.prizeIndex];
-      if (won?.image) {
+      if (won?.image && !isBrandLogoUrl(won.image.src, this.ctx.brand.logoUrl)) {
         this.ctx.recordEngagement(won.id);
         this.celebrations.push({
           asset: won,

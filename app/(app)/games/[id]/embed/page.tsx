@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
+import { AuthGate } from "@/components/AuthGate";
 import {
   findIncompleteRoles,
   getCapability,
@@ -55,6 +56,14 @@ function publishErrorMessage(body: { error?: string; gaps?: RoleGap[] } | null):
 }
 
 export default function EmbedPage() {
+  return (
+    <AuthGate title="Sign in to get your embed code" description="These pages show one game's spec, stats and embed code. Sign in to the account that owns it.">
+      <EmbedPanel />
+    </AuthGate>
+  );
+}
+
+function EmbedPanel() {
   const { id } = useParams<{ id: string }>();
   const [game, setGame] = useState<GameRecord | null>(null);
   const [placement, setPlacement] = useState<Placement>("section");

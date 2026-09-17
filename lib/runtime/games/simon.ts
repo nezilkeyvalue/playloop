@@ -40,6 +40,7 @@
 
 import type { GameModule, RuntimeContext, LoadedAsset } from "@/lib/runtime/gameModule";
 import type { BrandKit } from "@/lib/engine/types";
+import { drawAssetContain } from "@/lib/runtime/games/spriteRender";
 
 // Scoring constants. Chosen so maxRealisticScore() at the capability's
 // *default* tuning (maxRounds 12) lands close to simon.json's
@@ -465,7 +466,7 @@ class SimonGame implements GameModule {
       c.save();
       roundedRect(c, x, y, size, size, radius);
       c.clip();
-      c.drawImage(tile.asset.image, x + inset, y + inset, size - inset * 2, size - inset * 2);
+      drawAssetContain(c, tile.asset, x + inset, y + inset, size - inset * 2, size - inset * 2);
       c.restore();
     }
 

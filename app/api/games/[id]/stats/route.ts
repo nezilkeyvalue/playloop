@@ -12,14 +12,21 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getGameById, getGameStats } from "@/lib/db/queries";
+import { notFound, ownsRecord, requireAccount } from "@/lib/auth/server";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+
+  // Play counts, lead totals and referrer breakdowns are commercially
+  // sensitive — owner-only, same as the game itself.
+  const auth = await requireAccount();
+  if (!auth.ok) return auth.response;
+
   const game = await getGameById(id);
-  if (!game) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  if (!game || !ownsRecord(game, auth.accountId)) return notFound();
   const stats = await getGameStats(id);
   return NextResponse.json(stats);
 }

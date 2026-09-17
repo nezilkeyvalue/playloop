@@ -5,24 +5,51 @@
 // a manual-mode link.
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Reveal } from "@/components/Reveal";
 import { AnimatedNumber } from "@/components/AnimatedNumber";
 import { HeroDoodle } from "@/components/HeroDoodle";
 import { ShowcaseSlideshow } from "@/components/ShowcaseSlideshow";
+import { useAuth } from "@/components/AuthProvider";
 
 export default function LandingPage() {
   const router = useRouter();
+  const { requireLogin, authEnabled, user } = useAuth();
   const [url, setUrl] = useState("");
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // app/auth/callback/route.ts bounces failed Google consent back here with
+  // the reason on the query string, rather than dropping the user on a blank
+  // page with no idea why they aren't signed in.
+  //
+  // Read straight off window.location rather than via useSearchParams(): that
+  // hook opts the whole route out of static rendering unless it sits inside a
+  // Suspense boundary, and this landing page is not worth wrapping for a query
+  // param that is absent on every normal visit.
+  useEffect(() => {
+    const authError = new URLSearchParams(window.location.search).get("auth_error");
+    if (authError) {
+      setError(`Sign-in failed: ${authError}`);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!rightsConfirmed) return;
+
+    // The login gate for the primary CTA. requireLogin() opens the modal and
+    // returns false when there's no session; the generation request is not
+    // sent at all in that case, because POST /api/generate now 401s without
+    // one and a half-started job the user can't see is worse than no job.
+    if (!requireLogin("Sign in to build your game — we'll save it to My games so you can edit, publish and embed it.")) {
+      return;
+    }
+
     setError(null);
     setLoading(true);
     try {
@@ -31,6 +58,11 @@ export default function LandingPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, rightsConfirmed }),
       });
+      if (res.status === 401) {
+        setLoading(false);
+        requireLogin("Your session expired. Sign in again to build your game.");
+        return;
+      }
       if (!res.ok) throw new Error("Could not start generation. Try again.");
       const { jobId } = (await res.json()) as { jobId: string };
       router.push(`/build/auto/${jobId}`);
@@ -39,6 +71,12 @@ export default function LandingPage() {
       setLoading(false);
     }
   }
+
+  const ctaLabel = loading
+    ? "Starting…"
+    : authEnabled && !user
+      ? "Log in to build"
+      : "Make it playable";
 
   return (
     <main className="flex flex-col items-center px-6 pb-32 pt-32 text-center">
@@ -78,7 +116,7 @@ export default function LandingPage() {
           disabled={loading || !rightsConfirmed}
           className="rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground transition hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
         >
-          {loading ? "Starting…" : "Make it playable"}
+          {ctaLabel}
         </button>
       </form>
 

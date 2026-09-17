@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { AuthGate } from "@/components/AuthGate";
 import {
   Bar,
   BarChart,
@@ -34,6 +35,14 @@ const ACCENT = "#5B4AFF";
 const ACCENT_SOFT = "#FF7A3D";
 
 export default function StatsPage() {
+  return (
+    <AuthGate title="Sign in to see these stats" description="These pages show one game's spec, stats and embed code. Sign in to the account that owns it.">
+      <StatsDashboard />
+    </AuthGate>
+  );
+}
+
+function StatsDashboard() {
   const { id } = useParams<{ id: string }>();
   const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState<string | null>(null);

@@ -12,11 +12,18 @@ export const runtime = "nodejs";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { uploadSprite } from "@/lib/storage";
+import { requireAccount } from "@/lib/auth/server";
 
 const MAX_FILES = 12;
 const MAX_BYTES = 8 * 1024 * 1024; // 8MB/file — generous for source packshots
 
 export async function POST(req: NextRequest) {
+  // Uploads now land in a shared Supabase Storage bucket rather than a local
+  // scratch directory, which makes this route a write to real infrastructure.
+  // Sign-in is the cheapest bound on someone using it as free image hosting.
+  const auth = await requireAccount();
+  if (!auth.ok) return auth.response;
+
   let form: FormData;
   try {
     form = await req.formData();

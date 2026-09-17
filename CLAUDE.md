@@ -5,6 +5,7 @@ first. For depth beyond what's here, see `docs/`:
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the pipeline and runtime actually work, file by file
 - [`docs/ADDING_A_TEMPLATE.md`](docs/ADDING_A_TEMPLATE.md) — step-by-step recipe for a new game template
+- [`docs/COUPONS.md`](docs/COUPONS.md) — how a code gets from a spreadsheet to a player's clipboard, step by step
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — open work, organized into parallelizable tracks
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — how to split work across people/agents without stepping on each other
 
@@ -40,6 +41,10 @@ lib/engine/           Generation pipeline (auto mode's brain)
 
 lib/capabilities/      One JSON per template (data, not code) + index.ts loader/validator
 
+lib/coupons/           Coupon pools (per reward tier)
+  codes.ts               crypto-random generation + canonicalisation/de-dup of a batch
+  parse.ts               CSV/TSV (no dep) and XLSX (exceljs) -> raw code strings
+
 lib/runtime/            Client-side game player
   mount.ts                mount(spec, container, placement) → { teardown } — the runtime entry point
   gameModule.ts            GameModule contract every template implements
@@ -50,17 +55,29 @@ lib/runtime/            Client-side game player
   fixtures/sampleGameSpec.ts   hand-written GameSpecs for offline dev/demo (no pipeline needed)
 
 lib/db/                 Dev-mode JSON-file store, or Supabase when SUPABASE_URL is set
-lib/storage.ts          Blob storage (local disk in dev, Vercel Blob in prod)
+lib/auth/               Google SSO via Supabase Auth
+  config.ts               isAuthEnabled() — the one switch; safe to import from client code
+  server.ts               getSessionUser/requireAccount/ownsRecord — the ONLY request -> accountId path
+  browser.ts              cookie-backed browser client (auth only, never data)
+lib/storage.ts          Blob storage (Supabase Storage, or local disk when unconfigured)
 lib/rateLimit.ts, lib/slug.ts
+
+supabase/               CLI project: config.toml (incl. [auth.external.google]) + migrations/
+scripts/migrate-dev-data.ts   one-shot ./dev-data -> Supabase (rows + blobs + URL rewrite)
 
 app/(marketing)/        Public landing page, gallery
 app/(app)/               Builder UI: /build, /games, /games/[id] (the editor), /games/[id]/stats, /games/[id]/embed
+app/auth/                callback (OAuth code -> session cookies) and signout
 app/api/                 generate, games, plays, leads, upload — the HTTP surface over lib/engine + lib/db
 app/play/[slug]/         Hosted standalone game page
 app/embed.js/            The embed script third-party sites load
 app/demo-storefront/     Mock storefront showing the embed in context
 
 components/              Shared UI (Logomark, Reveal, AnimatedNumber, EditorIcons, GamePreviewModal, HeroDoodle, ShowcaseSlideshow)
+  AuthProvider.tsx         session context + the shared login modal + requireLogin()
+  AuthButton.tsx           header control: "Log in" / avatar menu
+  AuthGate.tsx             per-page gate: sign-in card instead of a doomed fetch
+  CouponManager.tsx        per-tier coupon admin (terms, generate, upload, stock)
 ```
 
 ## Commands
@@ -71,12 +88,78 @@ npm run typecheck    # tsc --noEmit — run this after every change, it's fast a
 npm run lint
 npm run build
 npm run test:extract # runs the extraction ladder against scripts/sample-sites.json
+npm run migrate:dev-data -- --owner you@example.com   # ./dev-data -> Supabase (add --dry-run first)
 ```
 
-No external accounts needed. Leave `SUPABASE_URL` unset → JSON-file DB under
-`./dev-data/`. Leave `GEMINI_API_KEY` unset → deterministic fallback in
-`brain.ts` (same code path as a real Gemini timeout, so "no key" and
-"degraded" are never two different behaviors to maintain).
+Supabase, when you're changing it:
+
+```bash
+supabase link --project-ref <ref>   # once, per checkout
+supabase db push                    # apply supabase/migrations/*
+supabase config push                # apply supabase/config.toml (auth URLs + Google provider)
+```
+
+Still no external accounts needed to run it. Leave `SUPABASE_URL` unset →
+JSON-file DB under `./dev-data/` and local-disk blobs. Leave the two
+`NEXT_PUBLIC_SUPABASE_*` vars unset → no login wall, no login button, one
+implicit account (see the auth section below). Leave `GEMINI_API_KEY` unset →
+deterministic fallback in `brain.ts` (same code path as a real Gemini timeout,
+so "no key" and "degraded" are never two different behaviors to maintain).
+
+## Auth and persistence
+
+Sign-in is Google SSO through Supabase Auth. `accounts.id` **is**
+`auth.users.id` — the same uuid — which is what makes every
+`auth.uid() = account_id` RLS policy in the schema correct rather than
+aspirational.
+
+Three rules:
+
+1. **`lib/auth/server.ts#requireAccount()` is the only way a route learns who
+   is calling.** It returns either `{ accountId }` or a ready-made 401. Don't
+   read cookies or call `getUser()` anywhere else, and never authorize off
+   `getSession()` — that returns whatever the cookie claims without verifying
+   it.
+2. **Reading a row by id is not authorization.** Every per-game route pairs
+   `getGameById()` with `ownsRecord()`, and a row owned by someone else
+   returns **404, not 403** — a 403 confirms the id exists, which leaks which
+   game uuids are real.
+3. **Auth is optional and must stay optional.** With the two
+   `NEXT_PUBLIC_SUPABASE_*` vars unset, `isAuthEnabled()` is false,
+   `requireAccount()` hands back `accountId: null` (the single implicit dev
+   account this codebase used everywhere before SSO existed), `AuthButton`
+   renders nothing and `AuthGate` renders its children. That path is what
+   keeps the zero-external-accounts local run above true — don't add a check
+   that assumes a user exists.
+
+`AuthProvider` is mounted in `app/(marketing)/layout.tsx` and
+`app/(app)/layout.tsx`, **not** in the root layout, so `app/play/[slug]` and
+the embed don't pull the Supabase auth client into the bundle a third-party
+storefront loads. Keep it that way.
+
+## Coupons
+
+Each reward tier can own a pool of single-use codes. The split of
+responsibility is the thing to hold on to:
+
+| | Where it lives | Who sees it |
+|---|---|---|
+| Terms, expiry, offer link (`CouponTerms`) | inside `GameSpec.rewards[i].coupon` | shipped to every browser |
+| The codes themselves | the `coupons` table only | one player gets exactly one |
+
+**Never put codes in `GameSpec`.** The spec is delivered wholesale to every
+storefront running the embed, so a pool in the spec is a pool published to
+anyone who opens devtools.
+
+A code is consumed when the player presses **Copy my code**, not when the game
+ends — players who close the tab must not burn coupons. `POST
+/api/plays/claim-coupon` is idempotent: the same play always gets the same
+code back and only the first call consumes anything, which is what makes the
+button safe to double-click and the retry in `telemetry.ts` safe to use.
+
+Admin side is `/api/games/:id/coupons` (owner-only): generate from the UI,
+upload .csv/.xlsx, paste a list, or clear unclaimed. Claimed rows are never
+deleted — they are the record of which code went to which play.
 
 ## Conventions and hazards learned the hard way
 
@@ -172,6 +255,21 @@ touching the related area.
   `spriteRender.ts` (above) is the natural pairing: a `Celebration` pushed
   at the same call site gives the player a brief grow-and-fade look at what
   they just engaged with, instead of it just vanishing.
+- **A role's `fallback: "logo"` can hand your template the brand's own
+  logo asset — that still counts as "a real loaded image," so the
+  `recordEngagement`/`Celebration` guard above must exclude it explicitly,
+  not just check `asset?.image`.** Confirmed live: `sweet_spot.json`'s
+  `prize` role declares `"fallback": "logo"` and no `subjectTypeIn`
+  restriction at all (unlike `catch`'s `collectible` or `guess_price`'s
+  `hero`), so when too few real prize assets exist the matcher can hand
+  `prize` the logo directly — `sweetSpot.ts` then "won" and celebrated the
+  logo as if it were a product, and it showed up in the reward screen's
+  recap gallery next to real products. Fixed two ways: `spriteRender.ts`'s
+  `isBrandLogoUrl(imageSrc, logoUrl)` guards `sweetSpot.ts`'s own
+  celebration call site, and `mount.ts`'s `recordEngagement()` checks the
+  same thing centrally (the one function every template already calls
+  through) so any future template with a similar `fallback: "logo"` role
+  can't reintroduce this by forgetting the per-template guard.
 - **A game module calling `ctx.complete()` synchronously from `update()`
   used to crash `chainPop.ts`'s next `render()` call in the same frame.**
   `mount.ts`'s `onGameComplete()` runs synchronously up to its first
@@ -211,6 +309,68 @@ touching the related area.
   brought uniqlo.com's total extraction time down to ~11s (one honest
   timeout — the real floor, since confirming a truly silent origin
   necessarily costs one full wait).
+- **Supabase Storage builds the `Cache-Control` header for you.** The
+  `cacheControl` upload option is *not* a full header value — Storage emits
+  `public, max-age=<your string>`. Passing
+  `"public, max-age=31536000, immutable"` yields the malformed
+  `public, max-age=public, max-age=31536000, immutable`, which was shipped
+  once and caught only by reading the response headers off a live object.
+  `lib/storage.ts` passes `"31536000, immutable"`. Note also that the public
+  URL is CDN-fronted with that same long max-age, so re-uploading over an
+  object will *not* show you the new headers — test with a fresh object name.
+- **Migrating a game row without rewriting its sprite URLs looks like it
+  worked.** Sprite URLs live at arbitrary depths inside the `spec` jsonb
+  blob, as `/dev-blob/<hash>.<ext>` paths that only ever resolved on one
+  laptop. `scripts/migrate-dev-data.ts` uploads the blobs first and rewrites
+  every occurrence in `spec`/`inventory`/`match` before inserting a single
+  row, because a row-only copy passes every check you'd think to run and then
+  renders a game with no images. The dev store also wrote `.bin` for any
+  content type it had no extension for, so that script sniffs magic bytes
+  rather than trusting the file name — the `sprites` bucket has a MIME
+  allowlist and rejects `application/octet-stream`.
+- **Never re-derive a reward tier from `plays.score`.** `finishPlay` keeps the
+  RAW reported score for audit even when it judges the play forged (score
+  above the template's realistic ceiling, or elapsed time under the floor) —
+  it signals the rejection by writing `tier_index = null`, not by zeroing
+  `score`. The coupon claim originally resolved the tier from `play.score`
+  and therefore paid out exactly the plays `finishPlay` had just rejected;
+  a test where `finishPlay` returned `tier: null` and the claim still handed
+  over a code is what caught it. Read `play.tierIndex`; treat null as
+  "earned nothing".
+- **`plays.tier_index` is an index into the SORTED rewards, coupon pools are
+  keyed by the ORIGINAL array order.** These are different numbers as soon as
+  a merchant reorders tiers in the editor, and mixing them pays out the wrong
+  tier silently. Convert with `originalTierIndexFromSortedIndex()` in
+  `specRules.ts`. The stored sorted-index semantics are deliberately left
+  alone — changing them would rewrite the meaning of historical rows the
+  stats dashboard already aggregates.
+- **Claiming a coupon cannot be a read-then-write.** Between "find the oldest
+  unclaimed row" and "mark it mine", a concurrent player reads the same row
+  and both walk away with the same code. The claim is the `claim_coupon()`
+  SQL function using `FOR UPDATE SKIP LOCKED`; verified with 8 simultaneous
+  claims against a 5-code pool returning 5 distinct codes and 3 "exhausted".
+  Don't move that logic into TypeScript.
+- **`finishPlay` must never invent a reward code.** It used to do
+  `tier.code ?? generateRewardCode()`, minting a random 8-character string
+  per play. That code exists nowhere in the merchant's store, so it fails at
+  checkout — and because the reward screen seeds its coupon block from this
+  value, a game with a real pool displayed the fake code instead of claiming
+  a real one. It now returns only the legacy static `tier.code`, or nothing.
+- **`exceljs` is CommonJS.** `await import("exceljs")` yields a namespace
+  whose real exports sit under `.default`; reaching for `.Workbook` directly
+  throws "ExcelJS.Workbook is not a constructor". Its `uuid` advisory is
+  cleared by the `overrides` block in `package.json`, not by a version bump —
+  exceljs only uses uuid when WRITING workbooks and we only read.
+- **A coupon CSV's first column is often the wrong one.** Real merchant
+  exports are wide ("Type", "Discount code", "Value", "Times used"), so
+  `parse.ts` finds the column by header name and only falls back to column 0
+  when no header is recognised. The import receipt echoes which column was
+  read, because picking the wrong one is the failure nobody notices.
+- **`spec.durationSeconds` is not what the runtime plays.** `mount.ts` uses
+  `spec.tuning.durationSec ?? spec.durationSeconds` and then CLAMPS to the
+  template's `capability.tuning.durationSec` range — for `catch` that floor
+  is 20s, so a fixture asking for 5 actually runs 20. Cost a confusing
+  "reward screen never appears" while testing.
 - **macOS `sed` needs `-E`** for extended regex (e.g. `\+`) if you're
   scripting edits — BSD sed, not GNU.
 - **Verification workflow for UI changes:** temporarily

@@ -14,6 +14,7 @@ import {
   supportsPlacement,
 } from "@/lib/capabilities";
 import { publishGame, getGameById } from "@/lib/db/queries";
+import { notFound, ownsRecord, requireAccount } from "@/lib/auth/server";
 
 const bodySchema = z.object({
   placement: z.enum(["section", "fullpage", "modal", "ad"]),
@@ -29,6 +30,12 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+
+  // Publishing puts a game on a live storefront under a public slug. It is
+  // the single most consequential write in the app, so it is owner-only.
+  const auth = await requireAccount();
+  if (!auth.ok) return auth.response;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -44,7 +51,7 @@ export async function POST(
   }
 
   const game = await getGameById(id);
-  if (!game) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  if (!game || !ownsRecord(game, auth.accountId)) return notFound();
 
   const capability = getCapability(game.spec.template);
   if (capability && !supportsPlacement(capability, parsed.data.placement)) {

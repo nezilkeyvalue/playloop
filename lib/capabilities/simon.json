@@ -2,7 +2,7 @@
   "version": 1,
   "id": "simon",
   "name": "Simon",
-  "summary": "Watch the sequence light up on the product tiles, then repeat it back in order. Gets one step longer every round.",
+  "summary": "Product tiles flash in a pattern — watch, then tap them back in the same order. The sequence gets one step longer every round.",
 
   "roles": [
     {

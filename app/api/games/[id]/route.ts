@@ -18,18 +18,40 @@ export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
 import { deleteGame, getGameById, updateGameSpec } from "@/lib/db/queries";
+import { notFound, ownsRecord, requireAccount } from "@/lib/auth/server";
 import { validateSpecPatch } from "@/lib/engine/specPatch";
+
+/**
+ * Every method here is an owner-only operation on one game. Resolving the
+ * caller and the row together in one helper keeps the three handlers from
+ * drifting — a GET that forgot the ownership check would happily hand a
+ * competitor's whole GameSpec (including product imagery and reward copy) to
+ * anyone who guessed a uuid.
+ *
+ * A row belonging to someone else reads as 404, not 403 — see the note on
+ * ownsRecord() in lib/auth/server.ts.
+ */
+async function loadOwnedGame(id: string) {
+  const auth = await requireAccount();
+  if (!auth.ok) return { ok: false as const, response: auth.response };
+
+  const game = await getGameById(id);
+  if (!game || !ownsRecord(game, auth.accountId)) {
+    return { ok: false as const, response: notFound() };
+  }
+  return { ok: true as const, game };
+}
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const game = await getGameById(id);
-  if (!game) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  const loaded = await loadOwnedGame(id);
+  if (!loaded.ok) return loaded.response;
 
   const full = req.nextUrl.searchParams.get("full");
-  return NextResponse.json(full ? game : game.spec);
+  return NextResponse.json(full ? loaded.game : loaded.game.spec);
 }
 
 export async function PATCH(
@@ -48,10 +70,10 @@ export async function PATCH(
   // the score ceiling reward tiers are judged against, the tuning ranges, and
   // role completeness all come from the stored template — never from anything
   // the client could put in the body.
-  const game = await getGameById(id);
-  if (!game) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  const loaded = await loadOwnedGame(id);
+  if (!loaded.ok) return loaded.response;
 
-  const result = await validateSpecPatch(raw, game.spec);
+  const result = await validateSpecPatch(raw, loaded.game.spec);
   if (!result.ok) {
     return NextResponse.json(
       { error: result.error, field: result.field, message: result.message },
@@ -78,6 +100,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  const loaded = await loadOwnedGame(id);
+  if (!loaded.ok) return loaded.response;
+
   await deleteGame(id);
   return NextResponse.json({ ok: true });
 }

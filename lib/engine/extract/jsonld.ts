@@ -20,6 +20,9 @@ interface JsonLdProduct {
   offers?: JsonLdOffer | JsonLdOffer[];
   sku?: string;
   category?: string;
+  /** schema.org's standard field for the product's own page — not read
+   * anywhere else in this pipeline, so this is the only source for it. */
+  url?: string;
 }
 
 export interface JsonLdExtractResult {
@@ -54,6 +57,8 @@ export function extractJsonLd(html: string, pageUrl: string): JsonLdExtractResul
     const offer = Array.isArray(product.offers) ? product.offers[0] : product.offers;
     if (offer?.priceCurrency && !currency) currency = offer.priceCurrency;
 
+    const productUrl = product.url ? (resolveUrl(product.url, pageUrl) ?? undefined) : undefined;
+
     assets.push(
       makeRawAsset({
         url: resolved,
@@ -62,6 +67,8 @@ export function extractJsonLd(html: string, pageUrl: string): JsonLdExtractResul
         priceMinor: parsePriceMinor(offer?.price),
         category: product.category,
         sku: product.sku,
+        productUrl,
+        subjectTypeHint: "product",
       }),
     );
   }

@@ -25,6 +25,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 
 import { createJob, updateJob } from "@/lib/db/queries";
+import { requireAccount } from "@/lib/auth/server";
 import { checkRateLimit } from "@/lib/rateLimit";
 import type { JobStage } from "@/lib/engine/types";
 // @/lib/engine is another track's module (pipeline). It is not visible to
@@ -98,10 +99,30 @@ async function runExtractionPhase(
           : "No template fit well — you can still continue in manual mode",
     });
   } catch (err) {
+    await reportJobFailure(jobId, err);
+  }
+}
+
+/**
+ * Best-effort — this runs inside `after()`, detached from the request that
+ * started it, so nothing downstream awaits or `.catch()`es this function's
+ * own promise. Node's default (since v15, still true in the v22 this repo
+ * runs on) is to crash the entire process on an unhandled rejection — and
+ * `updateJob()` can itself throw (a real Supabase write, `if (error) throw
+ * error`). Before this existed, a transient DB error while reporting a
+ * *different* failure took the whole dev server down with it — confirmed
+ * live: the exact `try { throw X } catch { await updateJobThatAlsoThrows()
+ * }` shape reproduces a hard process exit, not just a failed request. This
+ * is that reporting call, isolated so its own failure can only ever be
+ * logged, never fatal. */
+async function reportJobFailure(jobId: string, err: unknown): Promise<void> {
+  try {
     await updateJob(jobId, {
       stage: "error",
       error: err instanceof Error ? err.message : "Generation failed.",
     });
+  } catch (reportErr) {
+    console.error(`[generate] failed to record error state for job ${jobId}:`, reportErr);
   }
 }
 
@@ -149,7 +170,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const job = await createJob({ accountId: null, mode: input.mode, sourceUrl });
+  // A generation job fetches a third-party site server-side and produces a
+  // game that belongs to someone. Both of those want a real owner, so this is
+  // where the landing page's "Make it playable" login gate is actually
+  // enforced — the client-side modal is a courtesy, this is the check.
+  const auth = await requireAccount();
+  if (!auth.ok) return auth.response;
+
+  const job = await createJob({ accountId: auth.accountId, mode: input.mode, sourceUrl });
 
   after(() => runExtractionPhase(job.id, input));
 
