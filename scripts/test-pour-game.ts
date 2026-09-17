@@ -49,6 +49,8 @@ interface Harness {
   lives(): number;
   fill(): number;
   band(): { centre: number; width: number };
+  droplets(): number;
+  slosh(): number;
   tap(): void;
   step(): void;
 }
@@ -92,7 +94,14 @@ function harness(tuning: Record<string, number>, prizes: LoadedAsset[]): Harness
   };
 
   game.init(ctx);
-  const inner = game as unknown as { fill: number; bandCentre: number; bandWidth: number; livesLeft: number };
+  const inner = game as unknown as {
+    fill: number;
+    bandCentre: number;
+    bandWidth: number;
+    livesLeft: number;
+    droplets: unknown[];
+    sloshAmp: number;
+  };
   return {
     game,
     ctx,
@@ -101,6 +110,8 @@ function harness(tuning: Record<string, number>, prizes: LoadedAsset[]): Harness
     lives: () => inner.livesLeft,
     fill: () => inner.fill,
     band: () => ({ centre: inner.bandCentre, width: inner.bandWidth }),
+    droplets: () => inner.droplets.length,
+    slosh: () => inner.sloshAmp,
     tap: () => {
       ctx.input.justPressed = true;
       game.update(DT);
@@ -185,7 +196,50 @@ let centreScore = 0;
   );
 }
 
-// --- 5. the forged-score ceiling matches the capability ------------------
+// --- 5. the splash particles stay bounded and settle ---------------------
+// The only thing in this module that can grow without limit. A pour runs for
+// the whole round, so an uncapped spawn would be a slow leak on a third-
+// party storefront's main thread — the one place that must never happen.
+{
+  const h = harness(defaultTuning(), [prize("p1", "https://example.test/p1.png")]);
+  let peak = 0;
+  // Several cups' worth of continuous pouring and overflowing.
+  for (let i = 0; i < 60 * 25; i++) {
+    h.step();
+    peak = Math.max(peak, h.droplets());
+  }
+  assert(peak > 0, `pouring actually throws splash droplets (peak ${peak})`);
+  assert(peak <= 36, `droplet count stays at or under the cap of 36 (peak ${peak})`);
+}
+
+// While a cup is held (served or overflowing) the stream has stopped, so
+// nothing new may be thrown and the surface must be visibly settling. The
+// hold is short by design — the next cup starts right after it — so this
+// measures the hold window itself rather than waiting for a full stop.
+{
+  const h = harness(defaultTuning(), [prize("p1", "https://example.test/p1.png")]);
+  fillTo(h, h.band().centre);
+  h.tap(); // serve -> phase leaves "pouring"
+  const sloshAtTap = h.slosh();
+  const dropletsAtTap = h.droplets();
+  assert(sloshAtTap > 0, `the pour feeds the surface slosh (${sloshAtTap.toFixed(3)})`);
+
+  let peakDuringHold = 0;
+  for (let i = 0; i < 24; i++) {
+    h.step(); // 0.4s, inside the 0.45s hold
+    peakDuringHold = Math.max(peakDuringHold, h.droplets());
+  }
+  assert(
+    peakDuringHold <= dropletsAtTap,
+    `a held cup throws no new droplets (${dropletsAtTap} -> peak ${peakDuringHold})`,
+  );
+  assert(
+    h.slosh() < sloshAtTap * 0.45,
+    `the slosh damps while the cup is held (${sloshAtTap.toFixed(3)} -> ${h.slosh().toFixed(3)})`,
+  );
+}
+
+// --- 6. the forged-score ceiling matches the capability ------------------
 {
   const game = createPourGame();
   const ceiling = game.maxRealisticScore(defaultTuning());

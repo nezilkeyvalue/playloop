@@ -328,3 +328,82 @@ export function drawDogSilhouette(c: CanvasRenderingContext2D, x: number, feetY:
   c.stroke();
   c.restore();
 }
+
+/** A modelled bottle — pour's generated-shape fallback for the `prize` role
+ * when a site yields no product image and has no logo either. Given depth
+ * the same way the cup in pour.ts is: a horizontal body gradient standing
+ * in for a curved surface (dark edges, bright just left of centre), an
+ * ellipse at the shoulder and the base, a specular stripe, and visible
+ * liquid inside — a flat accent rectangle next to a shaded cup reads as a
+ * missing asset rather than a fallback. `liquid` is the colour of what is
+ * being poured, so the bottle and the stream agree. */
+export function drawBottleShape(
+  c: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: string,
+  liquid: string,
+): void {
+  const cx = x + w / 2;
+  const neckW = w * 0.34;
+  const neckH = h * 0.2;
+  const shoulderY = y + neckH;
+  const bodyTop = shoulderY + h * 0.1;
+  const baseY = y + h;
+  const ry = w * 0.13;
+
+  const bodyPath = () => {
+    c.beginPath();
+    c.moveTo(cx - neckW / 2, y + h * 0.04);
+    // Shoulder — a curve out to the full body width, not a hard step.
+    c.quadraticCurveTo(cx - w / 2, shoulderY, cx - w / 2, bodyTop);
+    c.lineTo(cx - w / 2, baseY - ry);
+    c.ellipse(cx, baseY - ry, w / 2, ry, 0, Math.PI, 0, true);
+    c.lineTo(cx + w / 2, bodyTop);
+    c.quadraticCurveTo(cx + w / 2, shoulderY, cx + neckW / 2, y + h * 0.04);
+    c.closePath();
+  };
+
+  c.save();
+  bodyPath();
+  const shell = c.createLinearGradient(cx - w / 2, 0, cx + w / 2, 0);
+  shell.addColorStop(0, shadeHex(color, -0.26));
+  shell.addColorStop(0.32, shadeHex(color, 0.1));
+  shell.addColorStop(0.6, color);
+  shell.addColorStop(1, shadeHex(color, -0.3));
+  c.fillStyle = shell;
+  c.fill();
+
+  // Liquid sitting in the lower two thirds, with its own surface ellipse.
+  c.save();
+  bodyPath();
+  c.clip();
+  const liquidTop = bodyTop + (baseY - bodyTop) * 0.34;
+  c.fillStyle = liquid;
+  c.fillRect(cx - w / 2, liquidTop, w, baseY - liquidTop);
+  c.beginPath();
+  c.ellipse(cx, liquidTop, w / 2, ry * 0.8, 0, 0, Math.PI * 2);
+  c.fillStyle = shadeHex(liquid, 0.14);
+  c.fill();
+
+  // Specular stripe, same light source as the body gradient.
+  const gloss = c.createLinearGradient(cx - w * 0.3, 0, cx - w * 0.08, 0);
+  gloss.addColorStop(0, "rgba(255,255,255,0)");
+  gloss.addColorStop(0.5, "rgba(255,255,255,0.3)");
+  gloss.addColorStop(1, "rgba(255,255,255,0)");
+  c.fillStyle = gloss;
+  c.fillRect(cx - w * 0.3, y, w * 0.22, h);
+  c.restore();
+
+  c.strokeStyle = shadeHex(color, -0.35);
+  c.lineWidth = Math.max(1, w * 0.03);
+  bodyPath();
+  c.stroke();
+
+  // Cap.
+  c.fillStyle = shadeHex(color, -0.38);
+  c.fillRect(cx - neckW * 0.62, y - h * 0.01, neckW * 1.24, h * 0.07);
+  c.restore();
+}
