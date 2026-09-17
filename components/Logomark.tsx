@@ -11,12 +11,16 @@
 // off a class) never actually activates. The wordmark's "layloop" text is
 // a dark, near-black color that goes practically invisible against the
 // dark-mode background, so a `<picture>` `media` swap — native, no JS —
-// falls back to just the icon crop (which stays legible against either
-// background) whenever the OS prefers dark.
+// falls back to a same-dimension variant with just the text recoloured
+// light for dark backgrounds (the icon itself is untouched — already
+// vivid enough against either). Deliberately NOT a different crop/asset
+// (e.g. an icon-only mark): two images with different aspect ratios
+// render at different widths for the same `h-*` className, which reads
+// as the logo randomly shrinking when the OS switches modes.
 export function Logomark({ className = "h-20 w-auto" }: { className?: string }) {
   return (
     <picture>
-      <source srcSet="/brand/playloop-icon.png" media="(prefers-color-scheme: dark)" />
+      <source srcSet="/brand/playloop-wordmark-dark.png" media="(prefers-color-scheme: dark)" />
       <img src="/brand/playloop-wordmark.png" alt="Playloop" className={className} />
     </picture>
   );
