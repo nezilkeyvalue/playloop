@@ -5,6 +5,7 @@ first. For depth beyond what's here, see `docs/`:
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the pipeline and runtime actually work, file by file
 - [`docs/ADDING_A_TEMPLATE.md`](docs/ADDING_A_TEMPLATE.md) — step-by-step recipe for a new game template
+- [`docs/COUPONS.md`](docs/COUPONS.md) — how a code gets from a spreadsheet to a player's clipboard, step by step
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — open work, organized into parallelizable tracks
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — how to split work across people/agents without stepping on each other
 
