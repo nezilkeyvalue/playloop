@@ -18,7 +18,9 @@ export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getPlayBySession, recordLead } from "@/lib/db/queries";
+import { claimCouponForPlay, getGameById, getPlayBySession, recordLead } from "@/lib/db/queries";
+import { originalTierIndexFromSortedIndex } from "@/lib/engine/specRules";
+import { isEmailEnabled, sendCouponEmail } from "@/lib/email/send";
 
 const bodySchema = z
   .object({
@@ -62,5 +64,41 @@ export async function POST(req: NextRequest) {
     consent: parsed.data.consent ?? true,
   });
 
-  return NextResponse.json({ ok: true });
+  // Actually send the code, rather than only capturing the address.
+  //
+  // The lead is recorded FIRST and its success is what this route reports.
+  // A mail outage must not lose the lead, and the player already has the code
+  // on screen — email is the convenience copy, not the delivery mechanism.
+  // `emailed` is reported separately so the UI can say what really happened
+  // instead of promising an inbox (see submitLead in lib/runtime/mount.ts).
+  let emailed = false;
+  if (parsed.data.email && isEmailEnabled()) {
+    // Claiming here is safe and intentional: claimCouponForPlay is idempotent
+    // per play, so a player who already pressed "Copy my code" is emailed the
+    // SAME code, and one who only gave their email still gets one. No second
+    // coupon is consumed either way.
+    const claim = await claimCouponForPlay(parsed.data.sessionToken).catch(() => null);
+    if (claim?.status === "ok") {
+      const game = await getGameById(play.gameId);
+      const tierIndex = game
+        ? originalTierIndexFromSortedIndex(game.spec.rewards, play.tierIndex)
+        : -1;
+      const tier = tierIndex >= 0 ? game?.spec.rewards[tierIndex] : undefined;
+      const result = await sendCouponEmail({
+        to: parsed.data.email,
+        code: claim.coupon.code,
+        rewardLabel: tier?.label ?? "your reward",
+        ...(game?.spec.brand.name ? { brandName: game.spec.brand.name } : {}),
+        ...(tier?.coupon ? { terms: tier.coupon } : {}),
+      });
+      emailed = result.ok;
+      if (!result.ok && result.reason !== "disabled") {
+        // Logged, not returned: the reason is operational (usually an
+        // unverified sending domain) and means nothing to a player.
+        console.warn(`[leads] coupon email failed (${result.reason}):`, result.message);
+      }
+    }
+  }
+
+  return NextResponse.json({ ok: true, emailed });
 }

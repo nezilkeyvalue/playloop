@@ -363,7 +363,8 @@ function mountGame(
     const status = overlay.querySelector<HTMLElement>("[data-role='email-status']");
     const email = emailField?.value?.trim() ?? "";
     if (!email) return false;
-    const ok = await captureLead(sessionToken, email);
+    const lead = await captureLead(sessionToken, email);
+    const ok = lead.ok;
     // NOT "Sent — check your inbox."
     //
     // Nothing is sent. POST /api/leads only writes a row to the `leads`
@@ -379,9 +380,14 @@ function mountGame(
     // its terms in the dashboard) and a sending domain is verified, send the
     // claimed coupon code here and restore a delivery-confirming message.
     if (status) {
-      status.textContent = ok
-        ? "Got it — we've saved your email. Copy your code above to use it now."
-        : "Couldn't save that email — copy your code above instead.";
+      // Three distinct outcomes, three distinct messages. "Sent — check your
+      // inbox" used to be shown for all of them, including the case where no
+      // mail transport existed at all.
+      status.textContent = !ok
+        ? "Couldn't save that email — copy your code above instead."
+        : lead.emailed
+          ? "Sent — check your inbox."
+          : "Got it — we've saved your email. Copy your code above to use it now.";
     }
     if (ok) trackEvent("lead_captured", { slug });
     return ok;

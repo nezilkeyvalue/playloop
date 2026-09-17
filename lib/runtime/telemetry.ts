@@ -107,10 +107,28 @@ export async function claimCoupon(sessionToken: string | null): Promise<CouponCl
 }
 
 /** POST /api/leads { sessionToken, email } → { ok } */
-export async function captureLead(sessionToken: string | null, email: string): Promise<boolean> {
-  if (!sessionToken) return false;
-  const result = await postWithRetry<{ ok: boolean }>("/api/leads", { sessionToken, email });
-  return result?.ok ?? false;
+export interface LeadResult {
+  /** The address was stored. */
+  ok: boolean;
+  /** An email with the code was actually dispatched. */
+  emailed: boolean;
+}
+
+export async function captureLead(
+  sessionToken: string | null,
+  email: string,
+): Promise<LeadResult> {
+  if (!sessionToken) return { ok: false, emailed: false };
+  const result = await postWithRetry<{ ok: boolean; emailed?: boolean }>("/api/leads", {
+    sessionToken,
+    email,
+  });
+  // `emailed` is reported separately from `ok` so the reward screen can tell
+  // the player what actually happened. Saying "check your inbox" when no mail
+  // transport is configured — or when the sending domain is unverified — is
+  // worse than silence, because they wait instead of copying the code that is
+  // on screen.
+  return { ok: result?.ok ?? false, emailed: Boolean(result?.emailed) };
 }
 
 /**
