@@ -119,6 +119,36 @@ const SLOSH_HZ = 5.2;
 const SLOSH_DECAY_PER_SEC = 3.2;
 const SLOSH_MAX = 1;
 
+// How far the source is tipped, in radians (canvas positive = clockwise).
+//
+// The two cases are genuinely different objects. A modelled bottle has a
+// known mouth, so it is tipped right over — past horizontal — and actually
+// pours. An arbitrary product sprite (a bag of beans, a tin, a carton) has
+// no mouth to find and reads as broken upside down, so it gets a modest
+// tilt and the stream leaves its lower leading edge. Either way the spout
+// is DERIVED from the tilt below, never guessed, which is what keeps the
+// stream attached to the thing that is supposed to be pouring it.
+const SPRITE_TILT = -0.42; // counter-clockwise: the low corner ends up left
+const BOTTLE_TILT = 2.35; // ~135deg: mouth swings down and over the cup
+
+/** Mouth position in the source's own local square, as a fraction of its
+ * half-size. The modelled bottle's neck is dead centre at the top of its
+ * box; a sprite's "lip" is taken inside its lower-left quadrant rather
+ * than at the extreme corner, which on a contain-fit image is usually
+ * transparent padding rather than product. */
+const SPRITE_MOUTH = { x: -0.55, y: 0.75 };
+const BOTTLE_MOUTH = { x: 0, y: -1 };
+
+/** Default liquid when the poured product carries no sampled backdrop
+ * colour of its own — which is most of the time, since a cleanly isolated
+ * cutout has no backdrop to sample. A deep chocolate/espresso brown reads
+ * as an actual drink at a glance; the previous fallback was the brand
+ * accent darkened, which on a blue or green brand poured something that
+ * looked like ink. The brand still comes through everywhere it should —
+ * the sleeve, the band, the tray — and a product that DOES have a sampled
+ * colour still wins over this. */
+const LIQUID_DEFAULT = "#4A2C17";
+
 const FEEDBACK_SEC = 0.5;
 const OVERFLOW_HOLD_SEC = 0.45; // how long a spilling cup stays up before it resets
 const HUD_HEIGHT = 34;
@@ -152,6 +182,13 @@ interface Layout {
   bottleH: number;
   trayY: number;
   trayH: number;
+  /** The tipped source: its square's size, how far it is rotated, and the
+   * pivot that rotation happens about. The spout below is derived from
+   * these, not chosen alongside them. */
+  sourceSize: number;
+  tilt: number;
+  pivotX: number;
+  pivotY: number;
   spoutX: number;
   spoutY: number;
   impactX: number;
@@ -438,11 +475,30 @@ class PourGame implements GameModule {
     const cx = cupX + cupW / 2;
     const level = Math.max(0, Math.min(1, this.fill));
     const impactY = this.surfaceCy(topCy, baseCy, level);
-    // The spout is the tipped product's lower-right lip, which is where the
-    // sprite is rotated to point.
-    const spoutSize = Math.min(bottleH, w * 0.42);
-    const spoutX = cx + spoutSize * 0.1;
-    const spoutY = bottleY + spoutSize * 0.66;
+
+    // --- where the pour actually leaves the source ----------------------
+    // Rotate the mouth out of the source's local square and put the pivot
+    // wherever that lands the mouth on the cup's axis. Doing it in this
+    // order is the point: the spout can't drift away from the drawn lip,
+    // because the lip is what positions the sprite rather than the other
+    // way round. The old code picked both independently and they did not
+    // agree — the stream came out of empty space beside the bottle.
+    // 0.86 of the band, not all of it: the mouth ends up near the bottom of
+    // the rotated square, so a full-height source leaves the spout almost
+    // touching the rim and the pour has no visible free fall at all.
+    const sourceSize = Math.min(bottleH * 0.86, w * 0.42);
+    const half = sourceSize / 2;
+    const tilt = this.sourceHasSprite() ? SPRITE_TILT : BOTTLE_TILT;
+    const mouth = this.sourceHasSprite() ? SPRITE_MOUTH : BOTTLE_MOUTH;
+    const cos = Math.cos(tilt);
+    const sin = Math.sin(tilt);
+    const mouthX = mouth.x * half;
+    const mouthY = mouth.y * half;
+    const offsetX = mouthX * cos - mouthY * sin;
+    const offsetY = mouthX * sin + mouthY * cos;
+
+    const pivotX = cx - offsetX; // => spoutX lands exactly on cx
+    const pivotY = bottleY + half;
 
     return {
       cupX, cupY, cupW, cupH,
@@ -450,7 +506,9 @@ class PourGame implements GameModule {
       baseRx, baseRy, baseCy,
       bottleY, bottleH,
       trayY: h - trayH - 6, trayH,
-      spoutX, spoutY,
+      sourceSize, tilt, pivotX, pivotY,
+      spoutX: pivotX + offsetX,
+      spoutY: pivotY + offsetY,
       impactX: cx, impactY,
     };
   }
@@ -475,8 +533,13 @@ class PourGame implements GameModule {
 
     this.renderBackground(c, stage.width, stage.height);
     this.renderSource(c, stage.width, l);
-    if (this.phase === "pouring") this.renderStream(c, l);
     this.renderCup(c, l);
+    // After the cup, not before it. The stream has to be visible where it
+    // plunges through the rim opening — drawn first, the whole lower half
+    // of it was painted over by the cup's front wall and the pour looked
+    // like it stopped in mid-air. renderStream clips itself to the part a
+    // viewer could actually see.
+    if (this.phase === "pouring") this.renderStream(c, l);
     this.renderDroplets(c);
     this.renderTray(c, stage.width, l.trayY, l.trayH);
     this.renderHud(c, stage.width, stage.height);
@@ -504,18 +567,26 @@ class PourGame implements GameModule {
     drawBrandBackground(c, w, h, brand.background, brand.accent);
   }
 
-  /** The product doing the pouring, tipped over the cup. */
+  /** True when a real image fills the source — a product sprite or the
+   * brand logo. False means the modelled bottle, which is the only case
+   * where the mouth's position in the artwork is actually known. */
+  private sourceHasSprite(): boolean {
+    return Boolean(this.prizePool[this.prizeIndex]?.image || this.ctx.brandLogo);
+  }
+
+  /** The product doing the pouring, tipped over the cup. Pivot and tilt
+   * both come from layout(), which chose them so the mouth sits on the
+   * cup's axis — so this method only draws; it never decides where the
+   * pour comes from. */
   private renderSource(c: CanvasRenderingContext2D, w: number, l: Layout): void {
     const { brand, brandLogo } = this.ctx;
     const asset = this.prizePool[this.prizeIndex] ?? null;
-    const size = Math.min(l.bottleH, w * 0.42);
+    const size = l.sourceSize;
     const cx = w / 2;
 
     c.save();
-    // Tip toward the cup. The whole sprite rotates, so a bottle, a bag or a
-    // tin all read as "pouring" without knowing which one it is.
-    c.translate(cx + size * 0.18, l.bottleY + size / 2);
-    c.rotate(0.42);
+    c.translate(l.pivotX, l.pivotY);
+    c.rotate(l.tilt);
     withDropShadow(c, () => {
       if (asset?.image) {
         drawAssetContain(c, asset, -size / 2, -size / 2, size, size);
@@ -524,9 +595,10 @@ class PourGame implements GameModule {
         // recorded as engagement (see lockIn()).
         drawImageContain(c, brandLogo, -size / 2, -size / 2, size, size);
       } else {
-        // No prize and no logo: a modelled bottle, so the source of the
-        // pour still has the same volume as everything else on screen.
-        drawBottleShape(c, -size * 0.26, -size * 0.5, size * 0.52, size * 0.95, brand.accent, this.liquidColor());
+        // No prize and no logo: a modelled bottle, tipped right over so it
+        // genuinely pours. Its neck is drawn at the top of this box, which
+        // is exactly the point BOTTLE_MOUTH names.
+        drawBottleShape(c, -size * 0.26, -size * 0.5, size * 0.52, size, brand.accent, this.liquidColor());
       }
     });
     c.restore();
@@ -575,6 +647,15 @@ class PourGame implements GameModule {
     }
 
     c.save();
+    // Visible region: everything above the rim, plus the rim opening itself.
+    // The cup is opaque, so below the front lip the stream is behind the
+    // wall — exactly what you see pouring into a real paper cup. Both
+    // sub-paths are added to one path and clipped together.
+    c.beginPath();
+    c.rect(0, 0, this.ctx.stage.width, l.topCy);
+    c.ellipse(l.cupX + l.cupW / 2, l.topCy, l.topRx, l.topRy, 0, 0, Math.PI * 2);
+    c.clip();
+
     c.beginPath();
     c.moveTo(left[0]![0], left[0]![1]);
     for (const [x, y] of left.slice(1)) c.lineTo(x, y);
@@ -612,10 +693,7 @@ class PourGame implements GameModule {
    * being poured rather than a generic accent wash. */
   private liquidColor(): string {
     const asset = this.prizePool[this.prizeIndex];
-    // The fallback is pushed well away from brand.accent on purpose: the
-    // sleeve is drawn IN brand.accent, and at -0.1 the liquid and the sleeve
-    // were close enough to read as one block of colour.
-    return asset?.backgroundColor || shadeHex(this.ctx.brand.accent, -0.3);
+    return asset?.backgroundColor || LIQUID_DEFAULT;
   }
 
   private renderCup(c: CanvasRenderingContext2D, l: Layout): void {

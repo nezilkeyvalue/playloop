@@ -866,6 +866,22 @@ export const pourGameSpec: GameSpec = {
   },
 };
 
+/** pour with nothing to pour: no prize assets and no logo, so the `prize`
+ * role's "logo" fallback has nothing to give either and the modelled bottle
+ * draws instead. pour is an eligibility floor (no role with
+ * `fallback: "none"`), so this is not an edge case — it is what a site with
+ * almost no extractable imagery actually gets, and the same reason
+ * demo-sweet-spot-bare exists. */
+export const pourBareGameSpec: GameSpec = {
+  ...pourGameSpec,
+  id: "demo-pour-bare",
+  assets: [],
+  roles: {
+    prize: { fallback: "logo" },
+    stageBackground: { fallback: "brandGradient" },
+  },
+};
+
 export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-catch": catchGameSpec,
   "demo-guess-price": guessPriceGameSpec,
@@ -882,4 +898,5 @@ export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-sweet-spot-bare": sweetSpotBareGameSpec,
   "demo-runner": runnerGameSpec,
   "demo-pour": pourGameSpec,
+  "demo-pour-bare": pourBareGameSpec,
 };
