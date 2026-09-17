@@ -27,7 +27,13 @@ import { createInput } from "@/lib/runtime/input";
 import { startLoop, type LoopHandle } from "@/lib/runtime/loop";
 import { animateCountUp, resolveReward } from "@/lib/runtime/reward";
 import { mountStage, type StageController } from "@/lib/runtime/stage";
-import { beginSession, captureLead, endSession, trackEvent } from "@/lib/runtime/telemetry";
+import {
+  beginSession,
+  captureLead,
+  claimCoupon,
+  endSession,
+  trackEvent,
+} from "@/lib/runtime/telemetry";
 import { createCatchGame } from "@/lib/runtime/games/catch";
 import { createGuessPriceGame } from "@/lib/runtime/games/guessPrice";
 import { createChainPopGame } from "@/lib/runtime/games/chainPop";
@@ -293,6 +299,14 @@ function mountGame(
     const resolved = resolveReward(finalScore, spec.rewards);
     let sessionToken: string | null = null;
 
+    // Resolves once endSession() has returned, i.e. once the server has
+    // finished the play and vetted the score. The coupon claim awaits this
+    // because claiming a coupon for an unfinished play is refused (409).
+    let resolveFinished = () => {};
+    const finishedSignal = new Promise<void>((r) => {
+      resolveFinished = r;
+    });
+
     // Paint the reward overlay immediately — don't wait on network. The last
     // game frame (sweet-spot bar, falling products, etc.) otherwise sits on
     // the canvas under semi-transparent chrome and reads as broken overlap.
@@ -304,18 +318,35 @@ function mountGame(
         void submitLead(sessionToken);
       }, () => {
         startPlay(true);
+      }, async () => {
+        // Runs when the player presses "Copy my code", which can be before
+        // endSession() below has resolved — so wait for the session rather
+        // than claiming against a null token. Claiming requires the play to
+        // be FINISHED server-side (see the claim route), and endSession is
+        // what finishes it.
+        await finishedSignal;
+        const claim = await claimCoupon(sessionToken);
+        if (claim.status === "ok") {
+          trackEvent("reward_revealed", { slug, coupon: "claimed" });
+        }
+        return claim.code;
       }),
       overlayBackdrop,
     );
 
     sessionToken = activeSessionToken ? await activeSessionToken : null;
     const server = await endSession(sessionToken, finalScore);
+    resolveFinished();
 
+    // A legacy static RewardTier.code still arrives here from finishPlay for
+    // specs with no coupon pool. Seed the block with it so those games keep
+    // showing a code with no extra round trip; a pooled game gets null and
+    // the block claims on demand.
     if (server.code) {
-      const tierLine = overlay.querySelector<HTMLElement>("[data-role='tier-line']");
-      const tier = resolved.tier;
-      if (tierLine && tier.percentOff != null) {
-        tierLine.textContent = `${tier.label} — code ${server.code}`;
+      const codeLine = overlay.querySelector<HTMLElement>("[data-role='coupon-code']");
+      if (codeLine) {
+        codeLine.textContent = server.code;
+        codeLine.style.display = "block";
       }
     }
 
@@ -706,6 +737,203 @@ function renderEngagedGallery(engaged: EngagedAsset[], brand: GameSpec["brand"])
   return row;
 }
 
+/**
+ * The coupon panel on the reward screen: a Copy button that claims a code,
+ * plus the terms the merchant attached to this tier.
+ *
+ * The code is NOT fetched when this renders. It is claimed on the first
+ * press, because claiming consumes one from a finite pool — rendering it
+ * eagerly would spend a coupon on every player who reached the end screen
+ * and then closed the tab.
+ *
+ * Raw hex/px styling rather than the app's design tokens is correct here:
+ * this subtree is injected into a third-party storefront's DOM, where none
+ * of our CSS exists and the only palette available is the brand's own (see
+ * the note on mount.ts in CLAUDE.md's design-system section).
+ */
+function renderCouponBlock(
+  brand: GameSpec["brand"],
+  tier: GameSpec["rewards"][number],
+  serverCode: string | null,
+  onClaimCoupon: () => Promise<string | null>,
+): HTMLElement {
+  const box = document.createElement("div");
+  box.dataset.role = "coupon-block";
+  box.style.marginTop = "8px";
+  box.style.padding = "10px";
+  box.style.borderRadius = "10px";
+  box.style.border = `1px solid ${brand.foreground}22`;
+  box.style.background = `${brand.accent}0F`;
+  box.style.textAlign = "center";
+
+  const codeLine = document.createElement("div");
+  codeLine.dataset.role = "coupon-code";
+  codeLine.style.fontFamily =
+    "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+  codeLine.style.fontSize = "18px";
+  codeLine.style.fontWeight = "700";
+  codeLine.style.letterSpacing = "0.08em";
+  codeLine.style.wordBreak = "break-all";
+  codeLine.style.color = brand.foreground;
+  // Hidden until claimed — an empty monospace line would reserve space and
+  // look like a rendering bug.
+  codeLine.style.display = serverCode ? "block" : "none";
+  codeLine.textContent = serverCode ?? "";
+  box.appendChild(codeLine);
+
+  const status = document.createElement("p");
+  status.dataset.role = "coupon-status";
+  status.style.margin = "4px 0 0";
+  status.style.fontSize = "12px";
+  status.style.opacity = "0.75";
+  status.style.minHeight = "1.2em";
+  status.style.color = brand.foreground;
+
+  const button = makeButton("Copy my code", brand.accent, brand.background);
+  button.dataset.role = "coupon-copy";
+  button.style.padding = "8px 14px";
+  button.style.marginTop = codeLine.style.display === "block" ? "8px" : "0";
+
+  let claimed: string | null = serverCode;
+  let busy = false;
+
+  async function writeToClipboard(text: string): Promise<boolean> {
+    try {
+      // Only available on a secure origin, and rejects outright if the
+      // document isn't focused — both realistic inside an iframe on someone
+      // else's site.
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // fall through to the legacy path
+    }
+    try {
+      // execCommand("copy") is deprecated but still the only fallback that
+      // works in an iframe without clipboard permission. The textarea must
+      // be in the document and selectable, hence the off-screen placement
+      // rather than display:none (which cannot be selected).
+      const scratch = document.createElement("textarea");
+      scratch.value = text;
+      scratch.setAttribute("readonly", "");
+      scratch.style.position = "fixed";
+      scratch.style.top = "-1000px";
+      scratch.style.opacity = "0";
+      document.body.appendChild(scratch);
+      scratch.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(scratch);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+
+  button.addEventListener("click", async () => {
+    if (busy) return;
+    busy = true;
+    button.disabled = true;
+
+    try {
+      if (!claimed) {
+        status.textContent = "Getting your code…";
+        claimed = await onClaimCoupon();
+      }
+
+      if (!claimed) {
+        // Deliberately not "error": from the player's side an empty pool and
+        // an expired offer are the same experience, and the honest framing is
+        // that there is nothing to hand over right now.
+        status.textContent = "No codes left right now — check back soon.";
+        button.style.display = "none";
+        return;
+      }
+
+      codeLine.textContent = claimed;
+      codeLine.style.display = "block";
+      button.style.marginTop = "8px";
+
+      const copied = await writeToClipboard(claimed);
+      status.textContent = copied
+        ? "Copied to your clipboard."
+        : "Select the code above to copy it.";
+      button.textContent = "Copy again";
+    } finally {
+      busy = false;
+      button.disabled = false;
+    }
+  });
+
+  box.appendChild(button);
+  box.appendChild(status);
+
+  const coupon = tier.coupon;
+  if (coupon?.offerUrl) {
+    const link = document.createElement("a");
+    link.href = coupon.offerUrl;
+    link.textContent = "View offer";
+    link.target = "_blank";
+    // noopener/noreferrer on a link we render into someone else's page: the
+    // destination must not get a handle on the opener window.
+    link.rel = "noopener noreferrer";
+    link.style.display = "inline-block";
+    link.style.marginTop = "6px";
+    link.style.fontSize = "12px";
+    link.style.fontWeight = "600";
+    link.style.color = brand.accent;
+    box.appendChild(link);
+  }
+
+  if (coupon?.expiresAt) {
+    const expiry = document.createElement("p");
+    expiry.style.margin = "6px 0 0";
+    expiry.style.fontSize = "11px";
+    expiry.style.opacity = "0.7";
+    expiry.style.color = brand.foreground;
+    expiry.textContent = `Valid until ${formatExpiry(coupon.expiresAt)}`;
+    box.appendChild(expiry);
+  }
+
+  if (coupon?.terms) {
+    const terms = document.createElement("p");
+    terms.dataset.role = "coupon-terms";
+    terms.style.margin = "6px 0 0";
+    terms.style.fontSize = "11px";
+    terms.style.lineHeight = "1.4";
+    terms.style.opacity = "0.65";
+    terms.style.color = brand.foreground;
+    // textContent, never innerHTML: this string is merchant-supplied and is
+    // rendered inside a third-party page.
+    terms.textContent = coupon.terms;
+    box.appendChild(terms);
+  }
+
+  return box;
+}
+
+/**
+ * "2026-09-30" -> "30 Sep 2026", falling back to the raw string.
+ *
+ * Parsed as UTC (the trailing Z) so the displayed date matches the date the
+ * merchant typed regardless of the player's timezone — without it, a player
+ * west of UTC sees the day before.
+ */
+function formatExpiry(iso: string): string {
+  const ms = Date.parse(`${iso}T00:00:00Z`);
+  if (Number.isNaN(ms)) return iso;
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(new Date(ms));
+  } catch {
+    return iso;
+  }
+}
+
 function renderRewardState(
   brand: GameSpec["brand"],
   copy: GameSpec["copy"],
@@ -714,6 +942,12 @@ function renderRewardState(
   engaged: EngagedAsset[],
   onSubmitEmail: () => void,
   onReplay: () => void,
+  /**
+   * Claims one coupon and resolves with the code, or null when there is none
+   * to give (pool exhausted, offer expired, network failure). Called only
+   * when the player actually presses the button.
+   */
+  onClaimCoupon: () => Promise<string | null> = async () => null,
 ): HTMLElement {
   const wrap = document.createElement("div");
   wrap.style.width = "100%";
@@ -738,13 +972,19 @@ function renderRewardState(
 
   const tierLine = document.createElement("p");
   tierLine.dataset.role = "tier-line";
-  tierLine.textContent =
-    tier.percentOff != null ? `${tier.label} — code ${serverCode ?? tier.code ?? "pending"}` : tier.label;
+  // The code no longer lives on this line. It is claimed on demand by the
+  // coupon block below, because a code shown here would have to be consumed
+  // from the pool before the player had asked for it.
+  tierLine.textContent = tier.label;
   tierLine.style.margin = "0 0 4px";
   tierLine.style.fontSize = "16px";
   tierLine.style.fontWeight = "600";
   tierLine.style.color = brand.accent;
   wrap.appendChild(tierLine);
+
+  if (tier.percentOff != null) {
+    wrap.appendChild(renderCouponBlock(brand, tier, serverCode, onClaimCoupon));
+  }
 
   const gallery = renderEngagedGallery(engaged, brand);
   if (gallery) wrap.appendChild(gallery);

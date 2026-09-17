@@ -179,11 +179,69 @@ export interface GameCopy {
   emailPrompt: string;
 }
 
+/**
+ * The publishable half of a coupon offer: the terms a player is entitled to
+ * read before they claim, and where to go to redeem.
+ *
+ * Everything here ships to the browser inside GameSpec, so it must contain
+ * NOTHING secret. The codes themselves deliberately live only in the
+ * `coupons` table and are handed out one at a time by
+ * POST /api/plays/claim-coupon — putting a pool of codes in the spec would
+ * publish every one of them to anyone who opened devtools on a storefront
+ * running the embed.
+ */
+export interface CouponTerms {
+  /** Plain-text terms and conditions. Shown on the reward screen. */
+  terms?: string;
+  /** ISO-8601 date (YYYY-MM-DD). Past dates stop codes being handed out. */
+  expiresAt?: string;
+  /** Absolute https URL the "View offer" link points at. */
+  offerUrl?: string;
+}
+
 export interface RewardTier {
   minScore: number;
   label: string;
   percentOff: number | null;
-  code?: string; // placeholder until Horizon 2 coupon APIs
+  /**
+   * A single STATIC code shared by every player who reaches this tier.
+   *
+   * Superseded by per-tier coupon pools (the `coupons` table) but kept for
+   * specs written before those existed, and as the documented fallback when a
+   * tier has no pool at all: lib/db/queries.ts#claimCouponForPlay tries the
+   * pool first and only then falls back here.
+   */
+  code?: string;
+  /**
+   * Terms for this tier's coupon pool. Presence does NOT imply codes exist —
+   * a pool can be empty or exhausted, which the reward screen handles by
+   * showing the tier without a code (see docs/COUPONS.md).
+   */
+  coupon?: CouponTerms;
+}
+
+// ---------------------------------------------------------------------------
+// Coupons — server-side pool records. NOT part of GameSpec; see CouponTerms.
+// ---------------------------------------------------------------------------
+
+/** One code in one tier's pool. */
+export interface CouponRecord {
+  id: string;
+  gameId: string;
+  /** Index into the game's ORIGINAL (unsorted) GameSpec.rewards array. */
+  tierIndex: number;
+  code: string;
+  claimedAt: string | null;
+  claimedByPlayId: string | null;
+  createdAt: string;
+}
+
+/** Per-tier inventory, for the editor and the stats dashboard. */
+export interface CouponTierStats {
+  tierIndex: number;
+  total: number;
+  claimed: number;
+  remaining: number;
 }
 
 export interface GameSpec {

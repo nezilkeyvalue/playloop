@@ -106,6 +106,18 @@ const rewardSchema = z
     label: z.string(),
     percentOff: z.number().nullable(),
     code: z.string().optional(),
+    // Nullable as well as optional: the editor clears the terms by sending
+    // `coupon: null`, and `.optional()` alone would reject that outright
+    // instead of reading it as "remove the terms".
+    coupon: z
+      .object({
+        terms: z.string().optional(),
+        expiresAt: z.string().optional(),
+        offerUrl: z.string().optional(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict();
 
@@ -312,6 +324,9 @@ export async function validateSpecPatch(
       label: tier.label,
       percentOff: tier.percentOff,
       code: tier.code,
+      // null (an explicit "clear it") and undefined (absent) both mean "no
+      // terms" to normalizeRewardTier, which drops the key entirely.
+      coupon: tier.coupon ?? undefined,
     }));
 
     // The ceiling follows THIS game's tuning, not the template default — a

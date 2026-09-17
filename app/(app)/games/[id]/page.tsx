@@ -20,6 +20,7 @@ import {
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { AuthGate } from "@/components/AuthGate";
+import { CouponManager } from "@/components/CouponManager";
 import {
   findIncompleteRoles,
   getCapability,
@@ -1014,6 +1015,7 @@ function GameEditor() {
                     {orderedRewards.map(({ reward, index }) => (
                       <RewardRow
                         key={index}
+                        gameId={id}
                         reward={reward}
                         index={index}
                         maxScore={maxScore}
@@ -1556,6 +1558,7 @@ function EditableField({
 }
 
 function RewardRow({
+  gameId,
   reward,
   index,
   maxScore,
@@ -1566,6 +1569,8 @@ function RewardRow({
   onRemove,
   onPreview,
 }: {
+  /** Needed for the coupon endpoints, which are scoped per game. */
+  gameId: string;
   reward: RewardTier;
   /** Position in spec.rewards — rows render in threshold order, so this is
    * NOT the row's position on screen. */
@@ -1779,6 +1784,20 @@ function RewardRow({
       >
         {previewing ? "Previewing this tier" : "Preview this tier"}
       </button>
+
+      {/* Only a tier that actually discounts something gets a coupon pool.
+          A percentOff of null is the "thanks for playing" tier — the runtime
+          renders no code block for it (see renderCouponBlock's call site in
+          lib/runtime/mount.ts), so offering the merchant an inventory to
+          stock would promise a handover that never happens. */}
+      {reward.percentOff != null && (
+        <CouponManager
+          gameId={gameId}
+          tierIndex={index}
+          tier={reward}
+          onCommitTerms={(coupon) => onCommit({ coupon: coupon ?? undefined })}
+        />
+      )}
     </div>
   );
 }

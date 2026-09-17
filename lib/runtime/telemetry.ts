@@ -79,6 +79,33 @@ export async function endSession(
   return { tier: result?.tier ?? null, code: result?.code ?? null };
 }
 
+export type CouponClaimStatus = "ok" | "no_reward" | "expired" | "exhausted" | "error";
+
+export interface CouponClaim {
+  status: CouponClaimStatus;
+  code: string | null;
+}
+
+/**
+ * POST /api/plays/claim-coupon { sessionToken } → { status, code }
+ *
+ * Consumes one coupon from the tier's pool and returns it. Idempotent: the
+ * same session always gets the same code back and only the first call
+ * consumes anything, so the reward screen's Copy button is safe to mash.
+ *
+ * Uses postWithRetry like the rest of this module, which is only safe
+ * BECAUSE of that idempotency — a retried claim cannot double-spend.
+ */
+export async function claimCoupon(sessionToken: string | null): Promise<CouponClaim> {
+  if (!sessionToken) return { status: "error", code: null };
+  const result = await postWithRetry<{ status: CouponClaimStatus; code: string | null }>(
+    "/api/plays/claim-coupon",
+    { sessionToken },
+  );
+  if (!result) return { status: "error", code: null };
+  return { status: result.status ?? "error", code: result.code ?? null };
+}
+
 /** POST /api/leads { sessionToken, email } → { ok } */
 export async function captureLead(sessionToken: string | null, email: string): Promise<boolean> {
   if (!sessionToken) return false;

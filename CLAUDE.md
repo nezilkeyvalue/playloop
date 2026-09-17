@@ -40,6 +40,10 @@ lib/engine/           Generation pipeline (auto mode's brain)
 
 lib/capabilities/      One JSON per template (data, not code) + index.ts loader/validator
 
+lib/coupons/           Coupon pools (per reward tier)
+  codes.ts               crypto-random generation + canonicalisation/de-dup of a batch
+  parse.ts               CSV/TSV (no dep) and XLSX (exceljs) -> raw code strings
+
 lib/runtime/            Client-side game player
   mount.ts                mount(spec, container, placement) → { teardown } — the runtime entry point
   gameModule.ts            GameModule contract every template implements
@@ -72,6 +76,7 @@ components/              Shared UI (Logomark, Reveal, AnimatedNumber, EditorIcon
   AuthProvider.tsx         session context + the shared login modal + requireLogin()
   AuthButton.tsx           header control: "Log in" / avatar menu
   AuthGate.tsx             per-page gate: sign-in card instead of a doomed fetch
+  CouponManager.tsx        per-tier coupon admin (terms, generate, upload, stock)
 ```
 
 ## Commands
@@ -130,6 +135,30 @@ Three rules:
 `app/(app)/layout.tsx`, **not** in the root layout, so `app/play/[slug]` and
 the embed don't pull the Supabase auth client into the bundle a third-party
 storefront loads. Keep it that way.
+
+## Coupons
+
+Each reward tier can own a pool of single-use codes. The split of
+responsibility is the thing to hold on to:
+
+| | Where it lives | Who sees it |
+|---|---|---|
+| Terms, expiry, offer link (`CouponTerms`) | inside `GameSpec.rewards[i].coupon` | shipped to every browser |
+| The codes themselves | the `coupons` table only | one player gets exactly one |
+
+**Never put codes in `GameSpec`.** The spec is delivered wholesale to every
+storefront running the embed, so a pool in the spec is a pool published to
+anyone who opens devtools.
+
+A code is consumed when the player presses **Copy my code**, not when the game
+ends — players who close the tab must not burn coupons. `POST
+/api/plays/claim-coupon` is idempotent: the same play always gets the same
+code back and only the first call consumes anything, which is what makes the
+button safe to double-click and the retry in `telemetry.ts` safe to use.
+
+Admin side is `/api/games/:id/coupons` (owner-only): generate from the UI,
+upload .csv/.xlsx, paste a list, or clear unclaimed. Claimed rows are never
+deleted — they are the record of which code went to which play.
 
 ## Conventions and hazards learned the hard way
 
@@ -283,6 +312,49 @@ touching the related area.
   content type it had no extension for, so that script sniffs magic bytes
   rather than trusting the file name — the `sprites` bucket has a MIME
   allowlist and rejects `application/octet-stream`.
+- **Never re-derive a reward tier from `plays.score`.** `finishPlay` keeps the
+  RAW reported score for audit even when it judges the play forged (score
+  above the template's realistic ceiling, or elapsed time under the floor) —
+  it signals the rejection by writing `tier_index = null`, not by zeroing
+  `score`. The coupon claim originally resolved the tier from `play.score`
+  and therefore paid out exactly the plays `finishPlay` had just rejected;
+  a test where `finishPlay` returned `tier: null` and the claim still handed
+  over a code is what caught it. Read `play.tierIndex`; treat null as
+  "earned nothing".
+- **`plays.tier_index` is an index into the SORTED rewards, coupon pools are
+  keyed by the ORIGINAL array order.** These are different numbers as soon as
+  a merchant reorders tiers in the editor, and mixing them pays out the wrong
+  tier silently. Convert with `originalTierIndexFromSortedIndex()` in
+  `specRules.ts`. The stored sorted-index semantics are deliberately left
+  alone — changing them would rewrite the meaning of historical rows the
+  stats dashboard already aggregates.
+- **Claiming a coupon cannot be a read-then-write.** Between "find the oldest
+  unclaimed row" and "mark it mine", a concurrent player reads the same row
+  and both walk away with the same code. The claim is the `claim_coupon()`
+  SQL function using `FOR UPDATE SKIP LOCKED`; verified with 8 simultaneous
+  claims against a 5-code pool returning 5 distinct codes and 3 "exhausted".
+  Don't move that logic into TypeScript.
+- **`finishPlay` must never invent a reward code.** It used to do
+  `tier.code ?? generateRewardCode()`, minting a random 8-character string
+  per play. That code exists nowhere in the merchant's store, so it fails at
+  checkout — and because the reward screen seeds its coupon block from this
+  value, a game with a real pool displayed the fake code instead of claiming
+  a real one. It now returns only the legacy static `tier.code`, or nothing.
+- **`exceljs` is CommonJS.** `await import("exceljs")` yields a namespace
+  whose real exports sit under `.default`; reaching for `.Workbook` directly
+  throws "ExcelJS.Workbook is not a constructor". Its `uuid` advisory is
+  cleared by the `overrides` block in `package.json`, not by a version bump —
+  exceljs only uses uuid when WRITING workbooks and we only read.
+- **A coupon CSV's first column is often the wrong one.** Real merchant
+  exports are wide ("Type", "Discount code", "Value", "Times used"), so
+  `parse.ts` finds the column by header name and only falls back to column 0
+  when no header is recognised. The import receipt echoes which column was
+  read, because picking the wrong one is the failure nobody notices.
+- **`spec.durationSeconds` is not what the runtime plays.** `mount.ts` uses
+  `spec.tuning.durationSec ?? spec.durationSeconds` and then CLAMPS to the
+  template's `capability.tuning.durationSec` range — for `catch` that floor
+  is 20s, so a fixture asking for 5 actually runs 20. Cost a confusing
+  "reward screen never appears" while testing.
 - **macOS `sed` needs `-E`** for extended regex (e.g. `\+`) if you're
   scripting edits — BSD sed, not GNU.
 - **Verification workflow for UI changes:** temporarily
