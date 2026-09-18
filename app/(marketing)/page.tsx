@@ -14,10 +14,48 @@ import { HeroDoodle } from "@/components/HeroDoodle";
 import { ShowcaseSlideshow } from "@/components/ShowcaseSlideshow";
 import { useAuth } from "@/components/AuthProvider";
 
+// Fallback only, for the case where the capability chunk below fails to
+// load. The displayed figure is COUNTED from the capability registry —
+// see useTemplateCount. It was previously a hardcoded 7 and was silently
+// wrong through six added templates, which is the worst possible place for
+// a number that has to be remembered by hand: a public claim on the
+// landing page.
+const TEMPLATE_COUNT_FALLBACK = 11;
+
+/**
+ * The live template count, read from the capability registry.
+ *
+ * Loaded with a dynamic import rather than a static one deliberately.
+ * `lib/capabilities` is client-safe, but pulling it (and zod, and eleven
+ * capability JSONs) into this route statically measured at +18 kB of First
+ * Load JS for a single integer — and this page already defers the whole
+ * runtime the same way (see ShowcaseSlideshow). The stat sits well below
+ * the fold, so the real count always arrives long before it is scrolled
+ * into view and AnimatedNumber's count-up starts.
+ */
+function useTemplateCount(): number {
+  const [count, setCount] = useState(TEMPLATE_COUNT_FALLBACK);
+  useEffect(() => {
+    let cancelled = false;
+    import("@/lib/capabilities")
+      .then(({ listCapabilities }) => {
+        if (!cancelled) setCount(listCapabilities().length);
+      })
+      .catch(() => {
+        // Keep the fallback; a missing chunk must not blank out the stat.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return count;
+}
+
 export default function LandingPage() {
   const router = useRouter();
   const { requireLogin, authEnabled, user } = useAuth();
   const [url, setUrl] = useState("");
+  const templateCount = useTemplateCount();
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -165,7 +203,7 @@ export default function LandingPage() {
 
       <Reveal delay={0} className="mt-28 grid w-full max-w-3xl grid-cols-1 gap-8 sm:grid-cols-3">
         <StatBlock value={60} suffix="s" label="from URL to playable game" />
-        <StatBlock value={7} label="ready-made game templates" />
+        <StatBlock value={templateCount} label="ready-made game templates" />
         <StatBlock value={1} label="line of code to embed" />
       </Reveal>
     </main>
