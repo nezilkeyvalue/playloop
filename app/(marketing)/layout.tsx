@@ -15,7 +15,7 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
     <AuthProvider>
       <div className="min-h-screen bg-background">
         <header className="absolute inset-x-0 top-0 z-40">
-          <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
+          <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-0">
             <Link href="/" className="flex items-center">
               <Logomark className="h-20 w-auto" />
             </Link>
