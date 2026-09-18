@@ -26,6 +26,9 @@
 //    degrade to silence. A game must play identically with sound broken,
 //    so this file never throws and never reports failure upward.
 
+import { createMusic, MUSIC_BEDS, type MusicController } from "@/lib/runtime/music";
+import type { TemplateId } from "@/lib/engine/types";
+
 /** The vocabulary a game module gets. Deliberately SEMANTIC ("success", not
  * "beep880"): the same cue should mean the same thing to a player across all
  * eleven templates, and the actual waveform stays tunable here without
@@ -47,6 +50,11 @@ export interface PlayOptions {
 
 export interface GameAudio {
   play(cue: SoundCue, options?: PlayOptions): void;
+  /** Starts this template's background bed (lib/runtime/music.ts). Safe to
+   * call repeatedly — starting the bed that is already playing is a no-op,
+   * so a replay doesn't stack a second sequencer. No-op before unlock(). */
+  startMusic(template: TemplateId): void;
+  stopMusic(): void;
   setMuted(muted: boolean): void;
   isMuted(): boolean;
   /** Creates/resumes the AudioContext. MUST be called synchronously from a
@@ -145,6 +153,16 @@ function audioContextCtor(): Ctor | null {
 export function createAudio(initialMuted = false): GameAudio {
   let ctx: AudioContext | null = null;
   let master: GainNode | null = null;
+  // Cues get their own bus so the background bed can be attenuated and
+  // ducked independently — the bed must never mask a success/fail cue,
+  // because those are game state and the bed is only atmosphere.
+  let cueBus: GainNode | null = null;
+  let music: MusicController | null = null;
+  let pendingBed: TemplateId | null = null; // requested before unlock()
+  // The bed the game asked for, remembered independently of whether it is
+  // currently sequencing — muting stops the sequencer outright (see
+  // setMuted) and unmuting has to know what to bring back.
+  let activeBed: TemplateId | null = null;
   let muted = initialMuted;
   let unavailable = false; // set once we know this browser can't do it
   let voices = 0;
@@ -161,6 +179,10 @@ export function createAudio(initialMuted = false): GameAudio {
       master = ctx.createGain();
       master.gain.value = muted ? 0 : MASTER_VOLUME;
       master.connect(ctx.destination);
+      cueBus = ctx.createGain();
+      cueBus.gain.value = 1;
+      cueBus.connect(master);
+      music = createMusic(ctx, master);
       return ctx;
     } catch {
       // Blocked by policy, or too many live contexts on the page. Silence is
@@ -168,6 +190,8 @@ export function createAudio(initialMuted = false): GameAudio {
       unavailable = true;
       ctx = null;
       master = null;
+      cueBus = null;
+      music = null;
       return null;
     }
   }
@@ -180,6 +204,36 @@ export function createAudio(initialMuted = false): GameAudio {
     // resume() only works from within the gesture, which is why this is a
     // separate explicit step rather than something play() could do lazily.
     if (c.state === "suspended") void c.resume().catch(() => {});
+    // A bed asked for before the gesture was deferred, not dropped — mount
+    // calls startMusic() in the same handler as unlock(), and ordering
+    // between the two shouldn't matter to the caller.
+    if (pendingBed) {
+      const bed = pendingBed;
+      pendingBed = null;
+      startMusic(bed);
+    }
+  }
+
+  function startMusic(template: TemplateId): void {
+    if (unavailable) return;
+    const c = ctx;
+    if (!c || !music || c.state !== "running") {
+      // Never open a context here — that would be sound before the gesture.
+      pendingBed = template;
+      return;
+    }
+    activeBed = template;
+    // Muting stops the sequencer rather than just gating its output, so
+    // don't start one now; setMuted(false) will.
+    if (muted) return;
+    const bed = MUSIC_BEDS[template];
+    if (bed) music.start(bed);
+  }
+
+  function stopMusic(): void {
+    pendingBed = null;
+    activeBed = null;
+    music?.stop();
   }
 
   function play(cue: SoundCue, options?: PlayOptions): void {
@@ -187,12 +241,14 @@ export function createAudio(initialMuted = false): GameAudio {
     // Never open a context here — that would be a sound before the gesture.
     // A cue fired before unlock() is simply dropped.
     const c = ctx;
-    const out = master;
+    const out = cueBus;
     if (!c || !out || c.state !== "running") return;
     if (voices >= MAX_CONCURRENT_VOICES) return;
 
     const notes = CUES[cue];
     if (!notes) return;
+    // Dip the bed briefly so the cue reads clearly over it.
+    music?.duck();
     const semitones = options?.semitones ?? 0;
     const now = c.currentTime;
 
@@ -237,6 +293,16 @@ export function createAudio(initialMuted = false): GameAudio {
 
   function setMuted(next: boolean): void {
     muted = next;
+    // Cutting the master gain alone would leave the sequencer building
+    // oscillators forever for output nobody can hear — a muted 144bpm bed
+    // was still allocating ~9 nodes a second. Stop it outright and bring it
+    // back on unmute instead.
+    if (next) {
+      music?.stop();
+    } else if (activeBed) {
+      const bed = MUSIC_BEDS[activeBed];
+      if (bed) music?.start(bed);
+    }
     if (!master || !ctx) return;
     try {
       // Short ramp rather than a jump, so toggling mid-cue doesn't click.
@@ -251,8 +317,12 @@ export function createAudio(initialMuted = false): GameAudio {
 
   function destroy(): void {
     const c = ctx;
+    music?.destroy();
+    music = null;
+    pendingBed = null;
     ctx = null;
     master = null;
+    cueBus = null;
     voices = 0;
     if (!c) return;
     // close() releases the underlying hardware stream. Browsers cap live
@@ -266,7 +336,7 @@ export function createAudio(initialMuted = false): GameAudio {
     }
   }
 
-  return { play, setMuted, isMuted: () => muted, unlock, destroy };
+  return { play, startMusic, stopMusic, setMuted, isMuted: () => muted, unlock, destroy };
 }
 
 // ---------------------------------------------------------------------------

@@ -407,6 +407,9 @@ function mountGame(
     // asked to play.
     audio.unlock();
     audio.play("start");
+    // Per-template bed (lib/runtime/music.ts). Idempotent, so a replay
+    // resumes the same bed rather than layering a second sequencer.
+    audio.startMusic(spec.template);
     setOverlay(null); // hide chrome; the game renders on canvas
     activeSessionToken = beginSession(slug, {
       replayOfSessionToken: isReplay ? lastSessionToken : null,
@@ -450,6 +453,10 @@ function mountGame(
       .filter((a): a is LoadedAsset => Boolean(a?.image))
       .map((a) => ({ spriteUrl: a.image!.src, name: a.data?.name, productUrl: a.data?.productUrl }));
     const resolved = resolveReward(finalScore, spec.rewards);
+    // Cut the bed before the end-of-run cue rather than fading under it:
+    // the reward reveal is the peak moment of the session and gameplay
+    // music continuing through it makes the game feel still-running.
+    audio.stopMusic();
     // Exactly one end-of-run cue. Both are ~0.5s flourishes, so playing
     // "gameOver" and then "reward" back-to-back muddies both; which one
     // fires is itself the answer to "did I earn anything?".
