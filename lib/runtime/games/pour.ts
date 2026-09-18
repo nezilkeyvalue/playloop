@@ -468,6 +468,10 @@ class PourGame implements GameModule {
     this.ctx.addScore(Math.round(POINTS_PER_SERVE + ACCURACY_BONUS * closeness));
     this.served += 1;
     this.streak += 1;
+    // Rising with the streak, so a run of clean pours builds audibly.
+    this.ctx.sound.play(this.streak > 0 && this.streak % 5 === 0 ? "milestone" : "success", {
+      semitones: Math.min(12, this.streak),
+    });
     this.phase = "served";
     this.phaseT = 0;
     this.feedback = { kind: "serve", t: FEEDBACK_SEC };
@@ -630,6 +634,7 @@ class PourGame implements GameModule {
   private spill(): void {
     this.streak = 0;
     this.livesLeft -= 1;
+    this.ctx.sound.play("fail");
     this.phase = "overflowing";
     this.phaseT = 0;
     this.fill = Math.min(1, this.fill);

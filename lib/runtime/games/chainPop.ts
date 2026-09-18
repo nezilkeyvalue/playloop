@@ -434,6 +434,9 @@ class ChainPopGame implements GameModule {
 
     const points = pointsForChain(group.length, this.minChainLength);
     this.ctx.addScore(points);
+    // Bigger group -> higher ping, so chain size is audible as well as visible.
+    const over = group.length - this.minChainLength;
+    this.ctx.sound.play(over >= 3 ? "milestone" : "success", { semitones: Math.min(12, over * 2) });
 
     // Only a kind backed by a real product photo is worth celebrating/
     // recording — the synthesized brand-gem kinds padding out MIN_KINDS

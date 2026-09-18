@@ -21,6 +21,7 @@ import type {
   TemplateId,
 } from "@/lib/engine/types";
 import type { InputState } from "@/lib/runtime/input";
+import type { GameAudio } from "@/lib/runtime/audio";
 import type { RunnerThemeOverride } from "@/lib/runtime/games/runnerTheme";
 
 /** One asset, resolved to a loaded (or failed-to-load) image element. */
@@ -79,6 +80,12 @@ export interface RuntimeContext {
    * mount.ts accumulates these (deduped) to show a recap gallery of the
    * products actually played with on the reward screen. */
   recordEngagement(assetId: string): void;
+  /** Sound cues. Always present and always safe to call: it is a no-op
+   * before the player's first gesture, while muted, and on any browser
+   * where audio is unavailable — so a template never branches on it.
+   * Use the semantic cue names, not one cue per event type; see
+   * lib/runtime/audio.ts. */
+  sound: GameAudio;
   /** Game module calls this the instant it knows the round/session is over. */
   complete(): void;
 }

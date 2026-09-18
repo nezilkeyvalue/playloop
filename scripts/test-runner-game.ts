@@ -22,6 +22,7 @@ import { createRunnerGame } from "../lib/runtime/games/runner";
 import { getCapability } from "../lib/capabilities";
 import type { RuntimeContext } from "../lib/runtime/gameModule";
 import type { GameSpec } from "../lib/engine/types";
+import { createAudio } from "@/lib/runtime/audio";
 
 const capability = getCapability("runner");
 if (!capability) throw new Error("runner capability missing from the registry");
@@ -88,6 +89,8 @@ function playRound(tuning: Record<string, number>, stage: { width: number; heigh
     },
     getScore: () => score,
     recordEngagement: () => {},
+    // No browser here, so createAudio() resolves to a permanent no-op.
+    sound: createAudio(true),
     complete: () => {
       completeCalls++;
       if (completedAt === null) completedAt = elapsed;
