@@ -1,4 +1,3 @@
-// components/AnimatedNumber.tsx — counts up from 0 when scrolled into view.
 "use client";
 
 import { useEffect, useRef, useState } from "react";

@@ -593,9 +593,12 @@ export const sliceGameSpec: GameSpec = {
   },
 };
 
-/** Zero-asset variant. Sweet Spot is the only template with no hard-required
- * role, so this is the fixture that proves the "site gave us almost nothing"
- * path really renders: no prize images, no backdrop, brand colour only. */
+/** Zero-asset variant. Sweet Spot has no hard-required role (nor do
+ * chain_pop, pour, shooter or simon — it is not unique in that), and its
+ * `prize` role gates on almost nothing, which together are why it is the
+ * template a near-empty site actually lands on. This is the fixture that
+ * proves the "site gave us almost nothing" path really renders: no prize
+ * images, no backdrop, brand colour only. */
 export const sweetSpotBareGameSpec: GameSpec = {
   ...sweetSpotGameSpec,
   id: "demo-sweet-spot-bare",
@@ -867,10 +870,12 @@ export const pourGameSpec: GameSpec = {
 
 /** pour with nothing to pour: no prize assets and no logo, so the `prize`
  * role's "logo" fallback has nothing to give either and the modelled bottle
- * draws instead. pour is an eligibility floor (no role with
- * `fallback: "none"`), so this is not an edge case — it is what a site with
- * almost no extractable imagery actually gets, and the same reason
- * demo-sweet-spot-bare exists. */
+ * draws instead. pour declares no role with `fallback: "none"`, so it stays
+ * eligible however little a site yields, which makes this not an edge case
+ * but what a thin site actually gets — the same reason
+ * demo-sweet-spot-bare exists. (Staying *eligible* is not the same as
+ * winning the slot: pour fills zero roles on assets this thin and scores 0,
+ * which is where sweet_spot's far more permissive `prize` role differs.) */
 export const pourBareGameSpec: GameSpec = {
   ...pourGameSpec,
   id: "demo-pour-bare",
