@@ -77,7 +77,23 @@ export interface MusicBed {
   progression: readonly number[];
   /** Steps per bar. 8 = eighths, 16 = sixteenths. */
   stepsPerBar: number;
+  /** How much the tempo rises at full intensity, as a multiplier on `bpm`.
+   * 1 (the default) means intensity does nothing. Only worth setting for a
+   * template whose difficulty visibly ramps — runner accelerates to 1.4x
+   * scroll speed over a run, and a bed holding a fixed tempo under that
+   * makes the acceleration feel like it isn't happening. */
+  intensityTempoScale?: number;
   voices: readonly Voice[];
+}
+
+/** Current seconds-per-step, after intensity. Tempo changes therefore take
+ * effect on the next step rather than retiming notes already scheduled,
+ * which is what keeps an accelerating bed from glitching. */
+function stepDuration(bed: MusicBed, intensity: number): number {
+  const scale = bed.intensityTempoScale ?? 1;
+  const clamped = Math.min(1, Math.max(0, Number.isFinite(intensity) ? intensity : 0));
+  const bpm = bed.bpm * (1 + (scale - 1) * clamped);
+  return (60 / Math.max(1, bpm)) * (4 / bed.stepsPerBar);
 }
 
 function hz(root: number, scale: Scale, degree: number, octave: number): number {
@@ -215,16 +231,27 @@ export const MUSIC_BEDS: Record<TemplateId, MusicBed> = {
       { wave: "sine", gain: 0.2, octave: 1, hold: 0.9, pattern: [null, null, 2, null, null, null, 6, null] },
     ],
   },
-  // Driving and forward-leaning — the one game with constant motion.
+  // Driving chase — the one game with constant forward motion, and the only
+  // bed that accelerates. Three layers rather than two: a low pulse on every
+  // eighth doing the work a kick drum would, an offbeat stab for the
+  // syncopation that makes it feel like running rather than marching, and a
+  // hook up top so 40 seconds of it stays listenable. Tempo rises 25% with
+  // the game's own speed ramp (see intensityTempoScale + runner.ts), so the
+  // acceleration you can see is also something you can hear.
   runner: {
-    bpm: 144,
+    bpm: 150,
     root: 185, // F#3
     scale: MINOR,
-    progression: [0, 0, 3, 5],
+    progression: [0, 0, 5, 3],
     stepsPerBar: 16,
+    intensityTempoScale: 1.25,
     voices: [
-      { wave: "square", gain: 0.2, octave: -1, hold: 0.5, pattern: [0, null, 0, null, 4, null, 0, null, 0, null, 0, null, 5, null, 4, null] },
-      { wave: "triangle", gain: 0.22, octave: 1, hold: 0.7, pattern: [null, 4, null, null, null, 6, null, null, null, 4, null, null, null, 7, null, null] },
+      // Low pulse: the pulse, deliberately staccato so it thumps.
+      { wave: "square", gain: 0.2, octave: -2, hold: 0.35, pattern: [0, null, 0, null, 0, null, 0, null, 0, null, 0, null, 0, null, 0, null] },
+      // Offbeat stabs — land between the pulses, never on them.
+      { wave: "triangle", gain: 0.3, octave: -1, hold: 0.45, pattern: [null, null, null, 4, null, null, 2, null, null, null, null, 4, null, 2, null, null] },
+      // Hook.
+      { wave: "triangle", gain: 0.17, octave: 1, hold: 0.8, pattern: [4, null, null, null, 6, null, null, 4, null, null, 7, null, null, 6, null, null] },
     ],
   },
   // Warm, unhurried lounge. Pouring a drink is not a race.
@@ -268,6 +295,10 @@ export interface MusicController {
   /** Briefly dip the bed so a cue cuts through. Called by audio.ts on every
    * cue; safe when nothing is playing. */
   duck(): void;
+  /** 0..1, how intense the game currently is. Drives tempo via the bed's
+   * `intensityTempoScale`. Cheap to call every frame: it only stores a
+   * number, which the next scheduled step reads. */
+  setIntensity(value: number): void;
   isPlaying(): boolean;
   destroy(): void;
 }
@@ -281,6 +312,7 @@ export function createMusic(ctx: AudioContext, destination: AudioNode): MusicCon
   let bed: MusicBed | null = null;
   let step = 0;
   let nextStepTime = 0;
+  let intensity = 0;
   // Every oscillator scheduled but not yet finished, so stop() can silence
   // the notes already sitting in the lookahead window instead of letting up
   // to LOOKAHEAD_SEC of music play on over the reward screen.
@@ -292,7 +324,7 @@ export function createMusic(ctx: AudioContext, destination: AudioNode): MusicCon
     const bar = Math.floor(step / b.stepsPerBar) % b.progression.length;
     const chordRoot = b.progression[bar] ?? 0;
     const stepInBar = step % b.stepsPerBar;
-    const stepDur = (60 / b.bpm) * (4 / b.stepsPerBar);
+    const stepDur = stepDuration(b, intensity);
 
     for (const voice of b.voices) {
       const degree = voice.pattern[stepInBar % voice.pattern.length];
@@ -334,7 +366,7 @@ export function createMusic(ctx: AudioContext, destination: AudioNode): MusicCon
   function tick(): void {
     const b = bed;
     if (!b || ctx.state !== "running") return;
-    const stepDur = (60 / b.bpm) * (4 / b.stepsPerBar);
+    const stepDur = stepDuration(b, intensity);
 
     // Throttled-timer guard, see RESYNC_THRESHOLD_SEC.
     if (nextStepTime < ctx.currentTime - RESYNC_THRESHOLD_SEC) {
@@ -353,6 +385,7 @@ export function createMusic(ctx: AudioContext, destination: AudioNode): MusicCon
     stop();
     bed = next;
     step = 0;
+    intensity = 0;
     nextStepTime = ctx.currentTime + 0.08;
     try {
       bus.gain.cancelScheduledValues(ctx.currentTime);
@@ -380,6 +413,10 @@ export function createMusic(ctx: AudioContext, destination: AudioNode): MusicCon
     live.clear();
   }
 
+  function setIntensity(value: number): void {
+    intensity = value;
+  }
+
   function duck(): void {
     if (!bed) return;
     try {
@@ -402,5 +439,5 @@ export function createMusic(ctx: AudioContext, destination: AudioNode): MusicCon
     }
   }
 
-  return { start, stop, duck, isPlaying: () => bed !== null, destroy };
+  return { start, stop, duck, setIntensity, isPlaying: () => bed !== null, destroy };
 }

@@ -295,18 +295,30 @@ class RunnerGame implements GameModule {
     const grounded = this.runnerY >= 0;
     if (jumpPressed && grounded) {
       this.velocityY = JUMP_VELOCITY * scale;
+      // The only input this game has. It was silent until now, which left
+      // the player's single verb with no feedback at all.
+      this.ctx.sound.play("jump");
     }
     this.velocityY += GRAVITY * scale * dt;
     this.runnerY += this.velocityY * dt;
     if (this.runnerY > 0) {
       this.runnerY = 0;
       this.velocityY = 0;
+      // Gated on having been AIRBORNE before this frame's physics, not just
+      // on being pushed back to the ground line: gravity drives runnerY
+      // above 0 on every single grounded frame too, so the naive check
+      // fires this cue ~60 times a second while the player just stands
+      // there. `grounded` was sampled before the integration above.
+      if (!grounded) this.ctx.sound.play("land");
     }
 
     if (this.invulnerableFor > 0) this.invulnerableFor -= dt;
 
     // --- speed ramp ---
     const progress = durationSec > 0 ? Math.min(1, this.elapsed / durationSec) : 0;
+    // Same curve the scroll speed uses, so the music accelerates with the
+    // game rather than alongside it.
+    this.ctx.sound.setMusicIntensity(progress);
     const ramp = tuning.speedRamp ?? 1.4;
     const speed = (tuning.scrollSpeed ?? 260) * (1 + (ramp - 1) * progress);
     const runnerX = stage.width * 0.18;

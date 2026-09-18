@@ -39,6 +39,8 @@ export type SoundCue =
   | "fail" // a miss, a hazard, a wrong answer, a life lost
   | "tick" // a neutral beat — a sequence step, a countdown, a spawn
   | "milestone" // progression — a streak, a level, a chain bonus
+  | "jump" // the player left the ground
+  | "land" // …and came back down
   | "gameOver" // the run ended
   | "reward"; // the reward reveal
 
@@ -55,6 +57,11 @@ export interface GameAudio {
    * so a replay doesn't stack a second sequencer. No-op before unlock(). */
   startMusic(template: TemplateId): void;
   stopMusic(): void;
+  /** 0..1, how intense the game is right now. Drives the bed's tempo for
+   * templates that declare `intensityTempoScale` (lib/runtime/music.ts);
+   * a no-op for the rest, so it's always safe to call. Cheap enough to
+   * call every frame. */
+  setMusicIntensity(value: number): void;
   setMuted(muted: boolean): void;
   isMuted(): boolean;
   /** Creates/resumes the AudioContext. MUST be called synchronously from a
@@ -68,6 +75,11 @@ type Wave = OscillatorType;
 interface Note {
   /** Frequency in Hz at the cue's base pitch. */
   hz: number;
+  /** Optional glide target. With this set the note sweeps hz -> toHz across
+   * its duration instead of holding a fixed pitch, which is what makes a
+   * jump read as a jump — a whoosh is pitch MOVEMENT, and two static notes
+   * played in sequence don't sound like one. */
+  toHz?: number;
   /** Seconds after the cue starts. */
   at: number;
   /** Seconds. */
@@ -107,6 +119,11 @@ const CUES: Record<SoundCue, Note[]> = {
   ],
   // Barely-there click for neutral beats.
   tick: [{ hz: 900, at: 0, dur: 0.035, wave: "sine", peak: 0.22 }],
+  // Upward sweep — short, so it's out of the way before the player lands.
+  jump: [{ hz: 320, toHz: 760, at: 0, dur: 0.16, wave: "triangle", peak: 0.34 }],
+  // Downward thud, low and quiet: landing happens constantly in a runner,
+  // so this has to be felt more than heard or it becomes a rattle.
+  land: [{ hz: 190, toHz: 110, at: 0, dur: 0.09, wave: "sine", peak: 0.26 }],
   // Major arpeggio — clearly better than `success` without being a fanfare.
   milestone: [
     { hz: 659, at: 0, dur: 0.08, wave: "triangle", peak: 0.42 },
@@ -236,6 +253,10 @@ export function createAudio(initialMuted = false): GameAudio {
     music?.stop();
   }
 
+  function setMusicIntensity(value: number): void {
+    music?.setIntensity(value);
+  }
+
   function play(cue: SoundCue, options?: PlayOptions): void {
     if (muted || unavailable) return;
     // Never open a context here — that would be a sound before the gesture.
@@ -258,10 +279,17 @@ export function createAudio(initialMuted = false): GameAudio {
         const osc = c.createOscillator();
         const gain = c.createGain();
         osc.type = note.wave;
-        osc.frequency.value = transpose(note.hz, semitones);
+        const fromHz = transpose(note.hz, semitones);
+        osc.frequency.value = fromHz;
 
         const start = now + note.at;
         const end = start + note.dur;
+        if (note.toHz !== undefined) {
+          // Exponential, not linear: pitch is perceived logarithmically, so
+          // a linear sweep sounds like it slows down as it rises.
+          osc.frequency.setValueAtTime(fromHz, start);
+          osc.frequency.exponentialRampToValueAtTime(transpose(note.toHz, semitones), end);
+        }
         // Ramped, never stepped: assigning gain directly produces an audible
         // click at both ends of every note.
         gain.gain.setValueAtTime(0.0001, start);
@@ -336,7 +364,7 @@ export function createAudio(initialMuted = false): GameAudio {
     }
   }
 
-  return { play, startMusic, stopMusic, setMuted, isMuted: () => muted, unlock, destroy };
+  return { play, startMusic, stopMusic, setMusicIntensity, setMuted, isMuted: () => muted, unlock, destroy };
 }
 
 // ---------------------------------------------------------------------------
