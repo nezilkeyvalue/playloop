@@ -11,10 +11,14 @@ committed schedule — a map of what's next and who'd naturally pick it up.
 runtime module yet. Follow `docs/ADDING_A_TEMPLATE.md`.
 
 `sweet_spot` (tap to stop a sweeping marker in a shrinking zone) shipped and
-covers the thin-extraction case this track kept hitting: it declares no
-`fallback: "none"` role, so it stays eligible when a site yields almost no
-usable images. The spin-the-wheel idea below is now largely redundant with
-it — both were aimed at the same "few usable product photos" gap.
+covers the thin-extraction case this track kept hitting. Note what the win
+actually is, because it is easy to state wrongly: five templates already
+declare no `fallback: "none"` role, so *eligibility* on asset-poor sites was
+never the gap — those templates stay eligible, fill zero roles and score 0.
+The gap was *scoring*, and `sweet_spot` closes it by asking almost nothing of
+its `prize` role (`minShortEdge: 120`, no subject-type or isolatable
+requirement). The spin-the-wheel idea below is largely redundant with it —
+both were aimed at the same "few usable product photos" gap.
 
 - **`match`** — pairs-matching/memory game. Likely roles: `card` (needs an
   even, larger pool than `catch`'s collectibles — probably `count.ideal`
