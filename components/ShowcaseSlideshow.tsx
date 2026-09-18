@@ -29,6 +29,7 @@ const SLIDES: Slide[] = [
   { specKey: "demo-simon", domain: "brightbeataudio.com", vertical: "Audio & electronics" },
   { specKey: "demo-slice", domain: "squeezeco.com", vertical: "Beverage" },
   { specKey: "demo-runner", domain: "trailheadsupply.com", vertical: "Outdoor gear" },
+  { specKey: "demo-catch-pets", domain: "barkwellsupply.com", vertical: "Pet supplies · themed" },
 ];
 
 export function ShowcaseSlideshow() {
