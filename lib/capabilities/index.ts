@@ -69,6 +69,7 @@ const gameCapabilitySchema = z.object({
   name: z.string(),
   summary: z.string(),
   brandFit: z.string().optional(),
+  themeTags: z.array(z.string()).optional(),
   roles: z.array(capabilityRoleSchema).min(1),
   data: z.object({ required: z.array(z.string()), optional: z.array(z.string()) }),
   placements: z.record(z.string(), placementConstraintSchema),
@@ -160,6 +161,8 @@ export const RUNTIME_TEMPLATES: TemplateId[] = [
   "slice",
   "shooter",
   "sweet_spot",
+  "runner",
+  "pour",
 ];
 
 export function requireCapability(id: TemplateId): GameCapability {

@@ -3,6 +3,8 @@
   "id": "runner",
   "name": "Runner",
   "summary": "Jump a brand mascot over obstacles and grab the products flying past before the lives run out.",
+  "brandFit": "Athletic and performance footwear brands — side-scrolling run gameplay matches sports energy.",
+  "themeTags": ["athletic", "footwear", "sports", "energy"],
 
   "roles": [
     {

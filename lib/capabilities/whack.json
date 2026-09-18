@@ -4,6 +4,7 @@
   "name": "Whack-a-Mole",
   "summary": "Products pop out of holes in a grid; tap them before they duck back down. Avoid the decoys.",
   "brandFit": "Footwear, toys, and snack brands with many recognizable product silhouettes in grid-friendly photos.",
+  "themeTags": ["footwear", "toys", "snacks", "general"],
 
   "roles": [
     {

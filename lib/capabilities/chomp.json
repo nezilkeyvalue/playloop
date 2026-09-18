@@ -4,6 +4,7 @@
   "name": "Chomp",
   "summary": "Steer a chaser around the board to gulp down products before their clock runs out.",
   "brandFit": "Food, beverage, and candy brands where products read clearly at small sizes.",
+  "themeTags": ["food", "snacks", "cpg"],
 
   "roles": [
     {

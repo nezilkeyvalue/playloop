@@ -39,6 +39,7 @@ import type {
   TemplateMatch,
   TransformId,
 } from "@/lib/engine/types";
+import { themeAlignmentBonus } from "@/lib/engine/brandThemes";
 import { exemptFromPhashDedup } from "@/lib/engine/catalogue";
 
 const MIN_ASSETS_FOR_AUTO = Number(process.env.MIN_ASSETS_FOR_AUTO) || 4;
@@ -84,8 +85,19 @@ const CATALOGUE_RICHNESS_BONUS = 0.05;
 const DISTINCT_PRODUCT_BONUS = 0.03;
 const PRODUCT_INTERACTION_BONUS = 0.02;
 
-export function matchAssets(inventory: AssetInventory, capabilities: GameCapability[]): MatchReport {
-  const results: TemplateMatch[] = capabilities.map((cap) => matchOneTemplate(inventory, cap));
+export interface MatchAssetsOptions {
+  /** Brand themes inferred from URL/catalog — small score nudge only. */
+  siteThemes?: string[];
+}
+
+export function matchAssets(
+  inventory: AssetInventory,
+  capabilities: GameCapability[],
+  options: MatchAssetsOptions = {},
+): MatchReport {
+  const results: TemplateMatch[] = capabilities.map((cap) =>
+    matchOneTemplate(inventory, cap, options.siteThemes),
+  );
 
   const eligible = results.filter((r) => r.eligible).sort((a, b) => b.score - a.score);
   const recommended: TemplateId[] = eligible.map((r) => r.template);
@@ -105,7 +117,7 @@ export function matchAssets(inventory: AssetInventory, capabilities: GameCapabil
   };
 }
 
-function matchOneTemplate(inventory: AssetInventory, cap: GameCapability): TemplateMatch {
+function matchOneTemplate(inventory: AssetInventory, cap: GameCapability, siteThemes?: string[]): TemplateMatch {
   const warnings: string[] = [];
   const gaps: MatchGap[] = [];
 
@@ -199,6 +211,9 @@ function matchOneTemplate(inventory: AssetInventory, cap: GameCapability): Templ
 
   if (!ineligible) {
     score += catalogueRankingBonus(inventory, cap, assignments);
+    if (siteThemes && siteThemes.length > 0) {
+      score += themeAlignmentBonus(cap, siteThemes);
+    }
   }
 
   return {
