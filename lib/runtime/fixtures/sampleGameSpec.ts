@@ -656,6 +656,58 @@ export const skincareGameSpec: GameSpec = {
   ],
 };
 
+const petCollectibles: ProcessedAsset[] = [
+  asset("pet-1", "#8A5A2B", "🦴", { name: "Marrow Bone Chew", priceMinor: 900, currency: "USD" }),
+  asset("pet-2", "#C2703D", "🍖", { name: "Slow-Roast Treats", priceMinor: 1400, currency: "USD" }),
+  asset("pet-3", "#4E7C59", "🎾", { name: "Bounce Ball 3-Pack", priceMinor: 1100, currency: "USD" }),
+  asset("pet-4", "#6B4A2F", "🧶", { name: "Tug Rope", priceMinor: 1600, currency: "USD" }),
+  asset("pet-5", "#B5843A", "🥣", { name: "Slow Feed Bowl", priceMinor: 2400, currency: "USD" }),
+  asset("pet-6", "#7A5C3E", "🦴", { name: "Dental Sticks", priceMinor: 1200, currency: "USD" }),
+];
+
+/** The pet-supplies theme (spec.meta.theme) rendering through the ordinary
+ * catch template — the catcher becomes a food bowl and dogs wait along the
+ * ground. Everything else about the spec is a normal catch game, which is
+ * the point: the theme is dressing, not a different template. */
+export const petSupplyGameSpec: GameSpec = {
+  ...catchGameSpec,
+  id: "demo-catch-pets",
+  brand: {
+    name: "Barkwell Supply",
+    accent: "#C2703D",
+    secondaryAccent: "#4E7C59",
+    background: "#FBF6EE",
+    foreground: "#2A2016",
+    fontFamily: "Nunito, system-ui, sans-serif",
+    palette: ["#C2703D", "#4E7C59", "#FBF6EE", "#2A2016"],
+  },
+  copy: {
+    headline: "Catch supplies for your pet",
+    subhead: "Drag the bowl, catch the treats, skip the empties.",
+    ctaStart: "Start catching",
+    ctaReplay: "Catch again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: petCollectibles,
+  roles: {
+    ...catchGameSpec.roles,
+    collectible: petCollectibles.map((a) => a.id),
+    catcher: { fallback: "generatedShape" },
+  },
+  rewards: [
+    { minScore: 225, label: "10% off", percentOff: 10, code: "BARK10" },
+    { minScore: 450, label: "15% off", percentOff: 15, code: "BARK15" },
+    { minScore: 900, label: "20% off", percentOff: 20, code: "BARK20" },
+  ],
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+    theme: "pet_supplies",
+  },
+};
+
 const sneakerHeroes: ProcessedAsset[] = [
   asset("sneaker-1", "#1C1C1C", "👟", { name: "Air Runner Low", priceMinor: 8900, currency: "USD" }),
   asset("sneaker-2", "#D9772A", "👟", { name: "Trail Max", priceMinor: 11900, currency: "USD" }),
@@ -698,6 +750,137 @@ export const sneakerGameSpec: GameSpec = {
 };
 
 /** Keyed by the slug app/play/[slug]/page.tsx serves directly, no DB hit. */
+// ---------------------------------------------------------------------------
+// Runner — "Trailhead Supply"
+// ---------------------------------------------------------------------------
+
+const runnerCollectibles: ProcessedAsset[] = [
+  asset("gear-1", "#2F7D5C", "\u{1F392}", { name: "Ridgeline Daypack", priceMinor: 8900, currency: "USD" }),
+  asset("gear-2", "#C8622F", "\u{1F97E}", { name: "Trail Runner GTX", priceMinor: 12500, currency: "USD" }),
+  asset("gear-3", "#3C6E9F", "\u{1F9F4}", { name: "Insulated Flask 1L", priceMinor: 3400, currency: "USD" }),
+  asset("gear-4", "#8A6BC1", "\u{26FA}", { name: "Two-Person Tent", priceMinor: 21900, currency: "USD" }),
+  asset("gear-5", "#D3A62E", "\u{1F526}", { name: "Trailhead Headlamp", priceMinor: 4200, currency: "USD" }),
+  asset("gear-6", "#4F9D8B", "\u{1F9E3}", { name: "Merino Beanie", priceMinor: 2800, currency: "USD" }),
+];
+
+export const runnerGameSpec: GameSpec = {
+  id: "demo-runner",
+  version: 1,
+  template: "runner",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Trailhead Supply",
+    accent: "#2F7D5C",
+    secondaryAccent: "#6B4A2F",
+    background: "#F4F7F2",
+    foreground: "#1C2B22",
+    fontFamily: "Inter, system-ui, sans-serif",
+    palette: ["#2F7D5C", "#6B4A2F", "#F4F7F2", "#1C2B22"],
+  },
+  copy: {
+    headline: "Hit the trail",
+    subhead: "Tap to jump. Clear the hurdles, grab the gear.",
+    ctaStart: "Start running",
+    ctaReplay: "Run again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: runnerCollectibles,
+  roles: {
+    collectible: runnerCollectibles.map((a) => a.id),
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 0, label: "10% off", percentOff: 10, code: "TRAIL10" },
+    { minScore: 90, label: "15% off", percentOff: 15, code: "TRAIL15" },
+    { minScore: 170, label: "20% off", percentOff: 20, code: "TRAIL20" },
+  ],
+  durationSeconds: 35,
+  tuning: {
+    scrollSpeed: 260,
+    obstacleRateHz: 0.55,
+    collectibleRateHz: 0.7,
+    lives: 3,
+    durationSec: 35,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
+const pourPrizes: ProcessedAsset[] = [
+  asset("pour-1", "#6B3A1E", "☕", { name: "House Espresso" }),
+  asset("pour-2", "#8A4B27", "🫘", { name: "Single Origin Beans" }),
+  asset("pour-3", "#A35E33", "🥛", { name: "Oat Barista Blend" }),
+  asset("pour-4", "#5A3018", "🍫", { name: "Mocha Syrup" }),
+];
+
+export const pourGameSpec: GameSpec = {
+  id: "demo-pour",
+  version: 1,
+  template: "pour",
+  placements: ["section", "fullpage", "modal"],
+  brand: {
+    name: "Bloom Coffee Co.",
+    accent: "#C2612F",
+    secondaryAccent: "#2F6FC2",
+    background: "#FBF7F2",
+    foreground: "#1F1710",
+    fontFamily: "Fraunces, Georgia, serif",
+    palette: ["#C2612F", "#7B4B2A", "#FBF7F2", "#1F1710"],
+  },
+  copy: {
+    headline: "Pour the perfect cup",
+    subhead: "Tap to stop the pour on the line. Overfill and you lose the cup.",
+    ctaStart: "Start pouring",
+    ctaReplay: "Pour again",
+    rewardIntro: "You earned",
+    emailPrompt: "Email my code",
+  },
+  assets: pourPrizes,
+  roles: {
+    prize: pourPrizes.map((a) => a.id),
+    stageBackground: { fallback: "brandGradient" },
+  },
+  rewards: [
+    { minScore: 100, label: "5% off", percentOff: 5, code: "POUR5" },
+    { minScore: 200, label: "10% off", percentOff: 10, code: "POUR10" },
+    { minScore: 420, label: "15% off", percentOff: 15, code: "POUR15" },
+  ],
+  durationSeconds: 40,
+  tuning: {
+    fillSpeed: 0.5,
+    bandWidth: 0.18,
+    bandShrink: 0.88,
+    lives: 3,
+    cupsToServe: 12,
+    durationSec: 40,
+  },
+  meta: {
+    mode: "manual",
+    generatedAt: GENERATED_AT,
+    warnings: [FIXTURE_WARNING],
+  },
+};
+
+/** pour with nothing to pour: no prize assets and no logo, so the `prize`
+ * role's "logo" fallback has nothing to give either and the modelled bottle
+ * draws instead. pour is an eligibility floor (no role with
+ * `fallback: "none"`), so this is not an edge case — it is what a site with
+ * almost no extractable imagery actually gets, and the same reason
+ * demo-sweet-spot-bare exists. */
+export const pourBareGameSpec: GameSpec = {
+  ...pourGameSpec,
+  id: "demo-pour-bare",
+  assets: [],
+  roles: {
+    prize: { fallback: "logo" },
+    stageBackground: { fallback: "brandGradient" },
+  },
+};
+
 export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-catch": catchGameSpec,
   "demo-guess-price": guessPriceGameSpec,
@@ -708,7 +891,11 @@ export const fixtureGameSpecs: Record<string, GameSpec> = {
   "demo-slice": sliceGameSpec,
   "demo-shooter": shooterGameSpec,
   "demo-catch-lumen": skincareGameSpec,
+  "demo-catch-pets": petSupplyGameSpec,
   "demo-guess-price-kicks": sneakerGameSpec,
   "demo-sweet-spot": sweetSpotGameSpec,
   "demo-sweet-spot-bare": sweetSpotBareGameSpec,
+  "demo-runner": runnerGameSpec,
+  "demo-pour": pourGameSpec,
+  "demo-pour-bare": pourBareGameSpec,
 };

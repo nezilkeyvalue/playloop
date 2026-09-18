@@ -188,6 +188,10 @@ async function callGemini(apiKey: string, input: RunBrainInput, eligibleTemplate
     "You are choosing and writing copy for a short branded mini-game (a 'playable ad') for an e-commerce brand.",
     "You may ONLY set `template` to one of the ids listed under `eligible` below — any other value is invalid and will be discarded.",
     "Keep copy short, upbeat, and specific to the brand where possible. Respond ONLY with JSON matching the response schema.",
+    "Set `category` to the merchant's vertical as a lowercase_snake_case slug (e.g. pet_supplies, coffee, " +
+      "apparel, beauty, electronics, general_retail). compose.ts passes it to the runtime as the game's theme, " +
+      "which a template may use to pick its decorative dressing — an unrecognised value is simply ignored, so " +
+      "guess the honest vertical rather than forcing one of the examples.",
     "Every `rewards` tier must be EARNED: give each one a `minScore` above 0 and below the template's maxRealistic, " +
       "so a player who idles through the timer walks away with nothing and is asked to play again. A tier at " +
       "minScore 0 is discarded. Pitch the lowest tier where an engaged first-time player lands (roughly 15-25% of " +

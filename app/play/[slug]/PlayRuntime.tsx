@@ -11,6 +11,7 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import type { GameSpec, Placement } from "@/lib/engine/types";
 import { mount } from "@/lib/runtime/mount";
+import { RUNNER_THEME_PRESETS } from "@/lib/runtime/games/runnerTheme";
 import type { StageSizeOverride } from "@/lib/runtime/stage";
 
 export function PlayRuntime({
@@ -19,6 +20,7 @@ export function PlayRuntime({
   slug,
   viewportHeight,
   sizeOverride,
+  themePreset,
 }: {
   spec: GameSpec;
   placement: Placement;
@@ -36,6 +38,11 @@ export function PlayRuntime({
    * canvas alone respecting maxWidth would otherwise just float in the
    * top-left corner of an iframe that stayed full width. */
   sizeOverride?: StageSizeOverride;
+  /** A named brand skin requested by the host with ?theme= — looked up in
+   * the runtime's preset registry here, so an unknown or hostile value is
+   * simply ignored and the game renders the theme it derives from its own
+   * BrandKit. */
+  themePreset?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -43,7 +50,8 @@ export function PlayRuntime({
     const container = containerRef.current;
     if (!container) return undefined;
 
-    const handle = mount(spec, container, placement, { slug, sizeOverride });
+    const brandTheme = themePreset ? RUNNER_THEME_PRESETS[themePreset] : undefined;
+    const handle = mount(spec, container, placement, { slug, sizeOverride, brandTheme });
 
     // --- postMessage auto-height (build spec §14, §23) ----------------------
     // An iframe never grows to fit its content on its own. The loader
@@ -73,7 +81,7 @@ export function PlayRuntime({
       handle.teardown();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spec.id, placement, slug, sizeOverride?.maxWidth, sizeOverride?.height]);
+  }, [spec.id, placement, slug, sizeOverride?.maxWidth, sizeOverride?.height, themePreset]);
 
   // "fullpage" is meant to read as a real full-page moment, not just a
   // taller section: mount.ts sizes the shell tight to the canvas (stage.ts's

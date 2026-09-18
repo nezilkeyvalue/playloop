@@ -24,6 +24,8 @@ export type TemplateId =
   | "slice"
   | "shooter"
   | "sweet_spot"
+  | "runner"
+  | "pour"
   | "match"
   | "stack";
 
@@ -265,6 +267,21 @@ export interface GameSpec {
     mode: "auto" | "manual";
     generatedAt: string;
     warnings: string[];
+    /**
+     * Coarse merchant vertical, used ONLY to pick decorative dressing in a
+     * runtime module (e.g. catch.ts drawing a pet bowl and dog silhouettes
+     * for a pet-supplies store instead of a generic basket). Never load-
+     * bearing: absent, unknown, or ignored entirely must all render the
+     * template's normal look, which is what every spec generated before
+     * this field existed relies on.
+     *
+     * Deliberately a free string rather than a union — `brain.ts` has
+     * always produced a `category` for every generation and compose.ts now
+     * carries it here, so the set of values is whatever the model emits,
+     * and a runtime module opts in by matching the one value it knows.
+     * Known value today: "pet_supplies".
+     */
+    theme?: string;
   };
 }
 

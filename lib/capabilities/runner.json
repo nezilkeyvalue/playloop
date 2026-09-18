@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "id": "runner",
+  "name": "Runner",
+  "summary": "Jump a brand mascot over obstacles and grab the products flying past before the lives run out.",
+
+  "roles": [
+    {
+      "id": "collectible",
+      "purpose": "Products the player jumps to grab — the only thing worth points",
+      "count": { "min": 2, "ideal": 6, "max": 12 },
+      "requires": {
+        "subjectTypeIn": ["product", "lifestyle", "unknown"],
+        "minShortEdge": 180,
+        "aspectRange": [0.4, 2.5],
+        "maxTextDensity": 0.25,
+        "maxSubjectCount": 1
+      },
+      "prefers": {
+        "distinctPhash": true,
+        "coverageRange": [0.2, 0.9],
+        "contrastAgainst": "stage.background"
+      },
+      "transforms": ["trim", "padSquare", "resize"],
+      "fallback": "none"
+    },
+    {
+      "id": "stageBackground",
+      "purpose": "Parallax backdrop behind the track",
+      "count": { "min": 0, "ideal": 1, "max": 1 },
+      "requires": { "subjectTypeIn": ["lifestyle", "pattern"] },
+      "transforms": ["cropAspect", "blur", "darken", "resize"],
+      "fallback": "brandGradient",
+      "optional": true
+    }
+  ],
+
+  "data": {
+    "required": [],
+    "optional": ["name", "priceMinor"]
+  },
+
+  "placements": {
+    "section": { "minWidth": 320, "minHeight": 420, "preferredAspect": 0.55 },
+    "fullpage": { "minWidth": 320, "minHeight": 300, "preferredAspect": 0.6 },
+    "modal": { "minWidth": 300, "minHeight": 240, "preferredAspect": 0.62 },
+    "ad": { "sizes": ["300x250", "320x480"], "excluded": ["728x90", "300x600"] }
+  },
+
+  "tuning": {
+    "scrollSpeed": { "min": 180, "default": 260, "max": 420 },
+    "speedRamp": { "min": 1, "default": 1.4, "max": 2.2 },
+    "obstacleRateHz": { "min": 0.3, "default": 0.55, "max": 1 },
+    "collectibleRateHz": { "min": 0.4, "default": 0.7, "max": 1.2 },
+    "lives": { "min": 1, "default": 3, "max": 5 },
+    "durationSec": { "min": 20, "default": 35, "max": 60 }
+  },
+
+  "scoring": {
+    "maxRealistic": 280,
+    "rewardTierHint": [0.3, 0.65]
+  },
+
+  "cost": { "buildMs": 380, "runtimeKb": 30 }
+}

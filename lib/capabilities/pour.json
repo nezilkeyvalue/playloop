@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "id": "pour",
+  "name": "Perfect Pour",
+  "summary": "Liquid rises in a branded cup; tap to stop it inside the fill line before it overflows.",
+
+  "roles": [
+    {
+      "id": "prize",
+      "purpose": "The product being poured — shown tipped over the cup as the source",
+      "count": { "min": 0, "ideal": 4, "max": 8 },
+      "requires": { "minShortEdge": 120 },
+      "prefers": { "distinctPhash": true, "coverageRange": [0.15, 0.95] },
+      "transforms": ["trim", "resize"],
+      "fallback": "logo",
+      "optional": true
+    },
+    {
+      "id": "stageBackground",
+      "purpose": "Play area backdrop",
+      "count": { "min": 0, "ideal": 1, "max": 1 },
+      "requires": { "subjectTypeIn": ["lifestyle", "pattern"] },
+      "transforms": ["cropAspect", "blur", "darken", "resize"],
+      "fallback": "brandGradient",
+      "optional": true
+    }
+  ],
+
+  "data": {
+    "required": [],
+    "optional": ["name"]
+  },
+
+  "placements": {
+    "section": { "minWidth": 280, "minHeight": 380, "preferredAspect": 0.85 },
+    "fullpage": { "minWidth": 280, "minHeight": 440, "preferredAspect": 0.7 },
+    "modal": { "minWidth": 280, "minHeight": 380, "preferredAspect": 0.85 },
+    "ad": { "sizes": ["300x250", "320x480", "300x600"], "excluded": ["728x90"] }
+  },
+
+  "tuning": {
+    "fillSpeed": { "min": 0.25, "default": 0.5, "max": 1.1 },
+    "bandWidth": { "min": 0.07, "default": 0.18, "max": 0.35 },
+    "bandShrink": { "min": 0.75, "default": 0.88, "max": 1.0 },
+    "lives": { "min": 1, "default": 3, "max": 5 },
+    "cupsToServe": { "min": 5, "default": 12, "max": 20 },
+    "durationSec": { "min": 20, "default": 40, "max": 60 }
+  },
+
+  "scoring": {
+    "maxRealistic": 640,
+    "rewardTierHint": [0.3, 0.65]
+  },
+
+  "cost": { "buildMs": 180, "runtimeKb": 24 }
+}
