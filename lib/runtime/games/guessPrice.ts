@@ -226,6 +226,14 @@ class GuessPriceGame implements GameModule {
     this.celebrations = [];
   }
 
+  timeRemaining(): { secondsLeft: number; totalSeconds: number } | null {
+    // The PER-ROUND clock, not the run total: roundSeconds is what actually
+    // pressures the player into locking a guess, while durationSec is only
+    // a safety cap on the whole session (see this file's header).
+    const total = this.ctx.tuning.roundSeconds ?? 7;
+    return { secondsLeft: Math.max(0, this.roundTimeLeft), totalSeconds: total };
+  }
+
   maxRealisticScore(tuning: Record<string, number>): number {
     return maxRealisticScore(tuning);
   }

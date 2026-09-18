@@ -28,6 +28,7 @@ import { isBrandLogoUrl, shadeHex } from "@/lib/runtime/games/spriteRender";
 import type { RunnerThemeOverride } from "@/lib/runtime/games/runnerTheme";
 import { createInput } from "@/lib/runtime/input";
 import { createAudio, loadMutePreference, saveMutePreference } from "@/lib/runtime/audio";
+import { drawTimerBar, drawLivesRow } from "@/lib/runtime/games/hud";
 import { startLoop, type LoopHandle } from "@/lib/runtime/loop";
 import { entryTier } from "@/lib/engine/specRules";
 import { animateCountUp, nextTierAbove, resolveReward } from "@/lib/runtime/reward";
@@ -407,6 +408,9 @@ function mountGame(
     // asked to play.
     audio.unlock();
     audio.play("start");
+    // Per-template bed (lib/runtime/music.ts). Idempotent, so a replay
+    // resumes the same bed rather than layering a second sequencer.
+    audio.startMusic(spec.template);
     setOverlay(null); // hide chrome; the game renders on canvas
     activeSessionToken = beginSession(slug, {
       replayOfSessionToken: isReplay ? lastSessionToken : null,
@@ -435,7 +439,20 @@ function mountGame(
         mod.update(dt);
       },
       () => {
-        mod.render(stageController.ctx);
+        const c = stageController.ctx;
+        mod.render(c);
+        // Chrome is drawn here, after the game, so it is always on top and
+        // there is one layout for all eleven templates rather than eleven.
+        // Both reporters are optional; a template that returns null (or
+        // doesn't implement them) gets nothing drawn.
+        const clock = mod.timeRemaining?.();
+        if (clock) {
+          drawTimerBar(c, stageController.size.width, clock.secondsLeft, clock.totalSeconds, brand);
+        }
+        const lives = mod.livesRemaining?.();
+        if (lives) {
+          drawLivesRow(c, stageController.size.width, lives.maxLives, lives.livesLeft, brand);
+        }
       },
     );
   }
@@ -450,6 +467,10 @@ function mountGame(
       .filter((a): a is LoadedAsset => Boolean(a?.image))
       .map((a) => ({ spriteUrl: a.image!.src, name: a.data?.name, productUrl: a.data?.productUrl }));
     const resolved = resolveReward(finalScore, spec.rewards);
+    // Cut the bed before the end-of-run cue rather than fading under it:
+    // the reward reveal is the peak moment of the session and gameplay
+    // music continuing through it makes the game feel still-running.
+    audio.stopMusic();
     // Exactly one end-of-run cue. Both are ~0.5s flourishes, so playing
     // "gameOver" and then "reward" back-to-back muddies both; which one
     // fires is itself the answer to "did I earn anything?".

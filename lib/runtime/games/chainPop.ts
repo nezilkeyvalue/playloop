@@ -333,6 +333,11 @@ class ChainPopGame implements GameModule {
     this.celebrations = [];
   }
 
+  timeRemaining(): { secondsLeft: number; totalSeconds: number } | null {
+    const total = this.ctx.tuning.durationSec ?? 45;
+    return { secondsLeft: Math.max(0, total - this.elapsed), totalSeconds: total };
+  }
+
   maxRealisticScore(tuning: Record<string, number>): number {
     return maxRealisticScore(tuning);
   }

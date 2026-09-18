@@ -104,4 +104,22 @@ export interface GameModule {
    * declared `scoring.maxRealistic`.
    */
   maxRealisticScore(tuning: Record<string, number>): number;
+  /**
+   * The clock the player should see, or null when this template has nothing
+   * meaningful to show. `mount.ts` draws it as a drain bar across the top
+   * (lib/runtime/games/hud.ts) — templates report the numbers rather than
+   * drawing their own, so all eleven games show the same clock in the same
+   * place instead of eleven layouts.
+   *
+   * Report whatever clock actually creates the pressure: for most templates
+   * that is the run's own `durationSec`, but guess_price should report its
+   * per-round timer, since its total duration is only a safety cap.
+   */
+  timeRemaining?(): { secondsLeft: number; totalSeconds: number } | null;
+  /**
+   * Lives, or null for a template that has none (only pour, runner, shooter
+   * and sweet_spot do). Drawn by `mount.ts` as hearts, top-right, for the
+   * same consistency reason as the clock above.
+   */
+  livesRemaining?(): { livesLeft: number; maxLives: number } | null;
 }

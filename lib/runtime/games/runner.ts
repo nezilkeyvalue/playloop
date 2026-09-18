@@ -295,18 +295,30 @@ class RunnerGame implements GameModule {
     const grounded = this.runnerY >= 0;
     if (jumpPressed && grounded) {
       this.velocityY = JUMP_VELOCITY * scale;
+      // The only input this game has. It was silent until now, which left
+      // the player's single verb with no feedback at all.
+      this.ctx.sound.play("jump");
     }
     this.velocityY += GRAVITY * scale * dt;
     this.runnerY += this.velocityY * dt;
     if (this.runnerY > 0) {
       this.runnerY = 0;
       this.velocityY = 0;
+      // Gated on having been AIRBORNE before this frame's physics, not just
+      // on being pushed back to the ground line: gravity drives runnerY
+      // above 0 on every single grounded frame too, so the naive check
+      // fires this cue ~60 times a second while the player just stands
+      // there. `grounded` was sampled before the integration above.
+      if (!grounded) this.ctx.sound.play("land");
     }
 
     if (this.invulnerableFor > 0) this.invulnerableFor -= dt;
 
     // --- speed ramp ---
     const progress = durationSec > 0 ? Math.min(1, this.elapsed / durationSec) : 0;
+    // Same curve the scroll speed uses, so the music accelerates with the
+    // game rather than alongside it.
+    this.ctx.sound.setMusicIntensity(progress);
     const ramp = tuning.speedRamp ?? 1.4;
     const speed = (tuning.scrollSpeed ?? 260) * (1 + (ramp - 1) * progress);
     const runnerX = stage.width * 0.18;
@@ -468,7 +480,6 @@ class RunnerGame implements GameModule {
     if (this.finishX !== null) this.drawGate(c, this.finishX, groundY, "FINISH");
 
     this.drawRunner(c, stage.width * 0.18, groundY, RUNNER_SIZE * scale);
-    this.drawLives(c);
 
     // Celebrations last, so the just-grabbed product is the focal point.
     for (const celebration of this.celebrations) {
@@ -481,6 +492,15 @@ class RunnerGame implements GameModule {
     this.obstacles = [];
     this.collectibles = [];
     this.celebrations = [];
+  }
+
+  timeRemaining(): { secondsLeft: number; totalSeconds: number } | null {
+    const total = this.ctx.tuning.durationSec ?? 40;
+    return { secondsLeft: Math.max(0, total - this.elapsed), totalSeconds: total };
+  }
+
+  livesRemaining(): { livesLeft: number; maxLives: number } | null {
+    return { livesLeft: Math.max(0, this.livesLeft), maxLives: Math.max(1, Math.round(this.ctx.tuning.lives ?? 3)) };
   }
 
   maxRealisticScore(tuning: Record<string, number>): number {
@@ -1331,34 +1351,6 @@ class RunnerGame implements GameModule {
     c.restore();
   }
 
-  private drawLives(c: CanvasRenderingContext2D): void {
-    const { brand, stage } = this.ctx;
-    const total = Math.max(1, Math.round(this.ctx.tuning.lives ?? 3));
-    const radius = 5;
-    const gap = 16;
-    const y = 16;
-    for (let i = 0; i < total; i++) {
-      const cx = stage.width - 16 - i * gap;
-      c.beginPath();
-      c.arc(cx, y, radius, 0, Math.PI * 2);
-      if (i < this.livesLeft) {
-        c.fillStyle = this.theme.ui.primary;
-        c.fill();
-        c.strokeStyle = this.theme.environment.laneMarking;
-        c.lineWidth = 1.5;
-        c.stroke();
-      } else {
-        // Spent lives read against the sky, so the ring is white rather
-        // than brand.foreground (contrast-forced against brand.background,
-        // which is no longer what's behind the HUD).
-        c.strokeStyle = this.theme.environment.laneMarking;
-        c.lineWidth = 1.5;
-        c.globalAlpha = 0.6;
-        c.stroke();
-        c.globalAlpha = 1;
-      }
-    }
-  }
 }
 
 interface Box {

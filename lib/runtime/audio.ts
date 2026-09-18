@@ -26,6 +26,9 @@
 //    degrade to silence. A game must play identically with sound broken,
 //    so this file never throws and never reports failure upward.
 
+import { createMusic, MUSIC_BEDS, type MusicController } from "@/lib/runtime/music";
+import type { TemplateId } from "@/lib/engine/types";
+
 /** The vocabulary a game module gets. Deliberately SEMANTIC ("success", not
  * "beep880"): the same cue should mean the same thing to a player across all
  * eleven templates, and the actual waveform stays tunable here without
@@ -36,6 +39,8 @@ export type SoundCue =
   | "fail" // a miss, a hazard, a wrong answer, a life lost
   | "tick" // a neutral beat — a sequence step, a countdown, a spawn
   | "milestone" // progression — a streak, a level, a chain bonus
+  | "jump" // the player left the ground
+  | "land" // …and came back down
   | "gameOver" // the run ended
   | "reward"; // the reward reveal
 
@@ -47,6 +52,16 @@ export interface PlayOptions {
 
 export interface GameAudio {
   play(cue: SoundCue, options?: PlayOptions): void;
+  /** Starts this template's background bed (lib/runtime/music.ts). Safe to
+   * call repeatedly — starting the bed that is already playing is a no-op,
+   * so a replay doesn't stack a second sequencer. No-op before unlock(). */
+  startMusic(template: TemplateId): void;
+  stopMusic(): void;
+  /** 0..1, how intense the game is right now. Drives the bed's tempo for
+   * templates that declare `intensityTempoScale` (lib/runtime/music.ts);
+   * a no-op for the rest, so it's always safe to call. Cheap enough to
+   * call every frame. */
+  setMusicIntensity(value: number): void;
   setMuted(muted: boolean): void;
   isMuted(): boolean;
   /** Creates/resumes the AudioContext. MUST be called synchronously from a
@@ -60,6 +75,11 @@ type Wave = OscillatorType;
 interface Note {
   /** Frequency in Hz at the cue's base pitch. */
   hz: number;
+  /** Optional glide target. With this set the note sweeps hz -> toHz across
+   * its duration instead of holding a fixed pitch, which is what makes a
+   * jump read as a jump — a whoosh is pitch MOVEMENT, and two static notes
+   * played in sequence don't sound like one. */
+  toHz?: number;
   /** Seconds after the cue starts. */
   at: number;
   /** Seconds. */
@@ -99,6 +119,11 @@ const CUES: Record<SoundCue, Note[]> = {
   ],
   // Barely-there click for neutral beats.
   tick: [{ hz: 900, at: 0, dur: 0.035, wave: "sine", peak: 0.22 }],
+  // Upward sweep — short, so it's out of the way before the player lands.
+  jump: [{ hz: 320, toHz: 760, at: 0, dur: 0.16, wave: "triangle", peak: 0.34 }],
+  // Downward thud, low and quiet: landing happens constantly in a runner,
+  // so this has to be felt more than heard or it becomes a rattle.
+  land: [{ hz: 190, toHz: 110, at: 0, dur: 0.09, wave: "sine", peak: 0.26 }],
   // Major arpeggio — clearly better than `success` without being a fanfare.
   milestone: [
     { hz: 659, at: 0, dur: 0.08, wave: "triangle", peak: 0.42 },
@@ -145,6 +170,16 @@ function audioContextCtor(): Ctor | null {
 export function createAudio(initialMuted = false): GameAudio {
   let ctx: AudioContext | null = null;
   let master: GainNode | null = null;
+  // Cues get their own bus so the background bed can be attenuated and
+  // ducked independently — the bed must never mask a success/fail cue,
+  // because those are game state and the bed is only atmosphere.
+  let cueBus: GainNode | null = null;
+  let music: MusicController | null = null;
+  let pendingBed: TemplateId | null = null; // requested before unlock()
+  // The bed the game asked for, remembered independently of whether it is
+  // currently sequencing — muting stops the sequencer outright (see
+  // setMuted) and unmuting has to know what to bring back.
+  let activeBed: TemplateId | null = null;
   let muted = initialMuted;
   let unavailable = false; // set once we know this browser can't do it
   let voices = 0;
@@ -161,6 +196,10 @@ export function createAudio(initialMuted = false): GameAudio {
       master = ctx.createGain();
       master.gain.value = muted ? 0 : MASTER_VOLUME;
       master.connect(ctx.destination);
+      cueBus = ctx.createGain();
+      cueBus.gain.value = 1;
+      cueBus.connect(master);
+      music = createMusic(ctx, master);
       return ctx;
     } catch {
       // Blocked by policy, or too many live contexts on the page. Silence is
@@ -168,6 +207,8 @@ export function createAudio(initialMuted = false): GameAudio {
       unavailable = true;
       ctx = null;
       master = null;
+      cueBus = null;
+      music = null;
       return null;
     }
   }
@@ -180,6 +221,40 @@ export function createAudio(initialMuted = false): GameAudio {
     // resume() only works from within the gesture, which is why this is a
     // separate explicit step rather than something play() could do lazily.
     if (c.state === "suspended") void c.resume().catch(() => {});
+    // A bed asked for before the gesture was deferred, not dropped — mount
+    // calls startMusic() in the same handler as unlock(), and ordering
+    // between the two shouldn't matter to the caller.
+    if (pendingBed) {
+      const bed = pendingBed;
+      pendingBed = null;
+      startMusic(bed);
+    }
+  }
+
+  function startMusic(template: TemplateId): void {
+    if (unavailable) return;
+    const c = ctx;
+    if (!c || !music || c.state !== "running") {
+      // Never open a context here — that would be sound before the gesture.
+      pendingBed = template;
+      return;
+    }
+    activeBed = template;
+    // Muting stops the sequencer rather than just gating its output, so
+    // don't start one now; setMuted(false) will.
+    if (muted) return;
+    const bed = MUSIC_BEDS[template];
+    if (bed) music.start(bed);
+  }
+
+  function stopMusic(): void {
+    pendingBed = null;
+    activeBed = null;
+    music?.stop();
+  }
+
+  function setMusicIntensity(value: number): void {
+    music?.setIntensity(value);
   }
 
   function play(cue: SoundCue, options?: PlayOptions): void {
@@ -187,12 +262,14 @@ export function createAudio(initialMuted = false): GameAudio {
     // Never open a context here — that would be a sound before the gesture.
     // A cue fired before unlock() is simply dropped.
     const c = ctx;
-    const out = master;
+    const out = cueBus;
     if (!c || !out || c.state !== "running") return;
     if (voices >= MAX_CONCURRENT_VOICES) return;
 
     const notes = CUES[cue];
     if (!notes) return;
+    // Dip the bed briefly so the cue reads clearly over it.
+    music?.duck();
     const semitones = options?.semitones ?? 0;
     const now = c.currentTime;
 
@@ -202,10 +279,17 @@ export function createAudio(initialMuted = false): GameAudio {
         const osc = c.createOscillator();
         const gain = c.createGain();
         osc.type = note.wave;
-        osc.frequency.value = transpose(note.hz, semitones);
+        const fromHz = transpose(note.hz, semitones);
+        osc.frequency.value = fromHz;
 
         const start = now + note.at;
         const end = start + note.dur;
+        if (note.toHz !== undefined) {
+          // Exponential, not linear: pitch is perceived logarithmically, so
+          // a linear sweep sounds like it slows down as it rises.
+          osc.frequency.setValueAtTime(fromHz, start);
+          osc.frequency.exponentialRampToValueAtTime(transpose(note.toHz, semitones), end);
+        }
         // Ramped, never stepped: assigning gain directly produces an audible
         // click at both ends of every note.
         gain.gain.setValueAtTime(0.0001, start);
@@ -237,6 +321,16 @@ export function createAudio(initialMuted = false): GameAudio {
 
   function setMuted(next: boolean): void {
     muted = next;
+    // Cutting the master gain alone would leave the sequencer building
+    // oscillators forever for output nobody can hear — a muted 144bpm bed
+    // was still allocating ~9 nodes a second. Stop it outright and bring it
+    // back on unmute instead.
+    if (next) {
+      music?.stop();
+    } else if (activeBed) {
+      const bed = MUSIC_BEDS[activeBed];
+      if (bed) music?.start(bed);
+    }
     if (!master || !ctx) return;
     try {
       // Short ramp rather than a jump, so toggling mid-cue doesn't click.
@@ -251,8 +345,12 @@ export function createAudio(initialMuted = false): GameAudio {
 
   function destroy(): void {
     const c = ctx;
+    music?.destroy();
+    music = null;
+    pendingBed = null;
     ctx = null;
     master = null;
+    cueBus = null;
     voices = 0;
     if (!c) return;
     // close() releases the underlying hardware stream. Browsers cap live
@@ -266,7 +364,7 @@ export function createAudio(initialMuted = false): GameAudio {
     }
   }
 
-  return { play, setMuted, isMuted: () => muted, unlock, destroy };
+  return { play, startMusic, stopMusic, setMusicIntensity, setMuted, isMuted: () => muted, unlock, destroy };
 }
 
 // ---------------------------------------------------------------------------
