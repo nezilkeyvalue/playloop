@@ -407,9 +407,17 @@ capability-schema Zod validator) precisely so more templates can be added
 later without touching that shared contract at all. See
 `docs/ADDING_A_TEMPLATE.md`.
 
-**`sweet_spot` is the eligibility floor.** It is the only template with no
-`fallback: "none"` role, so it stays eligible on sites where extraction
-yields almost nothing — verified live against deathwishcoffee.com, whose
-two surviving assets leave `catch` (needs 4 isolatable collectibles) and
-`guess_price` (needs a priced hero) both ineligible. Don't add a
-hard-required role to it; that floor is the whole reason it exists.
+**`sweet_spot` is the thin-asset floor — but it is a *scoring* floor, not
+an eligibility one.** Five templates have no `fallback: "none"` role
+(`chain_pop`, `pour`, `shooter`, `simon`, `sweet_spot`), so eligibility on
+asset-poor sites was never scarce; on a genuinely empty inventory all five
+tie at score 0 and `chain_pop` wins on registry insertion order. What is
+actually unique to `sweet_spot` is how little its `prize` role demands:
+`minShortEdge: 120` and nothing else — no `subjectTypeIn`, no
+`isolatable`, no aspect, text-density or subject-count caps. Every other
+template gates its primary role on subject type and 180-300px. So against
+four thin 150px non-isolatable `"unknown"` assets, `sweet_spot` is the
+only template that scores non-zero (0.500) while the rest stay eligible,
+fill zero roles and score 0. Keep `prize` permissive and keep the template
+free of hard-required roles; that combination is the point, not either half
+on its own.

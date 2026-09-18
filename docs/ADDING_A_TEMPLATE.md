@@ -29,6 +29,25 @@ three places (all small, low-conflict-risk, shared files):
    mode while manual mode silently rejected every attempt to create either,
    until this line was found and fixed.
 
+Then, once step 3 has given you a runtime module, one more. It isn't an id
+registration, which is exactly why it kept being forgotten:
+
+4. The `switch (template)` in `lib/engine/scoreCeiling.ts`'s
+   `resolveMaxRealisticScore`, which resolves the *tuning-aware* score
+   ceiling by importing your module's `maxRealisticScore()`. Without a case,
+   the resolver silently returns the static `scoring.maxRealistic` from your
+   capability JSON, and `finishPlay` (`lib/db/queries.ts`) then treats every
+   honest score above that as forged — zeroing it and paying no reward, with
+   nothing logged. Seven templates shipped through this: at max tuning
+   `whack`'s real ceiling is 3038 against a declared 1040, `sweet_spot`'s is
+   4608 against 800, and `runner`'s is 564 against 280.
+
+   The switch now ends in an `assertNever` exhaustiveness guard, so a missing
+   case is a **compile error** rather than a silent wrong answer. If
+   `npm run typecheck` sent you here, that is why. The same trick guards
+   `MUSIC_BEDS` in `lib/runtime/music.ts`, which is a complete
+   `Record<TemplateId, MusicBed>` for the same reason.
+
 ## Step 1 — capability JSON (`lib/capabilities/<id>.json`)
 
 This is the design of the template: what roles it needs, how picky each

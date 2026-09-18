@@ -29,6 +29,25 @@ export function staticMaxRealisticScore(template: TemplateId): number | undefine
 }
 
 /**
+ * Compile-time exhaustiveness guard for the switch below.
+ *
+ * This exists because the `default:` branch that used to sit there returned
+ * the static capability value for ANY unhandled template, which is a
+ * plausible-looking wrong answer rather than a failure. Seven templates
+ * (chomp, whack, simon, slice, sweet_spot, runner, pour) each shipped
+ * through it unnoticed, every one of them silently capping honest scores at
+ * their default-tuning number and paying no reward above it. Typing the
+ * parameter `never` means the next template that forgets a case fails
+ * `npm run typecheck` instead.
+ *
+ * The runtime arm still degrades to the static ceiling, so a build that
+ * somehow gets here misprices scores rather than throwing.
+ */
+function assertNever(_value: never, fallback: number | undefined): number | undefined {
+  return fallback;
+}
+
+/**
  * The ceiling for THIS game's tuning. Dynamically imports the template's
  * runtime module and calls its maxRealisticScore(); falls back to
  * staticMaxRealisticScore on any import/throw/non-finite result, so a server
@@ -59,9 +78,38 @@ export async function resolveMaxRealisticScore(
       case "shooter":
         resolved = (await import("@/lib/runtime/games/shooter")).maxRealisticScore(tuning);
         break;
-      default:
-        // Reserved template (match, stack): no runtime module exists yet.
+      case "chomp":
+        resolved = (await import("@/lib/runtime/games/chomp")).maxRealisticScore(tuning);
+        break;
+      case "whack":
+        resolved = (await import("@/lib/runtime/games/whack")).maxRealisticScore(tuning);
+        break;
+      case "simon":
+        resolved = (await import("@/lib/runtime/games/simon")).maxRealisticScore(tuning);
+        break;
+      case "slice":
+        resolved = (await import("@/lib/runtime/games/slice")).maxRealisticScore(tuning);
+        break;
+      case "sweet_spot":
+        resolved = (await import("@/lib/runtime/games/sweetSpot")).maxRealisticScore(tuning);
+        break;
+      case "runner":
+        resolved = (await import("@/lib/runtime/games/runner")).maxRealisticScore(tuning);
+        break;
+      case "pour":
+        resolved = (await import("@/lib/runtime/games/pour")).maxRealisticScore(tuning);
+        break;
+      case "match":
+      case "stack":
+        // Genuinely reserved: no runtime module exists for these yet, so the
+        // static capability value is the only answer available.
         return fallback;
+      default:
+        // Exhaustiveness guard — see assertNever's comment. Listing the
+        // reserved ids explicitly above is what makes this reachable only
+        // for a TemplateId nobody has handled, and therefore a COMPILE
+        // error rather than a silent wrong answer.
+        return assertNever(template, fallback);
     }
 
     // A zero or negative ceiling would reject every score as forged, and NaN

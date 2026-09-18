@@ -4,13 +4,17 @@
 // to stop it inside a target zone. Every hit shrinks the zone and speeds the
 // marker up; a miss costs a life. Capability schema: lib/capabilities/sweet_spot.json.
 //
-// Why this template exists: it is the only one with NO hard-required role.
-// catch needs 4 isolatable collectibles and guess_price needs a priced hero,
-// so both go ineligible on a site whose extraction yields almost nothing —
-// a real run against deathwishcoffee.com produced exactly two usable assets
-// and knocked both templates out. Sweet Spot plays correctly with zero
-// assets (brand colour + the logo fallback), so it is always available as a
-// floor. Keep it that way: never add a role with `fallback: "none"` here.
+// Why this template exists: it SCORES on imagery nothing else will take.
+// Not "it's the only one with no hard-required role" — chain_pop, pour,
+// shooter and simon have none either, so bare eligibility was never the
+// scarce thing. Their primary roles gate on subject type and 180-300px, so
+// on a thin site they stay eligible, fill zero roles and score 0. This
+// template's `prize` role asks only for `minShortEdge: 120` — no
+// subjectTypeIn, no isolatable, no aspect/text-density/subject-count caps —
+// so against four thin 150px non-isolatable "unknown" assets it is the only
+// template scoring non-zero (0.500). It also plays correctly with zero
+// assets (brand colour + the logo fallback). Keep `prize` permissive AND
+// keep the template free of hard-required roles; the pair is the point.
 //
 // Tuning knobs honored (all read from ctx.tuning, already clamped to the
 // capability's ranges by mount.ts):
