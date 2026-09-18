@@ -791,7 +791,7 @@ export const runnerGameSpec: GameSpec = {
     stageBackground: { fallback: "brandGradient" },
   },
   rewards: [
-    { minScore: 0, label: "10% off", percentOff: 10, code: "TRAIL10" },
+    { minScore: 45, label: "10% off", percentOff: 10, code: "TRAIL10" },
     { minScore: 90, label: "15% off", percentOff: 15, code: "TRAIL15" },
     { minScore: 170, label: "20% off", percentOff: 20, code: "TRAIL20" },
   ],
