@@ -87,6 +87,7 @@ import {
   type Celebration,
 } from "@/lib/runtime/games/spriteRender";
 import { drawBottleShape } from "@/lib/runtime/games/shapeLibrary";
+import { TIMER_HUD_HEIGHT } from "@/lib/runtime/games/hud";
 
 // Scoring constants, lifted from sweetSpot.ts on purpose (see the header).
 // maxRealisticScore() at the capability's default tuning (fillSpeed 0.5,
@@ -1594,26 +1595,23 @@ class PourGame implements GameModule {
     c.fillStyle = withAlpha(brand.foreground, 0.75);
     c.fillText(`${this.ctx.getScore()}`, pad, pad);
 
-    const maxLives = Math.max(1, Math.round(tuning.lives ?? 3));
-    for (let i = 0; i < maxLives; i++) {
-      const cx = w - pad - i * 16 - 5;
-      c.beginPath();
-      c.arc(cx, pad + 7, 5, 0, Math.PI * 2);
-      c.fillStyle = i < this.livesLeft ? brand.accent : withAlpha(brand.foreground, 0.18);
-      c.fill();
-    }
+    // Lives are drawn centrally as hearts by mount.ts (see hud.ts).
 
     c.textAlign = "center";
     c.font = `500 13px ${brand.fontFamily}, system-ui, sans-serif`;
+    // Pushed below the shared timer: this is the only template that puts
+    // text top-CENTRE, which is where mount.ts now draws the countdown
+    // numeral (see lib/runtime/games/hud.ts).
+    const centreY = pad + TIMER_HUD_HEIGHT;
     if (this.feedback) {
       c.fillStyle = this.feedback.kind === "serve" ? brand.accent : "#d14343";
-      c.fillText(this.feedback.kind === "serve" ? "Perfect pour" : "Overflowed", w / 2, pad);
+      c.fillText(this.feedback.kind === "serve" ? "Perfect pour" : "Overflowed", w / 2, centreY);
     } else {
       c.fillStyle = withAlpha(brand.foreground, 0.55);
       c.fillText(
         this.served === 0 ? "Tap to stop the pour on the line" : `Streak ${this.streak}`,
         w / 2,
-        pad,
+        centreY,
       );
     }
     c.restore();
@@ -1623,6 +1621,15 @@ class PourGame implements GameModule {
     this.prizePool = [];
     this.celebrations = [];
     this.feedback = null;
+  }
+
+  timeRemaining(): { secondsLeft: number; totalSeconds: number } | null {
+    const total = this.ctx.tuning.durationSec ?? 40;
+    return { secondsLeft: Math.max(0, total - this.elapsed), totalSeconds: total };
+  }
+
+  livesRemaining(): { livesLeft: number; maxLives: number } | null {
+    return { livesLeft: Math.max(0, this.livesLeft), maxLives: Math.max(1, Math.round(this.ctx.tuning.lives ?? 3)) };
   }
 
   maxRealisticScore(tuning: Record<string, number>): number {

@@ -480,7 +480,6 @@ class RunnerGame implements GameModule {
     if (this.finishX !== null) this.drawGate(c, this.finishX, groundY, "FINISH");
 
     this.drawRunner(c, stage.width * 0.18, groundY, RUNNER_SIZE * scale);
-    this.drawLives(c);
 
     // Celebrations last, so the just-grabbed product is the focal point.
     for (const celebration of this.celebrations) {
@@ -493,6 +492,15 @@ class RunnerGame implements GameModule {
     this.obstacles = [];
     this.collectibles = [];
     this.celebrations = [];
+  }
+
+  timeRemaining(): { secondsLeft: number; totalSeconds: number } | null {
+    const total = this.ctx.tuning.durationSec ?? 40;
+    return { secondsLeft: Math.max(0, total - this.elapsed), totalSeconds: total };
+  }
+
+  livesRemaining(): { livesLeft: number; maxLives: number } | null {
+    return { livesLeft: Math.max(0, this.livesLeft), maxLives: Math.max(1, Math.round(this.ctx.tuning.lives ?? 3)) };
   }
 
   maxRealisticScore(tuning: Record<string, number>): number {
@@ -1343,34 +1351,6 @@ class RunnerGame implements GameModule {
     c.restore();
   }
 
-  private drawLives(c: CanvasRenderingContext2D): void {
-    const { brand, stage } = this.ctx;
-    const total = Math.max(1, Math.round(this.ctx.tuning.lives ?? 3));
-    const radius = 5;
-    const gap = 16;
-    const y = 16;
-    for (let i = 0; i < total; i++) {
-      const cx = stage.width - 16 - i * gap;
-      c.beginPath();
-      c.arc(cx, y, radius, 0, Math.PI * 2);
-      if (i < this.livesLeft) {
-        c.fillStyle = this.theme.ui.primary;
-        c.fill();
-        c.strokeStyle = this.theme.environment.laneMarking;
-        c.lineWidth = 1.5;
-        c.stroke();
-      } else {
-        // Spent lives read against the sky, so the ring is white rather
-        // than brand.foreground (contrast-forced against brand.background,
-        // which is no longer what's behind the HUD).
-        c.strokeStyle = this.theme.environment.laneMarking;
-        c.lineWidth = 1.5;
-        c.globalAlpha = 0.6;
-        c.stroke();
-        c.globalAlpha = 1;
-      }
-    }
-  }
 }
 
 interface Box {

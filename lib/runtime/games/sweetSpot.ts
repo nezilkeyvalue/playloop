@@ -463,16 +463,7 @@ class SweetSpotGame implements GameModule {
     c.fillStyle = withAlpha(brand.foreground, 0.75);
     c.fillText(`${this.ctx.getScore()}`, pad, pad);
 
-    // Lives as dots, top-right.
-    const maxLives = Math.max(1, Math.round(tuning.lives ?? 3));
-    for (let i = 0; i < maxLives; i++) {
-      const cx = w - pad - i * 16 - 5;
-      c.beginPath();
-      c.arc(cx, pad + 7, 5, 0, Math.PI * 2);
-      c.fillStyle =
-        i < this.livesLeft ? brand.accent : withAlpha(brand.foreground, 0.18);
-      c.fill();
-    }
+    // Lives are drawn centrally as hearts by mount.ts (see hud.ts).
 
     // Prompt, centred just under the bar.
     c.textAlign = "center";
@@ -488,6 +479,15 @@ class SweetSpotGame implements GameModule {
     this.celebrations = [];
     this.particles = [];
     this.feedback = null;
+  }
+
+  timeRemaining(): { secondsLeft: number; totalSeconds: number } | null {
+    const total = this.ctx.tuning.durationSec ?? 40;
+    return { secondsLeft: Math.max(0, total - this.elapsed), totalSeconds: total };
+  }
+
+  livesRemaining(): { livesLeft: number; maxLives: number } | null {
+    return { livesLeft: Math.max(0, this.livesLeft), maxLives: Math.max(1, Math.round(this.ctx.tuning.lives ?? 3)) };
   }
 
   maxRealisticScore(tuning: Record<string, number>): number {

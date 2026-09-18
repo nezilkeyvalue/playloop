@@ -329,7 +329,6 @@ class ShooterGame implements GameModule {
     }
 
     this.drawShip(c, stage, brand);
-    this.drawLives(c, stage.width, brand);
 
     for (const celebration of this.celebrations) {
       drawCelebration(c, celebration, ITEM_SIZE * 1.6, brand.accent);
@@ -347,6 +346,15 @@ class ShooterGame implements GameModule {
     this.projectiles = [];
     this.particles = [];
     this.celebrations = [];
+  }
+
+  timeRemaining(): { secondsLeft: number; totalSeconds: number } | null {
+    const total = this.ctx.tuning.durationSec ?? 40;
+    return { secondsLeft: Math.max(0, total - this.elapsed), totalSeconds: total };
+  }
+
+  livesRemaining(): { livesLeft: number; maxLives: number } | null {
+    return { livesLeft: Math.max(0, this.lives), maxLives: MAX_LIVES };
   }
 
   maxRealisticScore(tuning: Record<string, number>): number {
@@ -648,24 +656,6 @@ class ShooterGame implements GameModule {
     c.restore();
   }
 
-  private drawLives(c: CanvasRenderingContext2D, width: number, brand: BrandKit): void {
-    const dotRadius = 7;
-    const gap = 20;
-    const startX = width / 2 - ((MAX_LIVES - 1) * gap) / 2;
-    const y = 22;
-    for (let i = 0; i < MAX_LIVES; i++) {
-      const filled = i < this.lives;
-      c.beginPath();
-      c.arc(startX + i * gap, y, dotRadius, 0, Math.PI * 2);
-      c.fillStyle = filled ? brand.accent : "rgba(255,255,255,0.18)";
-      c.fill();
-      if (filled) {
-        c.lineWidth = 1.5;
-        c.strokeStyle = "rgba(255,255,255,0.5)";
-        c.stroke();
-      }
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------

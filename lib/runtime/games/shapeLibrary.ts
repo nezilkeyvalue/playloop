@@ -438,3 +438,43 @@ export function drawBottleShape(
   c.fillRect(cx - neckW * 0.62, y - h * 0.01, neckW * 1.24, h * 0.07);
   c.restore();
 }
+
+/**
+ * A heart, for the lives indicator. `size` is the full width of the glyph.
+ *
+ * Drawn as a path rather than rendered as the "♥"/emoji character on
+ * purpose: canvas text falls back to whatever the platform has, so an
+ * emoji heart arrives full-colour and differently shaped on macOS, Windows
+ * and Android, and can't be tinted to the brand accent at all. A path is
+ * identical everywhere, takes any fill, and stays crisp at the ~12px the
+ * HUD draws it at.
+ */
+export function drawHeartShape(
+  c: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  size: number,
+  color: string,
+  /** Optional hairline, for a "spent life" ghost that has to stay visible
+   * on a backdrop the caller doesn't control. */
+  stroke?: { color: string; width?: number },
+): void {
+  const w = size;
+  const h = size * 0.9;
+  c.save();
+  c.beginPath();
+  // Start at the bottom point, sweep up the left lobe, across the dip, and
+  // back down the right lobe.
+  c.moveTo(cx, cy + h * 0.42);
+  c.bezierCurveTo(cx - w * 0.62, cy - h * 0.1, cx - w * 0.42, cy - h * 0.62, cx, cy - h * 0.22);
+  c.bezierCurveTo(cx + w * 0.42, cy - h * 0.62, cx + w * 0.62, cy - h * 0.1, cx, cy + h * 0.42);
+  c.closePath();
+  c.fillStyle = color;
+  c.fill();
+  if (stroke) {
+    c.strokeStyle = stroke.color;
+    c.lineWidth = stroke.width ?? 1;
+    c.stroke();
+  }
+  c.restore();
+}

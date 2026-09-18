@@ -28,6 +28,7 @@ import { isBrandLogoUrl, shadeHex } from "@/lib/runtime/games/spriteRender";
 import type { RunnerThemeOverride } from "@/lib/runtime/games/runnerTheme";
 import { createInput } from "@/lib/runtime/input";
 import { createAudio, loadMutePreference, saveMutePreference } from "@/lib/runtime/audio";
+import { drawTimerBar, drawLivesRow } from "@/lib/runtime/games/hud";
 import { startLoop, type LoopHandle } from "@/lib/runtime/loop";
 import { entryTier } from "@/lib/engine/specRules";
 import { animateCountUp, nextTierAbove, resolveReward } from "@/lib/runtime/reward";
@@ -438,7 +439,20 @@ function mountGame(
         mod.update(dt);
       },
       () => {
-        mod.render(stageController.ctx);
+        const c = stageController.ctx;
+        mod.render(c);
+        // Chrome is drawn here, after the game, so it is always on top and
+        // there is one layout for all eleven templates rather than eleven.
+        // Both reporters are optional; a template that returns null (or
+        // doesn't implement them) gets nothing drawn.
+        const clock = mod.timeRemaining?.();
+        if (clock) {
+          drawTimerBar(c, stageController.size.width, clock.secondsLeft, clock.totalSeconds, brand);
+        }
+        const lives = mod.livesRemaining?.();
+        if (lives) {
+          drawLivesRow(c, stageController.size.width, lives.maxLives, lives.livesLeft, brand);
+        }
       },
     );
   }
