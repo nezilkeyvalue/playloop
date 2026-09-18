@@ -110,6 +110,18 @@ function clampInt(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(n)));
 }
 
+
+// Simon's whole mechanic is "remember the sequence", and in the original toy
+// each pad has its own tone — the audio IS a second channel of the sequence,
+// not decoration, so a player can learn it by ear as well as by sight. Pads
+// are pitched up a major triad + octave; the same pad always sounds the same
+// during playback and when tapped, which is what makes that learnable.
+const PAD_SEMITONES = [0, 4, 7, 12, 16, 19];
+
+function padSemitones(tile: number): number {
+  return PAD_SEMITONES[tile % PAD_SEMITONES.length] ?? 0;
+}
+
 class SimonGame implements GameModule {
   id: "simon" = "simon";
 
@@ -306,6 +318,7 @@ class SimonGame implements GameModule {
     this.showPhase = "on";
     this.showingLit = this.sequence[0] ?? -1;
     this.litTile = this.showingLit;
+    if (this.showingLit >= 0) this.ctx.sound.play("tick", { semitones: padSemitones(this.showingLit) });
     this.phaseTimer = this.currentFlashDurationSec();
     this.inputIndex = 0;
   }
@@ -341,6 +354,7 @@ class SimonGame implements GameModule {
     this.showPhase = "on";
     this.showingLit = this.sequence[this.showingIndex] ?? -1;
     this.litTile = this.showingLit;
+    if (this.showingLit >= 0) this.ctx.sound.play("tick", { semitones: padSemitones(this.showingLit) });
     this.phaseTimer = this.currentFlashDurationSec();
   }
 
@@ -363,6 +377,7 @@ class SimonGame implements GameModule {
     if (tapped !== this.sequence[this.inputIndex]) {
       this.missTile = tapped;
       this.missFlashTimer = MISS_FLASH_SEC;
+      this.ctx.sound.play("fail");
       this.roundMisses += 1;
       if (this.roundMisses > MAX_MISSES_PER_ROUND) {
         this.finish();
@@ -373,6 +388,7 @@ class SimonGame implements GameModule {
     }
 
     this.ctx.addScore(POINTS_PER_CORRECT_TAP);
+    this.ctx.sound.play("success", { semitones: padSemitones(tapped) });
     this.inputIndex += 1;
     if (this.inputIndex < this.sequence.length) return;
 
@@ -385,6 +401,7 @@ class SimonGame implements GameModule {
     // normally (like every other tap) and gives the success flash a beat to
     // register before playback resumes.
     this.ctx.addScore(ROUND_BONUS);
+    this.ctx.sound.play("milestone");
     this.roundMisses = 0;
     this.successRoundNumber = this.sequence.length;
     this.successFlashTimer = SUCCESS_FLASH_SEC;

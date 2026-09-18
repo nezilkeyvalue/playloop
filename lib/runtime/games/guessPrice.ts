@@ -249,6 +249,9 @@ class GuessPriceGame implements GameModule {
       const tolerancePercent = this.ctx.tuning.tolerancePercent ?? 15;
       const points = scoreRound(this.guessMinor, hero.data.priceMinor, tolerancePercent);
       this.ctx.addScore(points);
+      // Closer guess -> higher ping; a zero-point guess reads as a miss.
+      if (points <= 0) this.ctx.sound.play("fail");
+      else this.ctx.sound.play("success", { semitones: Math.round((points / BASE_POINTS_PER_ROUND) * 7) });
       this.results.push({ asset: hero, guessMinor: this.guessMinor, priceMinor: hero.data.priceMinor, points });
       this.scoreFlash = { text: `+${points}`, life: SCORE_FLASH_LIFE };
       // The moment of success: locking in a guess on a real hero is worth

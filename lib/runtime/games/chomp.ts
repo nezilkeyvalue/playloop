@@ -189,6 +189,7 @@ class ChompGame implements GameModule {
       const dist = Math.hypot(pellet.x - this.chaserX, pellet.y - this.chaserY);
       if (dist <= eatRadius) {
         this.ctx.addScore(POINTS_PER_PELLET);
+        this.ctx.sound.play("success");
         // The moment of success. The pellet role's fallback is "none", so
         // everything in the pool is a real product — but the image can
         // still have failed to load, and a pellet drawn as a generated dot

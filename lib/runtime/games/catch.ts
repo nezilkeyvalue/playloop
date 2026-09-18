@@ -183,6 +183,7 @@ class CatchGame implements GameModule {
         this.basketSquashT = BASKET_SQUASH_DURATION;
         if (item.kind === "collectible") {
           this.ctx.addScore(POINTS_PER_CATCH);
+          this.ctx.sound.play("success");
           this.spawnParticles(item.x, item.y, this.ctx.brand.accent);
           if (item.asset?.image) {
             this.ctx.recordEngagement(item.asset.id);
@@ -190,6 +191,7 @@ class CatchGame implements GameModule {
           }
         } else {
           this.ctx.addScore(-HAZARD_PENALTY);
+          this.ctx.sound.play("fail");
           this.spawnParticles(item.x, item.y, "#c94b4b");
         }
         continue; // consumed

@@ -359,6 +359,7 @@ class ShooterGame implements GameModule {
     const { brand } = this.ctx;
     if (item.isTarget) {
       this.ctx.addScore(POINTS_PER_HIT);
+      this.ctx.sound.play("success");
       this.spawnParticles(item.x, item.y, brand.accent);
       if (item.asset?.image) {
         this.ctx.recordEngagement(item.asset.id);
@@ -366,6 +367,7 @@ class ShooterGame implements GameModule {
       }
     } else {
       this.lives -= 1;
+      this.ctx.sound.play("fail");
       this.hitFlashT = HIT_FLASH_DURATION;
       this.spawnParticles(item.x, item.y, "#c94b4b");
       if (this.lives <= 0) {
