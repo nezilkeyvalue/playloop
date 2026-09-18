@@ -10,7 +10,6 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // semantic tokens below; keep these until every page is converted.
         ink: "#0B0B0F",
         paper: "#FAFAF8",
 
