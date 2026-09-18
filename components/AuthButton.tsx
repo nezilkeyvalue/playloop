@@ -63,10 +63,10 @@ export function AuthButton({ className = "" }: { className?: string }) {
         onClick={() => setMenuOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
-        className="flex items-center gap-2 rounded-full border border-border bg-card py-1 pl-1 pr-3 text-sm font-medium transition hover:bg-foreground/[0.04]"
+        className="flex items-center gap-2 rounded-full border border-border bg-card py-1 pl-1 pr-1 text-sm font-medium transition hover:bg-foreground/[0.04] sm:pr-3"
       >
         <Avatar user={user} />
-        <span className="max-w-[10rem] truncate">{label}</span>
+        <span className="hidden max-w-[8rem] truncate sm:inline sm:max-w-[10rem]">{label}</span>
       </button>
 
       {menuOpen && (

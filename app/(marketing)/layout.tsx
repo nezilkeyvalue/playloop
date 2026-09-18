@@ -15,18 +15,18 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
     <AuthProvider>
       <div className="min-h-screen bg-background">
         <header className="absolute inset-x-0 top-0 z-40">
-          <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-0">
-            <Link href="/" className="flex items-center">
-              <Logomark className="h-20 w-auto" />
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-1.5 sm:px-6 sm:py-0">
+            <Link href="/" className="flex shrink-0 items-center">
+              <Logomark className="h-12 w-auto sm:h-14 md:h-20" />
             </Link>
             <div className="flex items-center gap-1">
               <Link
                 href="/games"
-                className="rounded-full px-4 py-2 text-sm font-medium text-muted transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
+                className="hidden whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium text-muted transition-colors hover:bg-foreground/[0.04] hover:text-foreground sm:inline-block"
               >
                 My games
               </Link>
-              <AuthButton />
+              <AuthButton className="shrink-0" />
             </div>
           </div>
         </header>
