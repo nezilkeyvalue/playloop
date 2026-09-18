@@ -232,27 +232,6 @@ function mountGame(
   container.innerHTML = "";
   container.appendChild(shell);
 
-  // "Made with Playloop" sits UNDER the game, outside `shell`, for every
-  // placement but `ad`.
-  //
-  // Outside, because `shell` is a fixed-height box whose whole interior is
-  // the canvas and the overlay (both `position: absolute; inset: 0`) — a
-  // badge in there would either cover gameplay or get painted over by it.
-  // Below it costs nothing: computeStageSize only ever reads the
-  // container's *width*, and the iframe auto-height handshake in
-  // PlayRuntime.tsx measures document.scrollHeight, so the extra strip is
-  // already accounted for in both.
-  //
-  // `ad` is the exception. An ad slot is a fixed 300x250 (or similar) box by
-  // definition, so anything appended below it would be clipped by the slot
-  // or break its declared size. There the badge is pinned inside the shell's
-  // bottom edge instead.
-  if (placement === "ad") {
-    shell.appendChild(renderMadeWithBadge(brand, "pinned"));
-  } else {
-    container.appendChild(renderMadeWithBadge(brand, "below"));
-  }
-
   // --- stage sizing --------------------------------------------------------
   const constraint = capability.placements[placement];
   const stageController: StageController = mountStage(
@@ -809,6 +788,15 @@ export function renderStaticScreen(
   // this specific preview, precisely so those links stay clickable.
   for (const button of content.querySelectorAll<HTMLButtonElement>("button")) {
     button.disabled = true;
+  }
+  // The badge is an <a>, so `disabled` does not reach it. Left live, the
+  // editor's inert preview would navigate a merchant away to the Playloop
+  // marketing site mid-edit. Stripping href (rather than hiding it) keeps
+  // the merchant seeing exactly the line their players will see.
+  const badge = content.querySelector<HTMLAnchorElement>("[data-role='playloop-badge']");
+  if (badge) {
+    badge.removeAttribute("href");
+    badge.style.cursor = "default";
   }
   shell.appendChild(content);
   return shell;
@@ -1373,105 +1361,81 @@ const PLAYLOOP_URL =
 const BADGE_LINK = `${PLAYLOOP_URL}/?utm_source=playloop_badge&utm_medium=embed`;
 
 /**
- * "Made with Playloop ❤️" — shown under every game.
+ * "Made with Playloop ❤️" — the last line of the reward screen.
  *
- * Colours come from the spec's own BrandKit rather than a fixed grey: the
- * badge renders on a host page whose background this code has never seen
- * (the embed is an iframe on someone else's storefront), so anything
- * self-contained is the only thing guaranteed to stay legible. Painting the
- * pill with the game's own background and text means the badge inherits
- * exactly the contrast the game already has, and reads as the bottom edge
- * of the game unit instead of loose text on the merchant's page.
+ * Reward screen only, deliberately. This first lived under the game shell,
+ * appended to the mount container, where it earned its own full-width strip
+ * of host-page background below every frame of gameplay — a lot of vertical
+ * space for attribution, on a screen where the player is trying to play.
+ * The reward screen is where a player has actually finished something and
+ * has a reason to wonder what made it, and it costs one line there.
  *
- * The text is a link to the Playloop landing page in EVERY placement,
- * including `ad`. (An ad unit owning its own click-through is a real
- * argument for leaving it inert there, but a badge nobody can click is not
- * an acquisition loop — if the ad slot turns out to conflict, make the
- * "pinned" variant a plain <span> again and nothing else changes.)
- *
- * `variant`:
- * - "below"  — a normal block under the shell (every placement but `ad`).
- * - "pinned" — absolutely positioned on the shell's bottom edge, for `ad`,
- *   whose box size is fixed and cannot grow.
+ * Plain text, not a pill: it renders inside the overlay, on the brand's own
+ * background, so the badge needs no surface of its own to stay legible —
+ * and the version with one read as a second button under the real buttons.
  */
-function renderMadeWithBadge(
-  brand: GameSpec["brand"],
-  variant: "below" | "pinned",
-): HTMLElement {
+function renderMadeWithBadge(brand: GameSpec["brand"]): HTMLElement {
+  // A block-level row wrapping an inline-level link, rather than returning
+  // the link alone. `wrap`'s children are laid out in normal block flow and
+  // the replay button above is an inline-block: a bare inline-flex badge
+  // fits beside it inside the 360px column and lands ON THE SAME LINE as
+  // "Play again". The row forces its own line; the link inside stays only
+  // as wide as its text, so the click target doesn't span the whole column.
   const row = document.createElement("div");
-  row.dataset.role = "playloop-badge";
   row.style.display = "flex";
   row.style.justifyContent = "center";
-  row.style.pointerEvents = "none"; // the pill re-enables it for itself
+  row.style.marginTop = "14px";
 
-  if (variant === "pinned") {
-    row.style.position = "absolute";
-    row.style.left = "0";
-    row.style.right = "0";
-    row.style.bottom = "6px";
-    // Above the canvas (0) and the overlay (1) so it stays visible on the
-    // reward screen, which paints an opaque backdrop over the whole shell.
-    row.style.zIndex = "2";
-  } else {
-    row.style.width = "100%";
-    row.style.padding = "6px 0 2px";
-    row.style.boxSizing = "border-box";
-  }
-
-  const pill = document.createElement("a");
-  pill.href = BADGE_LINK;
+  const link = document.createElement("a");
+  link.dataset.role = "playloop-badge";
+  link.href = BADGE_LINK;
   // A new tab, always. The embed usually runs inside an iframe on a
   // merchant's storefront: navigating in place would either replace the game
-  // with the Playloop site inside that frame, or (with a frame-busting
-  // target) throw the player off the merchant's page mid-session.
-  pill.target = "_blank";
+  // with the Playloop site inside that frame, or throw the player off the
+  // merchant's page mid-session.
+  link.target = "_blank";
   // `noopener` without `noreferrer`: the referrer is the whole point of a
   // "made with" badge — it is how a storefront visit turns into a signup
   // this can be attributed to.
-  pill.rel = "noopener";
-  pill.style.textDecoration = "none";
-  pill.style.pointerEvents = "auto";
-  pill.style.cursor = "pointer";
-  pill.setAttribute("aria-label", "Made with Playloop — visit the Playloop site");
-  pill.style.display = "inline-flex";
-  pill.style.alignItems = "center";
-  pill.style.gap = "4px";
-  pill.style.padding = "3px 10px";
-  pill.style.borderRadius = "999px";
-  pill.style.fontFamily = brand.fontFamily || "system-ui, sans-serif";
-  pill.style.fontSize = "11px";
-  pill.style.fontWeight = "600";
-  pill.style.lineHeight = "1.4";
-  pill.style.letterSpacing = "0.01em";
-  pill.style.whiteSpace = "nowrap";
-  pill.style.background = opaqueOverlayBackdrop(brand.background);
-  pill.style.color = `${brand.foreground}99`;
-  pill.style.border = `1px solid ${brand.foreground}1f`;
-  pill.style.transition = "color 0.12s ease, border-color 0.12s ease";
+  link.rel = "noopener";
+  link.setAttribute("aria-label", "Made with Playloop — visit the Playloop site");
+  link.style.display = "inline-flex";
+  link.style.alignItems = "center";
+  link.style.justifyContent = "center";
+  link.style.gap = "4px";
+  link.style.fontFamily = brand.fontFamily || "system-ui, sans-serif";
+  link.style.fontSize = "10px";
+  link.style.fontWeight = "600";
+  link.style.letterSpacing = "0.04em";
+  link.style.textTransform = "uppercase";
+  link.style.textDecoration = "none";
+  link.style.whiteSpace = "nowrap";
+  link.style.cursor = "pointer";
+  // Quiet enough to sit below the replay button without competing with it.
+  link.style.color = `${brand.foreground}66`;
+  link.style.transition = "color 0.12s ease";
 
   const label = document.createElement("span");
   label.textContent = "Made with Playloop";
-  pill.appendChild(label);
+  link.appendChild(label);
 
-  // aria-hidden so the accessible name stays "Made with Playloop" rather
-  // than gaining "red heart" from the emoji.
+  // aria-hidden so the accessible name stays the label above rather than
+  // gaining "red heart" from the emoji.
   const heart = document.createElement("span");
   heart.textContent = "❤️";
   heart.setAttribute("aria-hidden", "true");
-  heart.style.fontSize = "10px";
+  heart.style.fontSize = "9px";
   heart.style.lineHeight = "1";
-  pill.appendChild(heart);
+  link.appendChild(heart);
 
-  pill.addEventListener("mouseenter", () => {
-    pill.style.color = brand.foreground;
-    pill.style.borderColor = `${brand.foreground}44`;
+  link.addEventListener("mouseenter", () => {
+    link.style.color = brand.foreground;
   });
-  pill.addEventListener("mouseleave", () => {
-    pill.style.color = `${brand.foreground}99`;
-    pill.style.borderColor = `${brand.foreground}1f`;
+  link.addEventListener("mouseleave", () => {
+    link.style.color = `${brand.foreground}66`;
   });
 
-  row.appendChild(pill);
+  row.appendChild(link);
   return row;
 }
 
@@ -1698,6 +1662,8 @@ function renderRewardState(
   }
   replayButton.addEventListener("click", onReplay);
   wrap.appendChild(replayButton);
+
+  wrap.appendChild(renderMadeWithBadge(brand));
 
   return wrap;
 }
