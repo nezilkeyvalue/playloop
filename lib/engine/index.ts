@@ -27,6 +27,7 @@ import { extractFromUrl } from "./extract";
 import { deriveBrandNameFromUrl, makeRawAsset } from "./extract/util";
 import { processSprites } from "./sprites";
 import { runQualityGate } from "./quality";
+import { inferSiteThemes } from "./brandThemes";
 import { matchAssets } from "./matcher";
 import { suggestTemplates } from "./suggestTemplates";
 import { runBrain } from "./brain";
@@ -135,7 +136,17 @@ export async function runExtraction(
   };
 
   const capabilities = listCapabilities();
-  let match = matchAssets(inventory, capabilities);
+  const siteThemes =
+    input.mode === "auto"
+      ? inferSiteThemes({
+          inventory,
+          businessName,
+          businessDescription,
+          sourceUrl: input.sourceUrl,
+        })
+      : [];
+
+  let match = matchAssets(inventory, capabilities, { siteThemes });
   await emit("matching", 68, "Matching games to your brand…");
 
   if (input.mode === "auto" && match.results.some((r) => r.eligible)) {
@@ -147,6 +158,7 @@ export async function runExtraction(
       businessName,
       businessDescription,
       sourceUrl: input.sourceUrl,
+      siteThemes,
     });
   }
 

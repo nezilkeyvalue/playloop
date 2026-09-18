@@ -414,6 +414,8 @@ export interface GameCapability {
   /** When this template tends to shine for a brand category or catalog shape —
    * fed to Gemini at template-suggestion time alongside the matcher scores. */
   brandFit?: string;
+  /** Theme vocabulary for brand-aware template suggestion (see brandThemes.ts). */
+  themeTags?: string[];
   roles: CapabilityRole[];
   data: { required: string[]; optional: string[] };
   placements: Partial<Record<Placement, PlacementConstraint>>;
@@ -479,6 +481,8 @@ export interface TemplateMatch {
 export interface SiteContext {
   category: string | null;
   summary: string | null;
+  /** Inferred brand/catalog themes (e.g. athletic, footwear). */
+  themes?: string[];
 }
 
 export interface TemplateRanking {
@@ -496,6 +500,10 @@ export interface MatchReport {
   fallbackMode: "manual" | null;
   siteContext?: SiteContext | null;
   templateRankings?: TemplateRanking[];
+  /** Whether template order used a live Gemini response or theme-only fallback. */
+  suggestionSource?: "gemini" | "deterministic";
+  /** Set when suggestionSource is deterministic after a Gemini attempt failed. */
+  suggestionError?: string | null;
 }
 
 // ---------------------------------------------------------------------------

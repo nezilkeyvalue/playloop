@@ -201,6 +201,17 @@ function TemplatePicker({
       {match.siteContext?.category && !match.siteContext.summary?.includes(match.siteContext.category) && (
         <p className="mt-1 text-xs font-medium uppercase tracking-wide text-muted">{match.siteContext.category}</p>
       )}
+      {match.siteContext?.themes && match.siteContext.themes.length > 0 && match.siteContext.themes[0] !== "general" && (
+        <p className="mt-2 text-xs text-muted">
+          Detected:{" "}
+          {match.siteContext.themes
+            .filter((t) => t !== "general")
+            .slice(0, 4)
+            .map((t) => t.charAt(0).toUpperCase() + t.slice(1))
+            .join(" · ")}
+          {match.suggestionSource === "gemini" ? " · Ranked with AI" : " · Ranked from catalog themes"}
+        </p>
+      )}
 
       {error && (
         <div className="mt-6 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">

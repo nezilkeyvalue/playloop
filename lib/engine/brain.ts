@@ -41,7 +41,7 @@ import type {
   TemplateMatch,
 } from "@/lib/engine/types";
 
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const BRAIN_TIMEOUT_MS = 15_000;
 const MAX_CANDIDATE_IMAGES = Number(process.env.MAX_CANDIDATE_IMAGES) || 12;
 const IMAGE_LONG_EDGE = 512;

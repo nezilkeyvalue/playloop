@@ -4,6 +4,7 @@
   "name": "Space Shooter",
   "summary": "One product is shown as the target; the player pilots a ship and shoots only that product as it — and decoys — fall and wiggle past.",
   "brandFit": "Sports, outdoor, and youth-oriented brands where fast reflex gameplay matches high-energy merchandising.",
+  "themeTags": ["athletic", "sports", "energy", "youth"],
 
   "roles": [
     {

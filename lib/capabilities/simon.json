@@ -4,6 +4,7 @@
   "name": "Simon",
   "summary": "Product tiles flash in a pattern — watch, then tap them back in the same order. The sequence gets one step longer every round.",
   "brandFit": "Electronics, collectibles, and SKU-heavy catalogs where memorizing distinct products is part of the fun.",
+  "themeTags": ["electronics", "toys", "general"],
 
   "roles": [
     {

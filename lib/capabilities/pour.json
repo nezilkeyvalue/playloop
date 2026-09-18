@@ -3,6 +3,8 @@
   "id": "pour",
   "name": "Perfect Pour",
   "summary": "Liquid rises in a branded cup; tap to stop it inside the fill line before it overflows.",
+  "brandFit": "Coffee, tea, and beverage brands where a pour/stop mechanic fits the product ritual.",
+  "themeTags": ["food", "cpg", "general"],
 
   "roles": [
     {
