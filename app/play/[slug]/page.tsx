@@ -90,6 +90,12 @@ export default async function PlayPage({
     height: Number.isFinite(rawHeight) && rawHeight > 0 ? rawHeight : undefined,
   };
 
+  // A host embedding this iframe can pick one of the runtime's named brand
+  // skins with ?theme= (lib/runtime/games/runnerTheme.ts). Validated against
+  // the known keys in PlayRuntime rather than trusted — an unknown value
+  // renders the game's own derived theme, which is also the no-param case.
+  const themePreset = typeof sp.theme === "string" ? sp.theme : undefined;
+
   return (
     <PlayRuntime
       spec={resolved.spec}
@@ -97,6 +103,7 @@ export default async function PlayPage({
       slug={slug}
       viewportHeight={viewportHeight}
       sizeOverride={sizeOverride}
+      themePreset={themePreset}
     />
   );
 }

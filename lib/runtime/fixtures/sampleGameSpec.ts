@@ -788,7 +788,6 @@ export const runnerGameSpec: GameSpec = {
   assets: runnerCollectibles,
   roles: {
     collectible: runnerCollectibles.map((a) => a.id),
-    runner: { fallback: "logo" },
     stageBackground: { fallback: "brandGradient" },
   },
   rewards: [

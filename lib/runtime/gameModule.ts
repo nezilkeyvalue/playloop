@@ -21,6 +21,7 @@ import type {
   TemplateId,
 } from "@/lib/engine/types";
 import type { InputState } from "@/lib/runtime/input";
+import type { RunnerThemeOverride } from "@/lib/runtime/games/runnerTheme";
 
 /** One asset, resolved to a loaded (or failed-to-load) image element. */
 export interface LoadedAsset {
@@ -62,6 +63,10 @@ export interface RuntimeContext {
    * `new Image()` itself (forbidden — see docs/ADDING_A_TEMPLATE.md). */
   brandLogo: HTMLImageElement | null;
   copy: GameCopy;
+  /** An optional brand skin from the host (MountOptions.brandTheme), merged
+   * over whatever the template derives from `brand`. Only `runner` reads it
+   * today; a template that ignores it renders exactly as before. */
+  brandTheme?: RunnerThemeOverride;
   /** Logical (CSS-pixel, not device-pixel) stage size. Query fresh each frame if needed. */
   stage: { width: number; height: number };
   input: InputState;

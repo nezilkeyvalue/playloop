@@ -49,7 +49,9 @@ function playRound(tuning: Record<string, number>, stage: { width: number; heigh
   let elapsed = 0;
 
   const ctx: RuntimeContext = {
-    spec: { tuning } as unknown as GameSpec,
+    // `meta` matters now: runner.ts reads spec.meta.theme when it resolves
+    // its brand skin (lib/runtime/games/runnerTheme.ts).
+    spec: { tuning, meta: { mode: "auto", generatedAt: "", warnings: [] } } as unknown as GameSpec,
     tuning,
     // One collectible so the spawner runs; image is null, which is the
     // real "sprite failed to load" path and keeps this free of any DOM.

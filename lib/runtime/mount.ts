@@ -25,6 +25,7 @@ import type {
 import { getCapability } from "@/lib/capabilities";
 import type { GameModule, LoadedAsset, ResolvedRole, RuntimeContext } from "@/lib/runtime/gameModule";
 import { isBrandLogoUrl, shadeHex } from "@/lib/runtime/games/spriteRender";
+import type { RunnerThemeOverride } from "@/lib/runtime/games/runnerTheme";
 import { createInput } from "@/lib/runtime/input";
 import { startLoop, type LoopHandle } from "@/lib/runtime/loop";
 import { entryTier } from "@/lib/engine/specRules";
@@ -108,6 +109,17 @@ export interface MountOptions {
    * honor.
    */
   sizeOverride?: StageSizeOverride;
+  /**
+   * A brand skin for the game world, merged over the theme the template
+   * derives from `spec.brand` (see lib/runtime/games/runnerTheme.ts). It is
+   * a deep-partial: a host embedding the game can pass
+   * `{ character: { shoes: "#fff" }, advertising: { slogans: [...] } }` and
+   * everything it doesn't mention stays derived. Omitted everywhere in this
+   * app — the merchant's own BrandKit is already the theme — and it exists
+   * so a host embedding the runtime can skin it without a code change.
+   * Only the `runner` template reads it today; other templates ignore it.
+   */
+  brandTheme?: RunnerThemeOverride;
 }
 
 export interface MountHandle {
@@ -140,6 +152,7 @@ export function mount(
     factory,
     options.autoStart ?? false,
     options.sizeOverride,
+    options.brandTheme,
   );
 }
 
@@ -154,6 +167,7 @@ function mountGame(
   factory: GameModuleFactory,
   autoStart: boolean,
   sizeOverride: StageSizeOverride | undefined,
+  brandTheme: RunnerThemeOverride | undefined,
 ): MountHandle {
   const brand = spec.brand;
   const copy = spec.copy;
@@ -337,6 +351,7 @@ function mountGame(
     recordEngagement,
     complete,
     brandLogo: null,
+    brandTheme,
   };
 
   Promise.all([
