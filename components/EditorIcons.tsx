@@ -133,3 +133,12 @@ export function ExpandIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+export function DownloadIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M10 3v9.5M6.2 9.2L10 13l3.8-3.8" />
+      <path d="M3.5 15.5v1a1 1 0 001 1h11a1 1 0 001-1v-1" />
+    </svg>
+  );
+}

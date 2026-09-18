@@ -13,6 +13,7 @@ import { GameSubNav } from "@/components/GameSubNav";
 import {
   ChevronIcon,
   CursorClickIcon,
+  DownloadIcon,
   ExpandIcon,
   LayersIcon,
   PaletteIcon,
@@ -567,6 +568,27 @@ function EmbedPanel() {
             </EditorSection>
           )}
 
+          <EditorSection
+            icon={<DownloadIcon className="h-4 w-4" />}
+            title="Export"
+            description="Send this game to other ad platforms"
+          >
+            <div className="space-y-2">
+              <ExportOption
+                label="Download as ZIP"
+                description="A standalone HTML5 bundle you can upload to any ad network or CDN."
+              />
+              <ExportOption
+                label="Export to DV360"
+                description="Send this game straight to a Display & Video 360 creative."
+              />
+              <ExportOption
+                label="Export to CM360"
+                description="Send this game straight to a Campaign Manager 360 creative."
+              />
+            </div>
+          </EditorSection>
+
           {error && <p className="text-sm text-destructive">{error}</p>}
 
           {gaps.length > 0 && (
@@ -967,6 +989,23 @@ function SizeModeButton({
     >
       {children}
     </button>
+  );
+}
+
+/** A not-yet-built export destination — shown so a merchant knows it's on
+ * the way rather than wondering why their ad platform isn't supported yet,
+ * without a button that would just error out if clicked. */
+function ExportOption({ label, description }: { label: string; description: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-border px-3.5 py-3">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{label}</p>
+        <p className="mt-0.5 text-xs text-muted">{description}</p>
+      </div>
+      <span className="shrink-0 rounded-full bg-foreground/[0.06] px-2.5 py-1 text-[11px] font-medium text-muted">
+        Coming soon
+      </span>
+    </div>
   );
 }
 
