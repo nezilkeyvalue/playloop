@@ -27,6 +27,7 @@ import type { GameModule, LoadedAsset, ResolvedRole, RuntimeContext } from "@/li
 import { isBrandLogoUrl, shadeHex } from "@/lib/runtime/games/spriteRender";
 import type { RunnerThemeOverride } from "@/lib/runtime/games/runnerTheme";
 import { createInput } from "@/lib/runtime/input";
+import { createAudio, loadMutePreference, saveMutePreference } from "@/lib/runtime/audio";
 import { startLoop, type LoopHandle } from "@/lib/runtime/loop";
 import { entryTier } from "@/lib/engine/specRules";
 import { animateCountUp, nextTierAbove, resolveReward } from "@/lib/runtime/reward";
@@ -208,8 +209,26 @@ function mountGame(
   const overlayBackdrop = opaqueOverlayBackdrop(brand.background);
   overlay.style.background = overlayBackdrop;
 
+  // Created before the mute button that reads it, but deliberately silent
+  // until startPlay()'s gesture unlocks it — see the autoplay note at the
+  // top of lib/runtime/audio.ts.
+  const audio = createAudio(loadMutePreference());
+
+  // Sibling of the canvas, never a child of it: createInput(canvas) calls
+  // setPointerCapture on every pointerdown, which per the Pointer Events
+  // spec retargets the resulting click to the capturing element — the same
+  // reason the idle/reward chrome lives in `overlay` rather than on the
+  // canvas (see CLAUDE.md). z-index 2 keeps it above the overlay so it stays
+  // reachable on the idle and reward screens too, and its own pointerEvents
+  // stay "auto" even while the overlay is click-through mid-game.
+  const muteButton = renderMuteButton(brand, audio.isMuted(), (next) => {
+    audio.setMuted(next);
+    saveMutePreference(next);
+  });
+
   shell.appendChild(canvas);
   shell.appendChild(overlay);
+  shell.appendChild(muteButton);
   container.innerHTML = "";
   container.appendChild(shell);
 
@@ -349,6 +368,7 @@ function mountGame(
     addScore,
     getScore,
     recordEngagement,
+    sound: audio,
     complete,
     brandLogo: null,
     brandTheme,
@@ -381,6 +401,12 @@ function mountGame(
   function startPlay(isReplay: boolean) {
     score = 0;
     engagedAssetIds = new Set();
+    // Synchronously inside the click handler that led here: an AudioContext
+    // resumed outside a gesture stays suspended on Safari, and unlocking
+    // anywhere earlier would mean audio was possible before the player ever
+    // asked to play.
+    audio.unlock();
+    audio.play("start");
     setOverlay(null); // hide chrome; the game renders on canvas
     activeSessionToken = beginSession(slug, {
       replayOfSessionToken: isReplay ? lastSessionToken : null,
@@ -424,6 +450,10 @@ function mountGame(
       .filter((a): a is LoadedAsset => Boolean(a?.image))
       .map((a) => ({ spriteUrl: a.image!.src, name: a.data?.name, productUrl: a.data?.productUrl }));
     const resolved = resolveReward(finalScore, spec.rewards);
+    // Exactly one end-of-run cue. Both are ~0.5s flourishes, so playing
+    // "gameOver" and then "reward" back-to-back muddies both; which one
+    // fires is itself the answer to "did I earn anything?".
+    audio.play(resolved.tierIndex !== -1 ? "reward" : "gameOver");
     let sessionToken: string | null = null;
 
     // Resolves once endSession() has returned, i.e. once the server has
@@ -527,6 +557,7 @@ function mountGame(
     loop?.stop();
     gameModule?.teardown();
     input.destroy();
+    audio.destroy();
     stageController.destroy();
     contentResizeObserver?.disconnect();
     container.innerHTML = "";
@@ -847,6 +878,69 @@ function renderBrandLogo(logoUrl: string | undefined, height: string = "32px"): 
   logo.style.marginRight = "auto";
   logo.style.objectFit = "contain";
   return logo;
+}
+
+/** Small persistent speaker toggle. Deliberately NOT part of the overlay
+ * chrome: the overlay is emptied and set to pointer-events:none during play
+ * (setOverlay(null)), and muting is exactly the thing a player wants to do
+ * mid-game. Returns the button; the caller owns placement. */
+function renderMuteButton(
+  brand: GameSpec["brand"],
+  initialMuted: boolean,
+  onChange: (muted: boolean) => void,
+): HTMLElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.style.position = "absolute";
+  button.style.top = "8px";
+  button.style.right = "8px";
+  button.style.zIndex = "2";
+  button.style.width = "28px";
+  button.style.height = "28px";
+  button.style.display = "flex";
+  button.style.alignItems = "center";
+  button.style.justifyContent = "center";
+  button.style.padding = "0";
+  button.style.border = "none";
+  button.style.borderRadius = "999px";
+  button.style.cursor = "pointer";
+  button.style.lineHeight = "1";
+  button.style.fontSize = "14px";
+  // Brand-tinted rather than a fixed grey: this sits over whatever the game
+  // is drawing, which is per-brand. Low alpha so it reads as chrome.
+  // 8-digit hex alpha, the same trick opaqueOverlayBackdrop uses. `14` is
+  // 0x14/255 ~= 8%. Falls back to a bare colour if the brand hex is an
+  // unexpected shape, which keeps a malformed BrandKit from producing an
+  // invisible control.
+  button.style.background = /^#[0-9a-f]{6}$/i.test(brand.foreground)
+    ? `${brand.foreground}14`
+    : "rgba(0,0,0,0.08)";
+  button.style.color = brand.foreground;
+  button.style.opacity = "0.75";
+
+  let muted = initialMuted;
+  const paint = () => {
+    // Text glyphs, not an SVG or an icon font: this runs inside a
+    // third-party page and must not depend on anything being loadable.
+    button.textContent = muted ? "\u{1F507}" : "\u{1F509}";
+    button.setAttribute("aria-pressed", muted ? "true" : "false");
+    button.setAttribute("aria-label", muted ? "Unmute game sound" : "Mute game sound");
+    button.title = muted ? "Unmute" : "Mute";
+  };
+  paint();
+
+  button.addEventListener("click", (e) => {
+    // The canvas is a sibling underneath; without this the click also reads
+    // as a tap on the playfield and would, say, fire a shot in shooter.
+    e.stopPropagation();
+    muted = !muted;
+    paint();
+    onChange(muted);
+  });
+  // Same reason — pointerdown is what the game's input layer listens to.
+  button.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+  return button;
 }
 
 function renderIdleState(brand: GameSpec["brand"], copy: GameSpec["copy"], onStart: () => void): HTMLElement {

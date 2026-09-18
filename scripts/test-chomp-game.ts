@@ -21,6 +21,7 @@ import { createChompGame } from "../lib/runtime/games/chomp";
 import { getCapability } from "../lib/capabilities";
 import type { LoadedAsset, RuntimeContext } from "../lib/runtime/gameModule";
 import type { GameSpec } from "../lib/engine/types";
+import { createAudio } from "@/lib/runtime/audio";
 
 const capability = getCapability("chomp");
 if (!capability) throw new Error("chomp capability missing from the registry");
@@ -94,6 +95,8 @@ function harness(tuning: Record<string, number>, stage: { width: number; height:
     },
     getScore: () => score,
     recordEngagement: (id) => engagements.push(id),
+    // No browser here, so createAudio() resolves to a permanent no-op.
+    sound: createAudio(true),
     complete: () => {},
   };
 

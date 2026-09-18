@@ -422,6 +422,7 @@ class WhackGame implements GameModule {
 
     if (occupant.kind === "mole") {
       this.ctx.addScore(POINTS_PER_WHACK);
+      this.ctx.sound.play("success");
       // A generated-shape fallback (no real asset) is never "engaged with" —
       // same rule as every other template's hazards/decoys/synthesized-
       // filler exclusion (see CLAUDE.md).
@@ -437,6 +438,7 @@ class WhackGame implements GameModule {
       });
     } else {
       this.ctx.addScore(-HAZARD_PENALTY);
+      this.ctx.sound.play("fail");
       this.spawnParticles(hole.cx, hole.cy - this.cellSize * 0.2, "#c94b4b");
       this.floatingTexts.push({
         x: hole.cx,

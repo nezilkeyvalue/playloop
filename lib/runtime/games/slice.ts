@@ -262,6 +262,7 @@ class SliceGame implements GameModule {
   private registerSlice(item: FlyingItem): void {
     if (item.kind === "collectible") {
       this.ctx.addScore(POINTS_PER_SLICE);
+      this.ctx.sound.play("success");
       this.floatingTexts.push({
         x: item.x,
         y: item.y,
@@ -272,6 +273,7 @@ class SliceGame implements GameModule {
       });
     } else {
       this.ctx.addScore(-HAZARD_PENALTY);
+      this.ctx.sound.play("fail");
       this.floatingTexts.push({
         x: item.x,
         y: item.y,
