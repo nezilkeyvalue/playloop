@@ -199,6 +199,12 @@ class SweetSpotGame implements GameModule {
       this.ctx.addScore(points);
       this.hits += 1;
       this.streak += 1;
+      // Accuracy drives the pitch, so a dead-centre stop sounds better than a
+      // scraped edge even though both are hits — the zone shrinks, so this
+      // is the only feedback that a near-miss was nearly a miss.
+      this.ctx.sound.play(this.streak > 0 && this.streak % 5 === 0 ? "milestone" : "success", {
+        semitones: Math.round(closeness * 7),
+      });
       this.feedback = { kind: "hit", t: FEEDBACK_SEC, at: this.markerPos };
       this.spawnParticles(this.barX + this.markerPos * this.barW, this.barY + this.barH / 2, this.ctx.brand.accent);
 
@@ -231,6 +237,7 @@ class SweetSpotGame implements GameModule {
     } else {
       this.streak = 0;
       this.livesLeft -= 1;
+      this.ctx.sound.play("fail");
       this.feedback = { kind: "miss", t: FEEDBACK_SEC, at: this.markerPos };
       this.spawnParticles(this.barX + this.markerPos * this.barW, this.barY + this.barH / 2, "#c94b4b");
     }

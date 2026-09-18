@@ -380,6 +380,7 @@ class RunnerGame implements GameModule {
         });
       if (hit) {
         this.livesLeft -= 1;
+        this.ctx.sound.play("fail");
         this.invulnerableFor = INVULNERABLE_SEC;
       }
       liveObstacles.push(obstacle);
@@ -399,6 +400,7 @@ class RunnerGame implements GameModule {
       });
       if (grabbed) {
         this.ctx.addScore(POINTS_PER_GRAB);
+        this.ctx.sound.play("success");
         // Every collectible here is a real asset from the role pool (the
         // role's fallback is "none", so there is no generated stand-in to
         // guard against) — but the image can still have failed to load.

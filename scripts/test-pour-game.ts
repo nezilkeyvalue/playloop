@@ -24,6 +24,7 @@ import { createPourGame } from "../lib/runtime/games/pour";
 import { getCapability } from "../lib/capabilities";
 import type { LoadedAsset, RuntimeContext } from "../lib/runtime/gameModule";
 import type { GameSpec } from "../lib/engine/types";
+import { createAudio } from "@/lib/runtime/audio";
 
 const capability = getCapability("pour");
 if (!capability) throw new Error("pour capability missing from the registry");
@@ -97,6 +98,8 @@ function harness(tuning: Record<string, number>, prizes: LoadedAsset[]): Harness
     },
     getScore: () => score,
     recordEngagement: (id) => engagements.push(id),
+    // No browser here, so createAudio() resolves to a permanent no-op.
+    sound: createAudio(true),
     complete: () => {},
   };
 
